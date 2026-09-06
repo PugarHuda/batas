@@ -4,6 +4,13 @@ on:
   push:
   pull_request:
 
+# Nothing here is a secret. A topic id and an account id are public by construction — the whole
+# point of the publication ledger is that a stranger can read it — and no key is needed to assert
+# what a 402 promises, only to settle one.
+env:
+  HEDERA_SERVICE_ID: "0.0.10388560"
+  BATAS_HCS_TOPIC: "0.0.10394165"
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -19,13 +26,13 @@ jobs:
       - run: npm ci
 
       # Contracts: unit tests plus the fuzzed agreement between the two enforcement surfaces.
-      - run: forge test -vv
+      - run: npm run test:sol
 
-      # The decoder the paid service sells. A wrong answer here is worse than a crash.
-      - run: node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs
+      # The decoder the paid service sells, the numbers the agent picks, the ENSv2 role bitmaps,
+      # and the two records the paid answer carries. Run through the npm script rather than a
+      # copied list of files: this workflow had its own list, it fell behind package.json, and two
+      # test files simply stopped being run by CI without anything going red.
+      - run: npm run test:js
 
-      # The paid HTTP surface, including what its 402 promises. No credentials are needed to
-      # assert the payment requirement, only to settle one, so this runs on a fork or a PR.
-      - run: npx playwright test --project=local
-        env:
-          HEDERA_SERVICE_ID: "0.0.10388560"
+      # The paid HTTP surface, including what its 402 promises.
+      - run: npm run test:api

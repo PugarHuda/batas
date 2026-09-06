@@ -124,7 +124,12 @@ export default app;
 
 // Vercel sets VERCEL at build and at runtime and serves the exported app itself, so the listener
 // is only for running this locally. One implementation either way; no hosted copy to drift.
-if (!process.env.VERCEL) {
+//
+// Only when invoked directly, for the same reason as inspect.mjs and batas-agent.mjs: importing
+// this file must not bind a port. The production drift test imports the app to compare it against
+// the deployment, and without this guard that import quietly took 4021 — and would have crashed
+// the run outright whenever a local service was already holding it.
+if (!process.env.VERCEL && import.meta.filename === process.argv[1]) {
     app.listen(PORT, () => {
         console.log(`batas mandate inspection on http://localhost:${PORT}`);
         console.log(`  paid route  POST /v1/mandate/explain   ${Number(PRICE.amount) / 1e8} HBAR on hedera:testnet`);
