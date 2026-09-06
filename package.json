@@ -8,6 +8,7 @@
     "@1inch/solidity-utils": "6.9.10",
     "@1inch/swap-vm": "github:1inch/swap-vm#f09a41e689240adc645934f965c8061749397cd2",
     "@hiero-ledger/sdk": "^2.87.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@openzeppelin/contracts": "5.4.0",
     "@x402/express": "^2.25.0",
     "@x402/fetch": "^2.25.0",
@@ -15,7 +16,8 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "forge-std": "github:foundry-rs/forge-std#v1.11.0",
-    "viem": "^2.56.3"
+    "viem": "^2.56.3",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0"
@@ -23,13 +25,14 @@
   "scripts": {
     "test": "npm run test:sol && npm run test:js && npm run test:api",
     "test:sol": "forge test",
-    "test:js": "node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs",
+    "test:js": "node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs",
     "test:api": "playwright test --project=local",
     "service": "node agent/service.mjs",
     "agent": "node agent/batas-agent.mjs",
     "inspect": "node agent/inspect.mjs",
     "test:prod": "playwright test --project=production",
     "ens": "node agent/ens.mjs",
-    "hcs": "node agent/hcs.mjs"
+    "hcs": "node agent/hcs.mjs",
+    "mcp": "node agent/mcp.mjs"
   }
 }

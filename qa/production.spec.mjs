@@ -65,9 +65,15 @@ test('production and the local build agree on what is being sold', async ({ requ
         const s = app.listen(0, () => resolve(s));
     });
     try {
-        const local = await (await fetch(`http://127.0.0.1:${server.address().port}/`)).json();
-        const live = await (await request.get(`${PROD}/`, { timeout: 60_000 })).json();
-        expect(live, 'production is serving an older build than this repository').toEqual(local);
+        const base = `http://127.0.0.1:${server.address().port}`;
+        // Both public surfaces, not just the description. The discovery manifest is what an indexer
+        // reads, so it going stale is exactly as bad as the description going stale — and less
+        // visible, because nobody looks at it by hand.
+        for (const path of ['/', '/.well-known/x402']) {
+            const local = await (await fetch(base + path)).json();
+            const live = await (await request.get(`${PROD}${path}`, { timeout: 60_000 })).json();
+            expect(live, `production is serving an older build than this repository at ${path}`).toEqual(local);
+        }
     } finally {
         await new Promise((resolve) => server.close(resolve));
     }

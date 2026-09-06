@@ -20,7 +20,7 @@ const AQUA = getAddress('0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a');
 const ROUTER = getAddress(process.env.BATAS_ROUTER || '0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4');
 
 /** Pull the newest program this owner shipped to the router, straight out of Aqua's event log. */
-async function latestProgramOnChain() {
+export async function latestProgramOnChain() {
     const owner = process.env.BATAS_OWNER;
     if (!owner) return null;
 
@@ -78,24 +78,22 @@ export function programFromStrategy(strategyHex) {
     return `0x${data.slice(80)}`;
 }
 
-async function main() {
+/**
+ * Pay for one explanation and return it.
+ *
+ * Exported because the MCP server sells the same answer to a different kind of caller. One payment
+ * path, one place to get the spend cap and the cold-start retry right — a second implementation
+ * would be a second thing to keep correct, and the first difference between them would be silent.
+ *
+ * `log` exists so the CLI can narrate while the MCP server stays silent. An MCP server speaks
+ * JSON-RPC over stdout; a stray console.log there corrupts the stream.
+ */
+export async function payForExplanation(program, { log = () => {} } = {}) {
     const accountId = process.env.HEDERA_AGENT_ID;
     const privateKey = process.env.HEDERA_AGENT_KEY;
     if (!accountId || !privateKey) {
         throw new Error('HEDERA_AGENT_ID and HEDERA_AGENT_KEY missing; create a testnet ECDSA account at https://portal.hedera.com');
     }
-
-    let program = process.argv[2];
-    if (!program) {
-        const found = await latestProgramOnChain();
-        if (!found) {
-            throw new Error('pass a program as an argument, or set BATAS_OWNER to read the live position');
-        }
-        program = programFromStrategy(found.strategy);
-        console.log(`reading the live position ${found.strategyHash}`);
-    }
-    console.log(`program  ${program}`);
-    console.log(`service  ${SERVICE}`);
 
     const signer = createClientHederaSigner(accountId, PrivateKey.fromStringECDSA(privateKey), {
         network: 'hedera:testnet',
@@ -111,10 +109,10 @@ async function main() {
             allowedAssets: [{ network: 'hedera:testnet', asset: '0.0.0', maxAmountPerPayment: MAX_PER_CALL }],
         },
     });
-    console.log(`budget   at most ${Number(MAX_PER_CALL) / 1e8} HBAR per call`);
+    log(`budget   at most ${Number(MAX_PER_CALL) / 1e8} HBAR per call`);
     const paidFetch = wrapFetchWithPayment(fetch, client);
 
-    console.log(`paying   from ${accountId} on hedera:testnet`);
+    log(`paying   from ${accountId} on hedera:testnet`);
 
     // A serverless deployment answers its first request cold, and the facilitator handshake the
     // paywall needs runs on that request path. The first caller after an idle period can therefore
@@ -136,7 +134,7 @@ async function main() {
 
     let res = await post();
     if (res.status >= 500) {
-        console.log(`retry    service answered ${res.status} cold, trying once more`);
+        log(`retry    service answered ${res.status} cold, trying once more`);
         await new Promise((r) => setTimeout(r, 1500));
         res = await post();
     }
@@ -145,18 +143,32 @@ async function main() {
     if (settled) {
         try {
             const receipt = decodePaymentResponseHeader(settled);
-            console.log(`settled  ${receipt.transaction ?? JSON.stringify(receipt)}`);
+            log(`settled  ${receipt.transaction ?? JSON.stringify(receipt)}`);
         } catch {
-            console.log(`settled  ${settled}`);
+            log(`settled  ${settled}`);
         }
     }
 
     if (!res.ok) {
-        console.error(`service returned ${res.status}: ${await res.text()}`);
-        process.exit(1);
+        throw new Error(`service returned ${res.status}: ${await res.text()}`);
     }
+    return { body: await res.json(), settlement: settled ?? null };
+}
 
-    const body = await res.json();
+async function main() {
+    let program = process.argv[2];
+    if (!program) {
+        const found = await latestProgramOnChain();
+        if (!found) {
+            throw new Error('pass a program as an argument, or set BATAS_OWNER to read the live position');
+        }
+        program = programFromStrategy(found.strategy);
+        console.log(`reading the live position ${found.strategyHash}`);
+    }
+    console.log(`program  ${program}`);
+    console.log(`service  ${SERVICE}`);
+
+    const { body } = await payForExplanation(program, { log: (m) => console.log(m) });
     console.log('');
     console.log(`guarded by PolicyEnvelope: ${body.guarded}`);
     console.log('instructions');

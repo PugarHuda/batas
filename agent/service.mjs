@@ -29,6 +29,9 @@ const PAY_TO = process.env.HEDERA_SERVICE_ID;
 // account before it can be received, and HBAR does not — one less thing between a caller and an
 // answer, which is the whole point of paying per request.
 const HBAR = '0.0.0';
+// Where this service answers from. The discovery manifest must name absolute HTTPS URLs on this
+// host, so it cannot be derived from a request that may have arrived through a proxy.
+const PUBLIC_ORIGIN = process.env.BATAS_PUBLIC_ORIGIN || 'https://batas-one.vercel.app';
 const PRICE = { asset: HBAR, amount: process.env.X402_PRICE_TINYBAR || '100000' }; // 0.001 HBAR
 
 if (!PAY_TO) {
@@ -60,6 +63,38 @@ app.get('/', (_req, res) => {
         network: 'hedera:testnet',
         facilitator: FACILITATOR,
         payTo: PAY_TO,
+    });
+});
+
+// Discovery, per draft-hawkins-x402-dns-discovery. A manifest at this path is how an indexer or a
+// stranger's agent finds out that this host takes payment and what it sells, without being told
+// the URL of the paid route first. Several facilitators already read it, so publishing it costs
+// one handler and makes the service reachable by software that has never heard of this project.
+//
+// `updated` is a constant rather than the current time: it means "when this manifest last changed",
+// and a value that moves on every request would claim a change that did not happen.
+const MANIFEST_UPDATED = '2026-09-07T00:00:00Z';
+
+app.get('/.well-known/x402', (_req, res) => {
+    res.type('application/json').json({
+        x402Version: 2,
+        kind: 'resource-server',
+        name: 'Batas mandate inspection',
+        description: 'Decodes a SwapVM program into the mandate it enforces, and reports when those'
+            + ' exact bytes were published to Hedera Consensus Service.',
+        resources: [
+            {
+                url: `${PUBLIC_ORIGIN}/v1/mandate/explain`,
+                method: 'POST',
+                description: 'Decode a SwapVM program into the mandate it enforces',
+                // Not part of the draft's required shape, and unknown fields must be ignored — but
+                // an indexer that does read it learns the price without spending a request to be
+                // told 402.
+                accepts: [{ scheme: 'exact', network: 'hedera:testnet', asset: HBAR, amount: PRICE.amount, payTo: PAY_TO }],
+            },
+        ],
+        docs: 'https://github.com/PugarHuda/batas',
+        updated: MANIFEST_UPDATED,
     });
 });
 

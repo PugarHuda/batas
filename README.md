@@ -648,6 +648,46 @@ before it can be received; HBAR does not. That is one less step between a caller
 which is the entire point of paying per request. The client also caps itself at 0.01 HBAR per call
 through x402 spend controls — the same idea the contracts enforce, one layer up.
 
+## Reachable by software that has never heard of it
+
+Two additions, both to standards other people already read.
+
+**`/.well-known/x402`** — a discovery manifest, per
+[draft-hawkins-x402-dns-discovery](https://datatracker.ietf.org/doc/draft-hawkins-x402-dns-discovery/).
+An indexer or a stranger's agent learns that this host takes payment, what it sells, and what it
+costs, without first being told the URL of the paid route. Several facilitators already read this
+path. It sits *outside* the paywall, because putting discovery behind it would mean only someone
+who already knows the price can learn the price — and `qa/service.spec.mjs` cross-checks the
+advertised price against the `402` the route actually returns, so the manifest cannot drift into
+advertising terms nobody honours.
+
+**An MCP server** — `agent/mcp.mjs`, over stdio:
+
+```bash
+claude mcp add batas -- node /path/to/agent/mcp.mjs
+```
+
+MCP is how the software people delegate to — Claude, Cursor, Windsurf — reaches an outside service.
+Four tools, and the split between them is the point:
+
+| Tool | Cost | Answers |
+|---|---|---|
+| `read_mandate` | free | what these bytes permit, and whether `PolicyEnvelope` is outermost |
+| `check_publication` | free | when these exact bytes were published, from the mirror node |
+| `check_agent_authority` | free | whether the ENS name still holds, and if not, lapsed or revoked |
+| `inspect_mandate_paid` | **0.001 HBAR** | all of it, plus the ERC-8004 identity and whether it vouches |
+
+An assistant can establish for nothing whether a mandate was ever published and whether the agent
+behind it is still authorised, and *then* decide the full answer is worth a payment. That is the
+shape of the thing x402 is for: not a subscription, a decision. The paid tool says `THIS SPENDS
+MONEY` in the description the model reads, and `agent/mcp.test.mjs` asserts that it does — a model
+that discovers the cost by being charged has discovered it too late.
+
+The payment path is not written twice. `inspect.mjs` exports `payForExplanation`, and the CLI and
+the MCP tool both call it; the spend cap and the cold-start retry live in one place. The logger is
+injected rather than assumed, because MCP speaks JSON-RPC over stdout and the narration the CLI
+prints would corrupt the stream.
+
 ## What the tests prove
 
 **Aqua layer** — a swap inside every limit settles and moves real tokens; expiry refuses however
@@ -676,8 +716,8 @@ for free.
 
 ```
 forge test          21 passing
-npm run test:js     76 passing
-npm run test:api     7 passing
+npm run test:js     92 passing
+npm run test:api     8 passing
 ```
 
 The live checks in there are live on purpose. The ERC-8004 tests read the real registry on Sepolia

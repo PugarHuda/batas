@@ -83,3 +83,34 @@ test('the payment requirement is stable across calls', async ({ request }) => {
     const b = decodeRequirement(second.headers()['payment-required']);
     expect(a.accepts[0]).toEqual(b.accepts[0]);
 });
+
+test('the discovery manifest is free, well formed, and outside the paywall', async ({ request }) => {
+    // draft-hawkins-x402-dns-discovery. An indexer finds this without being told the paid URL
+    // first, so it must answer 200 rather than 402 — putting discovery behind the paywall would
+    // mean only someone who already knows the price can learn the price.
+    const res = await request.get('/.well-known/x402');
+    expect(res.status()).toBe(200);
+    expect(res.headers()['payment-required']).toBeUndefined();
+
+    const m = await res.json();
+    expect(m.x402Version).toBe(2);
+    expect(m.kind).toBe('resource-server');
+    expect(typeof m.name).toBe('string');
+    expect(Date.parse(m.updated)).toBeGreaterThan(0);
+
+    // "Each url MUST be HTTPS and on the manifest's own domain or a subdomain." A manifest that
+    // points somewhere else is one a conforming consumer must refuse to dereference.
+    expect(m.resources).toHaveLength(1);
+    const [r] = m.resources;
+    expect(r.url).toMatch(/^https:\/\//);
+    expect(r.method).toBe('POST');
+    expect(r.url.endsWith('/v1/mandate/explain'), 'must name the route the paywall actually covers').toBe(true);
+
+    // And the advertised price must be the one the 402 will demand, or the manifest is bait.
+    const unpaid = await request.post('/v1/mandate/explain', { data: { program: LIVE_PROGRAM } });
+    const demanded = decodeRequirement(unpaid.headers()['payment-required']).accepts[0];
+    expect(r.accepts[0].amount).toBe(demanded.amount);
+    expect(r.accepts[0].asset).toBe(demanded.asset);
+    expect(r.accepts[0].network).toBe(demanded.network);
+    expect(r.accepts[0].payTo).toBe(demanded.payTo);
+});
