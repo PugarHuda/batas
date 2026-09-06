@@ -11,6 +11,7 @@ import { MakerTraitsLib } from "@1inch/swap-vm/src/libs/MakerTraits.sol";
 import { TakerTraitsLib } from "@1inch/swap-vm/src/libs/TakerTraits.sol";
 import { XYCSwap } from "@1inch/swap-vm/src/instructions/XYCSwap.sol";
 import { FeeFlatIn } from "@1inch/swap-vm/src/instructions/FeeFlat.sol";
+import { Deadline } from "@1inch/swap-vm/src/instructions/Controls.sol";
 
 import { AmanatRouter } from "../src/AmanatRouter.sol";
 import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
@@ -105,17 +106,22 @@ contract PolicyEnvelopeTest is Test {
     }
 
     function _takerData() internal view returns (bytes memory) {
+        return _takerData(true, "");
+    }
+
+    /// @dev exactOut needs a threshold, otherwise the router caps the input it will spend.
+    function _takerData(bool isExactIn, bytes memory threshold) internal view returns (bytes memory) {
         return TakerTraitsLib.build(
             TakerTraitsLib.Args({
                 taker: address(this),
-                isExactIn: true,
+                isExactIn: isExactIn,
                 shouldUnwrapWeth: false,
                 isStrictThresholdAmount: false,
                 isFirstTransferFromTaker: true,
                 useTransferFromAndAquaPush: true,
                 isAToB: true,
                 allowPartialFill: false,
-                threshold: "",
+                threshold: threshold,
                 to: address(this),
                 deadline: 0,
                 hasPreTransferInCallback: false,
@@ -185,5 +191,69 @@ contract PolicyEnvelopeTest is Test {
         bytes memory takerData = _takerData();
         vm.expectPartialRevert(PolicyEnvelope.MandateRateTooLow.selector);
         swapVM.swap(tooExpensive, 10e18, takerData);
+    }
+
+    /// @notice exactOut is the direction the wrapping design exists for. The taker fixes the
+    ///   output and the VM computes the input, so `amountIn` is only known once the curve has run.
+    ///   A guard reading the register before that would be inspecting the taker's untouched zero.
+    function test_ExactOutSettlesInsideMandate() public {
+        ISwapVM.Order memory order = _order(_program(100e18, 1.9e18, 0.003e7));
+        _ship(order);
+
+        uint256 before = tokenB.balanceOf(address(this));
+        bytes memory takerData = _takerData(false, abi.encodePacked(bytes32(type(uint256).max)));
+        (uint256 amountIn, uint256 amountOut,) = swapVM.swap(order, 19e18, takerData);
+
+        assertEq(amountOut, 19e18, "output as requested");
+        assertGt(amountIn, 9e18, "input computed by the curve");
+        assertLe(amountIn, 100e18, "and inside the cap");
+        assertEq(tokenB.balanceOf(address(this)) - before, amountOut, "taker received output");
+    }
+
+    /// @notice The cap still binds in exactOut, where the taker never states an input at all.
+    function test_ExactOutRevertsWhenComputedInputExceedsCap() public {
+        // Asking for 300 out against a 2000 reserve needs far more than the 100 cap allows in.
+        ISwapVM.Order memory order = _order(_program(100e18, 1e18, 0.003e7));
+        _ship(order);
+
+        bytes memory takerData = _takerData(false, abi.encodePacked(bytes32(type(uint256).max)));
+        vm.expectPartialRevert(PolicyEnvelope.MandateAmountInExceeded.selector);
+        swapVM.swap(order, 300e18, takerData);
+    }
+
+    /// @notice And the floor price binds in exactOut too.
+    function test_ExactOutRevertsWhenBelowFloorRate() public {
+        ISwapVM.Order memory order = _order(_program(100e18, 2.5e18, 0.003e7));
+        _ship(order);
+
+        bytes memory takerData = _takerData(false, abi.encodePacked(bytes32(type(uint256).max)));
+        vm.expectPartialRevert(PolicyEnvelope.MandateRateTooLow.selector);
+        swapVM.swap(order, 19e18, takerData);
+    }
+
+    /// @notice Expiry is not duplicated into PolicyEnvelope. SwapVM already ships `Deadline`, and
+    ///   the whole point of a composable instruction set is to reach for what exists. Placed
+    ///   inside the envelope it gives the mandate its third term: a size cap, a floor price, and
+    ///   a time after which the grant authorises nothing.
+    function test_DeadlineComposesWithTheEnvelope() public {
+        uint40 expiry = uint40(block.timestamp + 2 hours);
+        bytes memory program = bytes.concat(
+            PolicyEnvelope.build(100e18, 1.9e18),
+            Deadline.build(expiry),
+            FeeFlatIn.build(0.003e7),
+            XYCSwap.build()
+        );
+        ISwapVM.Order memory order = _order(program);
+        _ship(order);
+
+        // Inside the window the mandate settles as usual.
+        (, uint256 amountOut,) = swapVM.swap(order, 10e18, _takerData());
+        assertGt(amountOut, 19e18, "settles before expiry");
+
+        // Past it, the grant authorises nothing at all.
+        vm.warp(uint256(expiry) + 1);
+        bytes memory takerData = _takerData();
+        vm.expectPartialRevert(Deadline.DeadlineReached.selector);
+        swapVM.swap(order, 10e18, takerData);
     }
 }
