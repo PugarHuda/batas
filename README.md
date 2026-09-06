@@ -108,10 +108,16 @@ Every dependency is pinned to an exact commit or version. That is deliberate: 1i
 `InstructionBuilder` with a `MemoryPtr` streaming API during this hackathon, and an unpinned
 install would silently hand a judge a different API than these tests pass on.
 
+`verification/` holds the standard-json compiler input for each contract, for anyone who wants to
+reproduce the bytecode independently of the explorer.
+
 ### Live on Sepolia
 
 Aqua is already deployed on Sepolia, so the liquidity layer is used as-is. Only our own contracts
 went out.
+
+All four are source-verified on Etherscan, so the code below can be read on the explorer rather
+than taken from this repo on trust.
 
 | Contract | Address |
 |---|---|
