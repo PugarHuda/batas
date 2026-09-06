@@ -117,6 +117,30 @@ The API suite starts the service itself and asserts the payment requirement with
 anything, so it runs anywhere. Settling a real payment needs Hedera credentials; that path is
 exercised by `agent/inspect.mjs`.
 
+### A cap that could never bind
+
+The agent picked a floor 2% under spot and a cap of 10% of the reserve, as two independent
+choices. They contradict: moving 10% of a constant product reserve walks the price about 9%, far
+through a 2% floor. **The maximum trade the mandate advertised was one its own floor would refuse**
+— a limit that reads like a limit and can never bind, which is worse than having none.
+
+They are not independent choices at all. Solving the constant product for the largest input that
+still clears the floor, after the fee, gives
+
+```
+amountIn ≤ reserveA · (slippage − fee) / ((1 − slippage)(1 − fee))
+```
+
+which at a 2% budget and a 0.3% fee is about **1.73% of the reserve**, not 10%. The cap is derived
+from the floor now, and `capBps` only ever tightens it further.
+
+The closed form is exact over the rationals and lands a hair under the floor once every step
+rounds toward the maker, so the result is checked against the same arithmetic the contracts use
+rather than trusted. Stepping down by wei does not converge — shrinking the input shrinks the
+output in step, so both sides of the inequality move together — which is why the haircut is
+relative. A position too small for the arithmetic to price gets a cap of zero, because a mandate
+that permits nothing is safe and one that names an unreachable maximum is not.
+
 ### Two encoders, one format
 
 The agent builds SwapVM programs in JavaScript; the contracts build them in Solidity through

@@ -72,6 +72,94 @@ export const toProgram = ({ maxAmountIn, minRateE18, expiry, feeBps, salt: saltV
         salt(saltValue),
     ]);
 
+// --- the decision ------------------------------------------------------------
+
+/**
+ * Turn observed reserves into mandate terms.
+ *
+ * Kept pure and here rather than inline in the agent so the numbers can be argued with. Two
+ * choices are worth stating because neither is obvious:
+ *
+ * The floor sits one slippage budget under the spot the reserves imply, not under some external
+ * price. A mandate is a promise about this position, and the position is the only thing that can
+ * break it.
+ *
+ * The cap is a slice of the *input* reserve rather than a round number, because what actually
+ * bounds damage is how far one trade can walk the price, and that is a ratio to the reserve.
+ * A fixed cap means something different at every depth.
+ */
+export function decideMandate({ reserveA, reserveB, slippageBps = 200n, capBps = 1000n, feeBps = 30_000n }) {
+    if (reserveA <= 0n || reserveB <= 0n) throw new Error('a position with an empty side has no spot price');
+    if (slippageBps >= 10_000n) throw new Error('a slippage budget of 100% is not a floor');
+    if (capBps > 10_000n) throw new Error('a cap above the whole reserve is not a cap');
+
+    const spotE18 = (reserveB * E18) / reserveA;
+    const minRateE18 = (spotE18 * (10_000n - slippageBps)) / 10_000n;
+
+    // The cap is derived from the floor rather than chosen beside it.
+    //
+    // On a constant product curve the price a trade gets falls as the trade grows, so a floor and
+    // a size cap are not independent: past a certain size no trade can clear the floor. Picking
+    // both by hand produced a mandate whose stated maximum its own floor refused — a cap that
+    // could never bind, which is worse than no cap because it reads like a limit.
+    //
+    // Solving amountOut/amountIn >= minRate for the constant product after a flat input fee gives
+    //   net <= A * (slippage - fee) / (1 - slippage)
+    // and the gross input is that net grossed back up by the fee.
+    const S = 10_000_000n; // work in the fee's 1e7 basis so both rates share one scale
+    const slip = slippageBps * 1000n; // basis points to 1e7
+    const fee = feeBps;
+
+    let maxAmountIn = 0n;
+    if (slip > fee) {
+        const net = (reserveA * (slip - fee)) / (S - slip);
+        maxAmountIn = (net * S) / (S - fee);
+    }
+
+    // capBps is a ceiling the operator can impose on top, never a way to raise the derived one.
+    const ceiling = (reserveA * capBps) / 10_000n;
+    if (maxAmountIn > ceiling) maxAmountIn = ceiling;
+
+    // The closed form is exact over the rationals. On chain every step rounds toward the maker, so
+    // the trade it names sits exactly on the floor and lands a hair under it once rounded — the
+    // cap is a boundary case by construction.
+    //
+    // Stepping down by wei does not help: shrinking the input shrinks the output in step, so both
+    // sides of the inequality move together and the comparison never flips. The haircut has to be
+    // relative. A part in a million is far below any size that matters and comfortably above the
+    // rounding, and the loop verifies against the same arithmetic the contracts use rather than
+    // trusting that claim.
+    for (let i = 0; i < 32 && maxAmountIn > 0n; i++) {
+        if (clearsFloor({ reserveA, reserveB, amountIn: maxAmountIn, minRateE18, feeBps })) break;
+        // At dust sizes a proportional cut rounds to nothing, so the step is at least a wei and the
+        // loop always makes progress toward zero.
+        const cut = (maxAmountIn * 999_999n) / 1_000_000n;
+        maxAmountIn = cut < maxAmountIn ? cut : maxAmountIn - 1n;
+    }
+
+    // A position too small for the arithmetic to price gets a cap of zero, which is the honest
+    // answer: no size clears the floor at this depth. A mandate that permits nothing is safe; one
+    // that names a maximum its own floor would refuse is not.
+    if (!clearsFloor({ reserveA, reserveB, amountIn: maxAmountIn, minRateE18, feeBps })) maxAmountIn = 0n;
+
+    return { spotE18, minRateE18, maxAmountIn };
+}
+
+/**
+ * Would this trade clear the floor, priced exactly as the contracts price it?
+ *
+ * Mirrors FeeFlatIn wrapping XYCSwap, rounding the fee up and the output down, both toward the
+ * maker, the way MandateLib.quoteExactIn does in Solidity.
+ */
+export function clearsFloor({ reserveA, reserveB, amountIn, minRateE18, feeBps = 30_000n }) {
+    if (amountIn <= 0n) return false;
+    const fee = (amountIn * feeBps + 9_999_999n) / 10_000_000n;
+    const net = amountIn - fee;
+    if (net <= 0n) return false;
+    const amountOut = (net * reserveB) / (reserveA + net);
+    return amountOut * E18 >= amountIn * minRateE18;
+}
+
 // --- decoding ---------------------------------------------------------------
 
 const hexToBig = (hex) => (hex.length === 0 ? 0n : BigInt('0x' + hex));

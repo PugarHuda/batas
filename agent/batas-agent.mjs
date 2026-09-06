@@ -16,7 +16,7 @@ import {
     keccak256, concat, formatUnits, getAddress,
 } from 'viem';
 
-import { toProgram } from './swapvm.mjs';
+import { toProgram, decideMandate } from './swapvm.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
@@ -195,15 +195,22 @@ async function main() {
     // The floor sits one slippage budget under spot; the cap is a slice of the reserve, which is
     // what actually bounds how far a single trade can walk the price.
     const SLIPPAGE_BPS = 200n; // 2%
-    const CAP_BPS = 1000n; // 10% of the input reserve
+    // A ceiling, not the cap. The real limit comes out of the slippage budget: on a constant
+    // product curve a floor and a size cap are the same constraint stated twice, so the cap is
+    // derived rather than guessed beside it.
+    const CAP_BPS = 1000n;
     const FEE_BPS = 30_000n; // 0.3% of SwapVM's 1e7 base
 
-    const minRateE18 = (spotE18 * (10_000n - SLIPPAGE_BPS)) / 10_000n;
-    const maxAmountIn = (reserveA * CAP_BPS) / 10_000n;
+    const { minRateE18, maxAmountIn } = decideMandate({
+        reserveA, reserveB, slippageBps: SLIPPAGE_BPS, capBps: CAP_BPS,
+    });
 
     console.log('\ndecision');
     console.log(`  floor  ${formatUnits(minRateE18, 18)} B per A  (${pct(SLIPPAGE_BPS, 10000n)}% under spot)`);
-    console.log(`  cap    ${formatUnits(maxAmountIn, 18)} A        (${pct(CAP_BPS, 10000n)}% of reserve)`);
+    console.log(
+        `  cap    ${formatUnits(maxAmountIn, 18)} A  (${pct((maxAmountIn * 10_000n) / reserveA, 10_000n)}% of reserve,`
+        + ` the largest trade that still clears the floor)`,
+    );
     console.log(`  fee    ${Number(FEE_BPS) / Number(BPS) * 100}%`);
     console.log(`  expires in 2 hours`);
 

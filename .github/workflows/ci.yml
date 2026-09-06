@@ -22,7 +22,7 @@ jobs:
       - run: forge test -vv
 
       # The decoder the paid service sells. A wrong answer here is worse than a crash.
-      - run: node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs
+      - run: node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs
 
       # The paid HTTP surface, including what its 402 promises. No credentials are needed to
       # assert the payment requirement, only to settle one, so this runs on a fork or a PR.
