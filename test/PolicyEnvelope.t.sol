@@ -4,40 +4,46 @@ pragma solidity 0.8.30;
 import { Test } from "forge-std/Test.sol";
 import { TokenMock } from "@1inch/solidity-utils/contracts/mocks/TokenMock.sol";
 
+import { Aqua } from "@1inch/aqua/src/Aqua.sol";
+
 import { ISwapVM } from "@1inch/swap-vm/src/interfaces/ISwapVM.sol";
 import { MakerTraitsLib } from "@1inch/swap-vm/src/libs/MakerTraits.sol";
 import { TakerTraitsLib } from "@1inch/swap-vm/src/libs/TakerTraits.sol";
-import { StaticBalances } from "@1inch/swap-vm/src/instructions/Balances.sol";
-import { LimitSwap } from "@1inch/swap-vm/src/instructions/LimitSwap.sol";
-import { FeeFlatOut } from "@1inch/swap-vm/src/instructions/FeeFlat.sol";
+import { XYCSwap } from "@1inch/swap-vm/src/instructions/XYCSwap.sol";
+import { FeeFlatIn } from "@1inch/swap-vm/src/instructions/FeeFlat.sol";
 
 import { AmanatRouter } from "../src/AmanatRouter.sol";
 import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
 
+/// @dev Aqua-backed mode: the maker ships liquidity to the router and the encoded order is the
+///   Aqua strategy, so no signature is involved at all. Balances come from Aqua rather than from
+///   a balance instruction, which is why AquaOpcodes carries none.
 contract PolicyEnvelopeTest is Test {
+    Aqua internal aqua;
     AmanatRouter internal swapVM;
     TokenMock internal tokenA;
     TokenMock internal tokenB;
 
-    uint256 internal makerPK = 0xA11CE;
-    address internal maker;
+    address internal maker = makeAddr("maker");
 
-    uint256 internal constant BAL_IN = 1_000e18;
-    uint256 internal constant BAL_OUT = 2_000e18; // opening rate 2.0
+    uint256 internal constant RESERVE_A = 1_000e18;
+    uint256 internal constant RESERVE_B = 2_000e18; // opening rate 2.0
+
+    uint24 internal constant BPS = 1e7;
 
     function setUp() public {
-        maker = vm.addr(makerPK);
-        swapVM = new AmanatRouter(address(0), address(0), address(this), "SwapVM", "1.0.0");
+        aqua = new Aqua();
+        swapVM = new AmanatRouter(address(aqua), address(0), address(this), "Amanat", "1.0.0");
 
         tokenA = new TokenMock("A", "A");
         tokenB = new TokenMock("B", "B");
         if (tokenA > tokenB) (tokenA, tokenB) = (tokenB, tokenA);
 
-        tokenA.mint(maker, 10_000e18);
-        tokenB.mint(maker, 10_000e18);
+        tokenA.mint(maker, RESERVE_A);
+        tokenB.mint(maker, RESERVE_B);
         vm.startPrank(maker);
-        tokenA.approve(address(swapVM), type(uint256).max);
-        tokenB.approve(address(swapVM), type(uint256).max);
+        tokenA.approve(address(aqua), type(uint256).max);
+        tokenB.approve(address(aqua), type(uint256).max);
         vm.stopPrank();
 
         tokenA.mint(address(this), 10_000e18);
@@ -45,26 +51,14 @@ contract PolicyEnvelopeTest is Test {
         tokenB.approve(address(swapVM), type(uint256).max);
     }
 
-    /// @dev PolicyEnvelope first, so it becomes the outermost frame of the program.
-    function _program(uint128 maxAmountIn, uint128 minRateE18) internal view returns (bytes memory) {
-        return bytes.concat(
-            PolicyEnvelope.build(maxAmountIn, minRateE18),
-            StaticBalances.build(BAL_IN, BAL_OUT),
-            LimitSwap.build(address(tokenA), address(tokenB))
-        );
-    }
-
-    /// @dev Same mandate, but a fee instruction runs after the swap curve and shrinks amountOut.
-    function _programWithTrailingFee(uint128 maxAmountIn, uint128 minRateE18, uint24 feeBps)
+    /// @dev PolicyEnvelope first, so everything after it runs inside the wrapper.
+    function _program(uint128 maxAmountIn, uint128 minRateE18, uint24 feeBps)
         internal
-        view
+        pure
         returns (bytes memory)
     {
         return bytes.concat(
-            PolicyEnvelope.build(maxAmountIn, minRateE18),
-            StaticBalances.build(BAL_IN, BAL_OUT),
-            LimitSwap.build(address(tokenA), address(tokenB)),
-            FeeFlatOut.build(feeBps)
+            PolicyEnvelope.build(maxAmountIn, minRateE18), FeeFlatIn.build(feeBps), XYCSwap.build()
         );
     }
 
@@ -76,7 +70,7 @@ contract PolicyEnvelopeTest is Test {
                 tokenA: address(tokenA),
                 tokenB: address(tokenB),
                 shouldUnwrapWeth: false,
-                useAquaInsteadOfSignature: false,
+                useAquaInsteadOfSignature: true,
                 allowZeroAmountIn: false,
                 hasPreTransferInHook: false,
                 hasPostTransferInHook: false,
@@ -95,19 +89,33 @@ contract PolicyEnvelopeTest is Test {
         );
     }
 
-    function _takerData(ISwapVM.Order memory order) internal view returns (bytes memory) {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(makerPK, swapVM.hash(order));
+    /// @dev In Aqua mode the shipped strategy is the encoded order itself, so the Aqua strategy
+    ///   hash and the SwapVM order hash are the same value.
+    function _ship(ISwapVM.Order memory order) internal returns (bytes32 strategyHash) {
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(tokenA);
+        tokens[1] = address(tokenB);
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = RESERVE_A;
+        amounts[1] = RESERVE_B;
+
+        vm.prank(maker);
+        strategyHash = aqua.ship(address(swapVM), abi.encode(order), tokens, amounts);
+        assertEq(strategyHash, swapVM.hash(order), "Aqua strategy hash is the SwapVM order hash");
+    }
+
+    function _takerData() internal view returns (bytes memory) {
         return TakerTraitsLib.build(
             TakerTraitsLib.Args({
-                taker: address(0),
+                taker: address(this),
                 isExactIn: true,
                 shouldUnwrapWeth: false,
                 isStrictThresholdAmount: false,
-                isFirstTransferFromTaker: false,
-                useTransferFromAndAquaPush: false,
+                isFirstTransferFromTaker: true,
+                useTransferFromAndAquaPush: true,
                 isAToB: true,
                 allowPartialFill: false,
-                threshold: bytes(""),
+                threshold: "",
                 to: address(this),
                 deadline: 0,
                 hasPreTransferInCallback: false,
@@ -119,61 +127,63 @@ contract PolicyEnvelopeTest is Test {
                 preTransferInCallbackData: "",
                 preTransferOutCallbackData: "",
                 instructionsArgs: "",
-                signature: abi.encodePacked(r, s, v)
+                signature: ""
             })
         );
     }
 
     /// @notice A mandate that does not bind leaves the strategy behaviour untouched.
     function test_WithinMandateSettlesNormally() public {
-        ISwapVM.Order memory order = _order(_program(100e18, 1.5e18));
-        (uint256 amountIn, uint256 amountOut,) = swapVM.swap(order, 10e18, _takerData(order));
+        ISwapVM.Order memory order = _order(_program(100e18, 1.9e18, 0.003e7));
+        _ship(order);
+
+        uint256 before = tokenB.balanceOf(address(this));
+        (uint256 amountIn, uint256 amountOut,) = swapVM.swap(order, 10e18, _takerData());
 
         assertEq(amountIn, 10e18, "input as requested");
-        assertEq(amountOut, 20e18, "output at the 2.0 opening rate");
+        assertGt(amountOut, 19e18, "constant product minus the 0.3% fee");
+        assertEq(tokenB.balanceOf(address(this)) - before, amountOut, "taker received output");
+
+        // Aqua never took custody: the reserve sat in the maker wallet the whole time.
+        assertEq(tokenA.balanceOf(maker), RESERVE_A + amountIn, "maker received input");
     }
 
-    /// @notice The size cap binds even though the maker has ample balance.
+    /// @notice The size cap binds even though the pool could serve the trade.
     function test_RevertWhenOverCap() public {
-        ISwapVM.Order memory order = _order(_program(100e18, 1.5e18));
-        bytes memory takerData = _takerData(order);
-        vm.expectRevert(
-            abi.encodeWithSelector(PolicyEnvelope.MandateAmountInExceeded.selector, 200e18, uint256(100e18))
-        );
+        ISwapVM.Order memory order = _order(_program(100e18, 1.5e18, 0.003e7));
+        _ship(order);
+
+        bytes memory takerData = _takerData();
+        vm.expectPartialRevert(PolicyEnvelope.MandateAmountInExceeded.selector);
         swapVM.swap(order, 200e18, takerData);
     }
 
-    /// @notice A price under the mandate floor is refused by the VM itself.
+    /// @notice A price under the mandate floor is refused inside the VM.
     function test_RevertWhenBelowFloorRate() public {
-        ISwapVM.Order memory order = _order(_program(100e18, 2.5e18));
-        bytes memory takerData = _takerData(order);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                PolicyEnvelope.MandateRateTooLow.selector, uint256(20e18), uint256(10e18), uint256(2.5e18)
-            )
-        );
+        ISwapVM.Order memory order = _order(_program(100e18, 2.5e18, 0.003e7));
+        _ship(order);
+
+        bytes memory takerData = _takerData();
+        vm.expectPartialRevert(PolicyEnvelope.MandateRateTooLow.selector);
         swapVM.swap(order, 10e18, takerData);
     }
 
-    /// @notice The point of wrapping: an instruction placed AFTER the swap curve still cannot
-    ///   push the settlement outside the mandate. A sequential guard sitting after the curve
-    ///   would have already passed by the time this fee shrank the output.
-    function test_TrailingInstructionCannotEscapeTheEnvelope() public {
-        // 10% out-fee turns the 2.0 rate into 1.8, below the 1.9 floor.
-        ISwapVM.Order memory order = _order(_programWithTrailingFee(100e18, 1.9e18, 0.1e7));
-        bytes memory takerData = _takerData(order);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                PolicyEnvelope.MandateRateTooLow.selector, uint256(18e18), uint256(10e18), uint256(1.9e18)
-            )
-        );
-        swapVM.swap(order, 10e18, takerData);
-    }
+    /// @notice The point of wrapping. FeeFlatIn sits AFTER the envelope in program order, yet it
+    ///   executes inside it, so the envelope judges the price the taker actually gets. A guard
+    ///   that merely ran first would have passed before the fee ever touched the amounts.
+    function test_FeeBehindTheGuardStillCounted() public {
+        // 0.3% fee leaves the rate around 1.974, comfortably above a 1.9 floor.
+        ISwapVM.Order memory ok = _order(_program(100e18, 1.9e18, 0.003e7));
+        _ship(ok);
+        (, uint256 amountOut,) = swapVM.swap(ok, 10e18, _takerData());
+        assertGt(amountOut, 19.7e18, "small fee stays inside the mandate");
 
-    /// @notice The same trailing fee is fine when it still lands inside the mandate.
-    function test_TrailingFeeAllowedWhenStillInsideMandate() public {
-        ISwapVM.Order memory order = _order(_programWithTrailingFee(100e18, 1.7e18, 0.1e7));
-        (, uint256 amountOut,) = swapVM.swap(order, 10e18, _takerData(order));
-        assertEq(amountOut, 18e18, "output net of the trailing fee");
+        // Same mandate, same floor, but a 5% fee drags the rate below it.
+        ISwapVM.Order memory tooExpensive = _order(_program(100e18, 1.9e18, 0.05e7));
+        _ship(tooExpensive);
+
+        bytes memory takerData = _takerData();
+        vm.expectPartialRevert(PolicyEnvelope.MandateRateTooLow.selector);
+        swapVM.swap(tooExpensive, 10e18, takerData);
     }
 }

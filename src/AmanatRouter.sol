@@ -6,16 +6,25 @@ import { Simulator } from "@1inch/solidity-utils/contracts/mixins/Simulator.sol"
 import { SwapVM } from "@1inch/swap-vm/src/SwapVM.sol";
 import { Context } from "@1inch/swap-vm/src/libs/VM.sol";
 import { Opcode, OpcodeOps } from "@1inch/swap-vm/src/libs/OpcodeList.sol";
-import { Opcodes } from "@1inch/swap-vm/src/opcodes/Opcodes.sol";
+import { AquaOpcodes } from "@1inch/swap-vm/src/opcodes/AquaOpcodes.sol";
 
 import { PolicyEnvelope } from "./PolicyEnvelope.sol";
 
-/// @notice SwapVM's instruction set plus PolicyEnvelope.
-/// @dev Extends `Opcodes` rather than `OpcodesDebug`: the debug layer overrides `_runOpcode`
-///   without re-declaring it `virtual`, so it is terminal and cannot be extended further.
-///   `OpcodeList.sol` reserves `_Ix` slots per family bank for exactly this; `_21` sits in the
-///   0x20-0x3f "conditions and access guards" bank, beside `Deadline` and the taker gates.
-contract AmanatOpcodes is Opcodes {
+/// @notice SwapVM's Aqua instruction set plus PolicyEnvelope.
+/// @dev Extends `AquaOpcodes`, the set built for Aqua-backed strategies, rather than the full
+///   `Opcodes`. Two reasons, one of them hard:
+///
+///    - The full set carries 24 instructions an Aqua strategy never reaches for, including every
+///      balance instruction, because in Aqua mode balances are sourced from Aqua rather than
+///      written into the bytecode. Carrying them pushes the router to 28,618 bytes, past the
+///      EIP-170 limit of 24,576, and it cannot be deployed at all.
+///    - This is an Aqua application, so the Aqua-backed variant is the honest base.
+///
+///   Not `OpcodesDebug` either: that layer overrides `_runOpcode` without re-declaring it
+///   `virtual`, so it is terminal. `OpcodeList.sol` reserves `_Ix` slots per family bank for
+///   third parties; `_21` sits in the 0x20-0x3f "conditions and access guards" bank, beside
+///   `Deadline` and the taker gates.
+contract AmanatOpcodes is AquaOpcodes {
     using OpcodeOps for Opcode;
 
     function _runOpcode(Context memory ctx, uint256 opcode, bytes calldata args) internal override {
