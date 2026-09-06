@@ -19,6 +19,7 @@ import { paymentMiddleware } from '@x402/express';
 import 'dotenv/config';
 
 import { explain } from './swapvm.mjs';
+import { resolveAgent, vouchesFor } from './erc8004.mjs';
 
 const PORT = Number(process.env.PORT || 4021);
 const FACILITATOR = process.env.X402_FACILITATOR_URL || 'https://api.testnet.blocky402.com';
@@ -47,7 +48,11 @@ app.get('/', (_req, res) => {
         service: 'Batas mandate inspection',
         describes: 'What limits a SwapVM program actually enforces, decoded from its bytecode.',
         endpoint: 'POST /v1/mandate/explain',
-        body: { program: '0x… SwapVM instruction stream' },
+        body: {
+            program: '0x… SwapVM instruction stream',
+            agentId: 'optional — an ERC-8004 id to resolve the operator behind the position',
+            maker: 'optional — the address that granted the mandate, to check the identity vouches for it',
+        },
         price: `${Number(PRICE.amount) / 1e8} HBAR`,
         network: 'hedera:testnet',
         facilitator: FACILITATOR,
@@ -68,18 +73,35 @@ app.use(
     ),
 );
 
-app.post('/v1/mandate/explain', (req, res) => {
+app.post('/v1/mandate/explain', async (req, res) => {
     const program = req.body?.program;
     if (typeof program !== 'string' || !/^0x[0-9a-fA-F]*$/.test(program)) {
         return res.status(400).json({ error: 'body must be { program: "0x..." }' });
     }
+
+    let answer;
     try {
-        res.json(explain(program));
+        answer = explain(program);
     } catch (e) {
         // A program that cannot be walked is a real answer, not a server fault: it tells the caller
         // the bytes they were handed are not a valid instruction stream.
-        res.status(422).json({ error: String(e.message || e), valid: false });
+        return res.status(422).json({ error: String(e.message || e), valid: false });
     }
+
+    // Who is running this position. The program cannot say — bytecode has no author — so the
+    // answer comes from the ERC-8004 registry rather than from anyone's claim. Optional, because a
+    // caller who only wants the limits should not pay for a chain read they did not ask for.
+    const { agentId, maker } = req.body ?? {};
+    if (agentId !== undefined) {
+        try {
+            const agent = await resolveAgent(agentId);
+            answer.operator = { ...agent, ...(maker ? { check: vouchesFor(agent, maker) } : {}) };
+        } catch (e) {
+            answer.operator = { registered: false, error: String(e.shortMessage || e.message || e) };
+        }
+    }
+
+    res.json(answer);
 });
 
 export default app;
