@@ -21,9 +21,9 @@ import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
 ///   the same position refuse a trade that breaks it. Real ERC-20 transfers, no mocked settlement.
 contract Demo is Script {
     address internal constant AQUA = 0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a;
-    address internal constant ROUTER = 0xe2fC5c03b4103dC703316bB3D781a1b47E82561E;
-    address internal constant TOKEN_A = 0xD1BE5EeD764424BFA0389BF79964B6fBE7725B54;
-    address internal constant TOKEN_B = 0xd504a056906583c9F9Ac3622FBE8edBA4cD9d3E8;
+    address internal constant ROUTER = 0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4;
+    address internal constant TOKEN_A = 0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B;
+    address internal constant TOKEN_B = 0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81;
 
     uint256 internal constant RESERVE_A = 1_000e18;
     uint256 internal constant RESERVE_B = 2_000e18; // opening rate 2.0

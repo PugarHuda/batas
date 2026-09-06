@@ -116,10 +116,10 @@ went out.
 | Contract | Address |
 |---|---|
 | Aqua (canonical, not ours) | [`0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`](https://sepolia.etherscan.io/address/0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a) |
-| `BatasRouter` (SwapVM + PolicyEnvelope) | [`0xe2fC5c03b4103dC703316bB3D781a1b47E82561E`](https://sepolia.etherscan.io/address/0xe2fC5c03b4103dC703316bB3D781a1b47E82561E) |
-| `BatasApp` | [`0x73dc537aC0e276dED9B9a84a69CBF1705eFbfEd9`](https://sepolia.etherscan.io/address/0x73dc537aC0e276dED9B9a84a69CBF1705eFbfEd9) |
-| Demo token A | [`0xD1BE5EeD764424BFA0389BF79964B6fBE7725B54`](https://sepolia.etherscan.io/address/0xD1BE5EeD764424BFA0389BF79964B6fBE7725B54) |
-| Demo token B | [`0xd504a056906583c9F9Ac3622FBE8edBA4cD9d3E8`](https://sepolia.etherscan.io/address/0xd504a056906583c9F9Ac3622FBE8edBA4cD9d3E8) |
+| `BatasRouter` (SwapVM + PolicyEnvelope) | [`0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4`](https://sepolia.etherscan.io/address/0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4) |
+| `BatasApp` | [`0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849`](https://sepolia.etherscan.io/address/0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849) |
+| Demo token A | [`0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B`](https://sepolia.etherscan.io/address/0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B) |
+| Demo token B | [`0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81`](https://sepolia.etherscan.io/address/0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81) |
 
 ```bash
 cp .env.example .env    # then fill in SEPOLIA_PRIVATE_KEY
@@ -134,11 +134,11 @@ transfers, no mocked settlement:
 
 | Step | Transaction |
 |---|---|
-| Ship liquidity under the mandate | [`0x6a808592…`](https://sepolia.etherscan.io/tx/0x6a8085926ffd8f6a63f9ecb0b1e7fe3029b3f5d8656683bdd85b50b2679f9840) |
-| Swap settled inside the mandate | [`0x9c063a11…`](https://sepolia.etherscan.io/tx/0x9c063a1127c40c456306a8b57ceccfe64c99baa062f3868b8ead59474bcb24b3) |
+| Ship liquidity under the mandate | [`0x00d0bc71…`](https://sepolia.etherscan.io/tx/0x00d0bc7132edd8ae9f18e1e5f3f71ca4c41ae3b50a6ae9e0d132d00d7b10561d) |
+| Swap settled inside the mandate | [`0xe08a5613…`](https://sepolia.etherscan.io/tx/0xe08a5613d58047cea2e1bde85069fd2fdd65e9585d2f5ea98c3d57500ec32c20) |
 
 10 tokenA in, **19.743160687941225977 tokenB** out to
-[`0x03ca8eaa…`](https://sepolia.etherscan.io/address/0x03ca8eaa1b939fd7a7bbcebd107ad48f52557b43) —
+[`0x8474d483…`](https://sepolia.etherscan.io/address/0x8474d483Cc4374B8a16fE2D019717b23f0a5BD83) —
 constant product less the 0.3% fee, judged against the 1.9 floor and allowed through.
 
 An oversized trade against the same live position reverts with
@@ -169,11 +169,11 @@ decision
   floor  1.92143732923348277 B per A  (2.00% under spot)
   cap    101 A                        (10.00% of reserve)
 
-program  0x2120...0753050000208000000006a9d5af1 (51 bytes)
+program  0x2120...0753050000208000000006a9d5ef4 (51 bytes)
 
 encoding check
-  local  0x1530fd094a015fdeee9bb6be195e8043b8f62ed61f2e636727c107d42529f2cb
-  chain  0x1530fd094a015fdeee9bb6be195e8043b8f62ed61f2e636727c107d42529f2cb
+  local  0x4d113cd9c03a5ab7aebea6191fa903adf379e648c9c21911f956c09a24d9aeda
+  chain  0x4d113cd9c03a5ab7aebea6191fa903adf379e648c9c21911f956c09a24d9aeda
   agree
 ```
 
@@ -187,7 +187,7 @@ opcode, length prefix or trait bit were wrong, the two hashes would differ and i
 The chain agrees rather than being taken on trust.
 
 Mandate granted by that run:
-[`0x8379a396…`](https://sepolia.etherscan.io/tx/0x8379a396285fd97b5ea189238c697afbb9e0160fc5f171a2ce1121d4daa10b3a).
+[`0x380e5cca…`](https://sepolia.etherscan.io/tx/0x380e5ccaf22e81cdd51e28635fa8c4dd0c98ff4409cfaedd599707b18b579656).
 
 And the point of the whole design: the agent picks these numbers, but it cannot widen them once
 granted. `PolicyEnvelope` enforces whatever it proposed, inside the VM, for as long as the mandate
