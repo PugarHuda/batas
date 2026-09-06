@@ -64,7 +64,9 @@ function registrationFile(operator) {
             + 'program, and ships it. PolicyEnvelope enforces the size cap and floor inside the VM, so the '
             + 'limits hold no matter which caller reaches the position.',
         services: [
-            { name: 'source', endpoint: 'https://github.com/hudapugar/batas', version: '1' },
+            { name: 'source', endpoint: 'https://github.com/PugarHuda/batas', version: '1' },
+            // Live and paid for per call. Listed because it answers, not because it is planned.
+            { name: 'x402', endpoint: 'https://batas-one.vercel.app/v1/mandate/explain', version: '2' },
         ],
         operator,
         registrations: [{ agentAddress: operator, chainId: sepolia.id }],
@@ -80,6 +82,8 @@ function metadataEntries() {
         { metadataKey: 'batas.app', metadataValue: utf8(APP) },
         { metadataKey: 'batas.aqua', metadataValue: utf8(AQUA) },
         { metadataKey: 'batas.enforcement', metadataValue: utf8('swapvm-opcode:0x21') },
+        { metadataKey: 'batas.x402.network', metadataValue: utf8('hedera:testnet') },
+        { metadataKey: 'batas.x402.payTo', metadataValue: utf8(process.env.HEDERA_SERVICE_ID || '0.0.10388560') },
     ];
 }
 

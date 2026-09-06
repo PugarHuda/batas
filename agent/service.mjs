@@ -82,9 +82,15 @@ app.post('/v1/mandate/explain', (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`batas mandate inspection on http://localhost:${PORT}`);
-    console.log(`  paid route  POST /v1/mandate/explain   ${Number(PRICE.amount) / 1e8} HBAR on hedera:testnet`);
-    console.log(`  facilitator ${FACILITATOR}`);
-    console.log(`  payTo       ${PAY_TO}`);
-});
+export default app;
+
+// Vercel sets VERCEL at build and at runtime and serves the exported app itself, so the listener
+// is only for running this locally. One implementation either way; no hosted copy to drift.
+if (!process.env.VERCEL) {
+    app.listen(PORT, () => {
+        console.log(`batas mandate inspection on http://localhost:${PORT}`);
+        console.log(`  paid route  POST /v1/mandate/explain   ${Number(PRICE.amount) / 1e8} HBAR on hedera:testnet`);
+        console.log(`  facilitator ${FACILITATOR}`);
+        console.log(`  payTo       ${PAY_TO}`);
+    });
+}

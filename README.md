@@ -253,13 +253,13 @@ any indexer on Aqua.
 ## A name other software can look up
 
 The agent is registered in the canonical
-[ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) Identity Registry as **agent #10120** on
-Sepolia — [`0xf64d588f…`](https://sepolia.etherscan.io/tx/0xf64d588f14bf0929d539701f583ab330752453e2c271ae8326df9d5050a5915b).
+[ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) Identity Registry as **agent #10123** on
+Sepolia — [`0x7754ce40…`](https://sepolia.etherscan.io/tx/0x7754ce40fe3f6e892512965e1c4c23b43c52d9643b532eb6cfaaecefa42165e2).
 
 ```bash
 node agent/identity.mjs             # build the registration, simulate, show the id it would mint
 node agent/identity.mjs --register  # mint it
-node agent/identity.mjs --read 10120
+node agent/identity.mjs --read 10123
 ```
 
 ERC-8004 is an ERC-721 whose token URI resolves to a file describing what an agent is and where to
@@ -277,7 +277,14 @@ batas.router       0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4
 batas.app          0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849
 batas.aqua         0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a
 batas.enforcement  swapvm-opcode:0x21
+batas.x402.network hedera:testnet
+batas.x402.payTo   0.0.10388560
 ```
+
+Its services list points at the source and at the live paid endpoint. An earlier registration,
+agent #10120, named a source URL that turned out not to exist; #10123 replaces it. That is the
+cost of guessing at a fact instead of checking it, and it is cheap only because registering again
+is cheap.
 
 Nothing is advertised that cannot be checked. No endpoint is listed that this repo does not serve,
 because a registry full of dead links is worse than an empty one.
@@ -295,10 +302,19 @@ enforces. `agent/service.mjs` does that decoding and sells it per call over
 [x402](https://www.x402.org/) on Hedera, settled through the
 [Blocky402](https://blocky402.com/) facilitator.
 
+Live at **https://batas-one.vercel.app** — the same Express app that runs locally, served by
+Vercel Functions, so there is one implementation rather than a hosted copy that can drift.
+
 ```bash
-node agent/service.mjs                     # the paid endpoint
-node agent/inspect.mjs 0x2120...           # pay 0.001 HBAR and read the answer
+curl https://batas-one.vercel.app/                       # free: what it sells and what it costs
+node agent/inspect.mjs 0x2120...                         # pay 0.001 HBAR and read the answer
+BATAS_SERVICE_URL=http://localhost:4021 node agent/inspect.mjs 0x2120...   # against a local server
 ```
+
+A serverless deployment answers its first request cold, and the facilitator handshake the paywall
+needs runs on that request path, so the first caller after an idle period can see a 5xx where a
+warm one sees the 402 immediately. `inspect.mjs` retries once. No payment is created for a failed
+request, so the retry costs a second and nothing else.
 
 A real settlement, confirmed on the Hedera mirror node:
 

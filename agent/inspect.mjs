@@ -111,11 +111,23 @@ async function main() {
     const paidFetch = wrapFetchWithPayment(fetch, client);
 
     console.log(`paying   from ${accountId} on hedera:testnet`);
-    const res = await paidFetch(`${SERVICE}/v1/mandate/explain`, {
+
+    // A serverless deployment answers its first request cold, and the facilitator handshake the
+    // paywall needs runs on that request path. The first caller after an idle period can therefore
+    // see a 5xx while a warm one sees the 402 immediately. Retrying once is the honest fix: no
+    // payment is created for a failed request, so the retry costs nothing but a second.
+    const post = () => paidFetch(`${SERVICE}/v1/mandate/explain`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ program }),
     });
+
+    let res = await post();
+    if (res.status >= 500) {
+        console.log(`retry    service answered ${res.status} cold, trying once more`);
+        await new Promise((r) => setTimeout(r, 1500));
+        res = await post();
+    }
 
     const settled = res.headers.get('PAYMENT-RESPONSE') || res.headers.get('X-PAYMENT-RESPONSE');
     if (settled) {
