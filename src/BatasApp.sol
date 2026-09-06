@@ -27,6 +27,7 @@ contract BatasApp is AquaApp {
     error MandateRateTooLow(uint256 amountOut, uint256 amountIn, uint128 minRateE18);
     error InsufficientOutputAmount(uint256 amountOut, uint256 amountOutMin);
     error ZeroAmountIn();
+    error ZeroAmountOut(uint256 amountIn);
 
     event MandateEnforced(
         bytes32 indexed mandateHash, address indexed maker, address indexed taker, uint256 amountIn, uint256 amountOut
@@ -85,6 +86,12 @@ contract BatasApp is AquaApp {
     /// @dev The mandate itself. Ordered cheapest check first.
     function _checkMandate(Mandate calldata m, uint256 amountIn, uint256 amountOut) internal view {
         require(amountIn != 0, ZeroAmountIn());
+        // Dust that rounds to nothing is a trade where the taker pays and receives zero. The VM
+        // refuses it through the order's allowZeroAmountIn trait; this surface has to refuse it
+        // too, or the mandate would mean different things through different doors. Found by
+        // testFuzz_SurfacesAgreeOnArbitraryTerms with amountIn = 1 wei, where a 0.3% fee rounds
+        // up to the whole input and leaves the curve nothing to price.
+        require(amountOut != 0, ZeroAmountOut(amountIn));
         require(block.timestamp < m.expiry, MandateExpired(m.expiry, block.timestamp));
         require(amountIn <= m.maxAmountIn, MandateAmountInExceeded(amountIn, m.maxAmountIn));
 

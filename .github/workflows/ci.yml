@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - run: npm ci
+
+      # Contracts: unit tests plus the fuzzed agreement between the two enforcement surfaces.
+      - run: forge test -vv
+
+      # The decoder the paid service sells. A wrong answer here is worse than a crash.
+      - run: node --test agent/swapvm.test.mjs
+
+      # The paid HTTP surface, including what its 402 promises. No credentials are needed to
+      # assert the payment requirement, only to settle one, so this runs on a fork or a PR.
+      - run: npx playwright test
+        env:
+          HEDERA_SERVICE_ID: "0.0.10388560"

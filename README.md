@@ -101,8 +101,30 @@ Two things about which base class to extend, both learned the hard way:
 
 ```bash
 npm install
-forge test
+npm test          # contracts, decoder, and the paid API surface
 ```
+
+Three suites, run separately if you prefer:
+
+| Suite | Command | What it covers |
+|---|---|---|
+| Contracts | `npm run test:sol` | Both enforcement surfaces, plus 2000 fuzz runs on their agreement |
+| Decoder | `npm run test:js` | The instruction walker the paid service sells answers from |
+| Paid API | `npm run test:api` | Playwright against the x402 endpoint, including what its 402 promises |
+
+The API suite starts the service itself and asserts the payment requirement without spending
+anything, so it runs anywhere. Settling a real payment needs Hedera credentials; that path is
+exercised by `agent/inspect.mjs`.
+
+### A bug the fuzzer found
+
+`testFuzz_SurfacesAgreeOnArbitraryTerms` failed at 1 wei of input. A 0.3% fee rounds up to the
+entire input, leaving the curve nothing to price, so the output is zero. The VM refused the trade
+through the order's `allowZeroAmountIn` trait; `BatasApp` accepted it, and the taker would have
+paid a wei for nothing.
+
+That is exactly the failure the agreement tests exist to catch — not one surface being wrong on its
+own, but the two of them meaning different things. `BatasApp` now refuses zero output too.
 
 Every dependency is pinned to an exact commit or version. That is deliberate: 1inch replaced
 `InstructionBuilder` with a `MemoryPtr` streaming API during this hackathon, and an unpinned

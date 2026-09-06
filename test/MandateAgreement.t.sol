@@ -217,4 +217,56 @@ contract MandateAgreementTest is Test, IBatasCallback {
             })
         );
     }
+
+    /// @notice The agreement has to hold for arbitrary terms, not three sizes someone chose.
+    /// @dev Foundry reverts state between fuzz runs, so each case ships a fresh position. The
+    ///   assertion is deliberately about *outcomes* rather than amounts: either both surfaces
+    ///   settle and agree to the wei, or both refuse. A case where one accepts and the other
+    ///   rejects is the failure that matters, because then the mandate would mean different
+    ///   things depending on which door a trade arrived through.
+    function testFuzz_SurfacesAgreeOnArbitraryTerms(uint128 rawCap, uint128 rawFloor, uint96 rawAmount)
+        public
+    {
+        uint128 cap = uint128(bound(rawCap, 0, 800e18));
+        uint128 floorRate = uint128(bound(rawFloor, 0, 3e18));
+        uint256 amountIn = bound(rawAmount, 1, 800e18);
+
+        Mandate memory m = _mandate(cap, floorRate);
+        ISwapVM.Order memory order = _shipBoth(m);
+
+        bool appOk;
+        uint256 appOut;
+        try app.quote(m, amountIn) returns (uint256 out) {
+            appOk = true;
+            appOut = out;
+        } catch { }
+
+        bool vmOk;
+        uint256 vmOut;
+        try router.quote(order, amountIn, _takerData()) returns (uint256, uint256 out, bytes32) {
+            vmOk = true;
+            vmOut = out;
+        } catch { }
+
+        assertEq(appOk, vmOk, "one surface accepted a trade the other refused");
+        if (appOk) assertEq(appOut, vmOut, "both accepted but priced it differently");
+    }
+
+    /// @notice A mandate whose floor is unreachable must be refused by both, never by one.
+    function testFuzz_ImpossibleFloorRefusedByBoth(uint128 rawFloor, uint96 rawAmount) public {
+        // The pool opens at 2.0 and only moves down as it is bought, so anything above 2.0 is
+        // unreachable for a non-zero trade.
+        uint128 floorRate = uint128(bound(rawFloor, 2.01e18, 100e18));
+        uint256 amountIn = bound(rawAmount, 1e15, 500e18);
+
+        Mandate memory m = _mandate(type(uint128).max, floorRate);
+        ISwapVM.Order memory order = _shipBoth(m);
+
+        vm.expectRevert();
+        app.quote(m, amountIn);
+
+        bytes memory takerData = _takerData();
+        vm.expectRevert();
+        router.swap(order, amountIn, takerData);
+    }
 }

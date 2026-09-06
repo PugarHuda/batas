@@ -16,5 +16,17 @@
     "express": "^5.2.1",
     "forge-std": "github:foundry-rs/forge-std#v1.11.0",
     "viem": "^2.56.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  },
+  "scripts": {
+    "test": "npm run test:sol && npm run test:js && npm run test:api",
+    "test:sol": "forge test",
+    "test:js": "node --test agent/swapvm.test.mjs",
+    "test:api": "playwright test",
+    "service": "node agent/service.mjs",
+    "agent": "node agent/batas-agent.mjs",
+    "inspect": "node agent/inspect.mjs"
   }
 }

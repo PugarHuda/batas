@@ -13,3 +13,9 @@ via_ir         = true
 line_length          = 120
 bracket_spacing      = true
 number_underscore    = "thousands"
+
+[fuzz]
+# The cross-surface agreement is the property most worth hammering: a disagreement means a mandate
+# says different things depending on which door a trade arrives through. 1 wei of dust already
+# found one bug at the default run count.
+runs = 2000
