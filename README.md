@@ -109,12 +109,26 @@ Three suites, run separately if you prefer:
 | Suite | Command | What it covers |
 |---|---|---|
 | Contracts | `npm run test:sol` | Both enforcement surfaces, plus 2000 fuzz runs on their agreement |
-| Decoder | `npm run test:js` | The instruction walker the paid service sells answers from |
-| Paid API | `npm run test:api` | Playwright against the x402 endpoint, including what its 402 promises |
+| JavaScript | `npm run test:js` | The decoder, strategy recovery, and encoder parity with Solidity |
+| Paid API | `npm run test:api` | Playwright against a local x402 endpoint, including what its 402 promises |
+| Deployment | `npm run test:prod` | The same assertions against the URL the on-chain identity advertises |
 
 The API suite starts the service itself and asserts the payment requirement without spending
 anything, so it runs anywhere. Settling a real payment needs Hedera credentials; that path is
 exercised by `agent/inspect.mjs`.
+
+### Two encoders, one format
+
+The agent builds SwapVM programs in JavaScript; the contracts build them in Solidity through
+`MandateLib.toProgram`. A program is just bytes, so nothing on chain would object to the two
+drifting apart — which is exactly what had happened. **The agent was silently omitting the
+`Deadline` instruction, so every mandate it granted was authority with no end**, while the project
+described expiry as one of three terms.
+
+`script/DumpPrograms.s.sol` now prints what Solidity emits for a fixed set of mandates, and
+`agent/encoder-parity.test.mjs` runs it and asserts the JavaScript encoder produces the same bytes
+case by case. Both sides now compile from one place, and one test asserts every compiled mandate
+carries an expiry at all.
 
 ### A bug the fuzzer found
 
@@ -125,6 +139,18 @@ paid a wei for nothing.
 
 That is exactly the failure the agreement tests exist to catch — not one surface being wrong on its
 own, but the two of them meaning different things. `BatasApp` now refuses zero output too.
+
+### And one the tests could not run until it was fixed
+
+`agent/inspect.mjs` recovered a program from Aqua's stored strategy by counting ABI words by hand.
+`abi.encode(Order)` opens with an offset word because `Order` has a dynamic member, and the
+hand-rolled version skipped it — surfacing as `Cannot convert 0x to a BigInt` from deep inside a
+decoder, which sends you looking in the wrong place entirely. It uses viem's
+`decodeAbiParameters` now, because the layout is already known by something that is not us.
+
+Writing the test for it exposed a second problem: the file called `main()` at module scope, so
+importing it ran the whole paid flow as a side effect of loading. `inspect.mjs`, `identity.mjs`
+and `batas-agent.mjs` now only run when invoked directly.
 
 Every dependency is pinned to an exact commit or version. That is deliberate: 1inch replaced
 `InstructionBuilder` with a `MemoryPtr` streaming API during this hackathon, and an unpinned

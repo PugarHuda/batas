@@ -11,7 +11,7 @@
 import { wrapFetchWithPayment, x402Client, decodePaymentResponseHeader } from '@x402/fetch';
 import { ExactHederaScheme } from '@x402/hedera/exact/client';
 import { createClientHederaSigner, PrivateKey } from '@x402/hedera';
-import { createPublicClient, http, getAddress } from 'viem';
+import { createPublicClient, http, getAddress, decodeAbiParameters, parseAbiParameters } from 'viem';
 import { sepolia } from 'viem/chains';
 import 'dotenv/config';
 
@@ -60,18 +60,22 @@ async function latestProgramOnChain() {
     return null;
 }
 
-/** `data` is tokenA ++ tokenB ++ program, so the program starts 40 bytes in. */
-function programFromOrderData(dataHex) {
-    return `0x${dataHex.replace(/^0x/, '').slice(80)}`;
-}
-
-/** Decode abi.encode(Order) far enough to reach the `data` field. */
-function orderDataFromStrategy(strategyHex) {
-    const b = strategyHex.replace(/^0x/, '');
-    const word = (i) => b.slice(i * 64, (i + 1) * 64);
-    const dataOffset = Number(BigInt('0x' + word(2))) / 32; // words
-    const len = Number(BigInt('0x' + word(dataOffset)));
-    return `0x${b.slice((dataOffset + 1) * 64, (dataOffset + 1) * 64 + len * 2)}`;
+/**
+ * Recover the program from the strategy bytes Aqua stored.
+ *
+ * The strategy is `abi.encode(Order)`, and `Order` has a dynamic member, so the encoding opens
+ * with an offset word before the struct itself. Hand-counting those words is how the first version
+ * of this function got it wrong; viem already knows the layout, so it decodes rather than counts.
+ * `Order.data` is then tokenA ++ tokenB ++ program, and the program starts 40 bytes in.
+ */
+export function programFromStrategy(strategyHex) {
+    const [order] = decodeAbiParameters(
+        parseAbiParameters('(address maker, uint256 traits, bytes data)'),
+        strategyHex,
+    );
+    const data = order.data.replace(/^0x/, '');
+    if (data.length < 80) throw new Error('order data is shorter than its two token addresses');
+    return `0x${data.slice(80)}`;
 }
 
 async function main() {
@@ -87,7 +91,7 @@ async function main() {
         if (!found) {
             throw new Error('pass a program as an argument, or set BATAS_OWNER to read the live position');
         }
-        program = programFromOrderData(orderDataFromStrategy(found.strategy));
+        program = programFromStrategy(found.strategy);
         console.log(`reading the live position ${found.strategyHash}`);
     }
     console.log(`program  ${program}`);
@@ -162,7 +166,11 @@ async function main() {
     }
 }
 
-main().catch((e) => {
-    console.error(String(e.shortMessage || e.message || e));
-    process.exit(1);
-});
+// Only run when invoked directly. Importing this file — a test does, and so could any other
+// tool — must not fire off the whole flow as a side effect of loading it.
+if (import.meta.filename === process.argv[1]) {
+    main().catch((e) => {
+        console.error(String(e.shortMessage || e.message || e));
+        process.exit(1);
+    });
+}

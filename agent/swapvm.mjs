@@ -50,6 +50,28 @@ export const feeFlatIn = (feeBps) => instruction(OP.FEE_FLAT_IN, pad(toHex(feeBp
 export const xycSwap = () => instruction(OP.XYC_SWAP);
 export const salt = (value) => instruction(OP.SALT, pad(toHex(value), { size: 8 }));
 
+/**
+ * Compile a mandate into the program that enforces it.
+ *
+ * This mirrors `MandateLib.toProgram` in Solidity instruction for instruction, and
+ * `encoder-parity.test.mjs` asserts the two produce identical bytes for a fixed set of mandates.
+ * Two encoders for one format is exactly where a divergence hides quietly: a program is just
+ * bytes, so nothing on chain would object to an agent shipping something the project's own
+ * compiler would never emit.
+ *
+ * Order is deliberate and matches the Solidity side: PolicyEnvelope first so it wraps everything
+ * after it, Deadline for the expiry term, then the fee ahead of the curve so the swap prices the
+ * amount actually being exchanged, then Salt so identical terms can be shipped again.
+ */
+export const toProgram = ({ maxAmountIn, minRateE18, expiry, feeBps, salt: saltValue }) =>
+    concat([
+        policyEnvelope(maxAmountIn, minRateE18),
+        deadline(expiry),
+        feeFlatIn(feeBps),
+        xycSwap(),
+        salt(saltValue),
+    ]);
+
 // --- decoding ---------------------------------------------------------------
 
 const hexToBig = (hex) => (hex.length === 0 ? 0n : BigInt('0x' + hex));

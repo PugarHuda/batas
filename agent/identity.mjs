@@ -150,7 +150,11 @@ async function main() {
     console.log(`\nhttps://sepolia.etherscan.io/tx/${hash}`);
 }
 
-main().catch((e) => {
-    console.error(String(e.shortMessage || e.message || e));
-    process.exit(1);
-});
+// Only run when invoked directly. Importing this file — a test does, and so could any other
+// tool — must not fire off the whole flow as a side effect of loading it.
+if (import.meta.filename === process.argv[1]) {
+    main().catch((e) => {
+        console.error(String(e.shortMessage || e.message || e));
+        process.exit(1);
+    });
+}

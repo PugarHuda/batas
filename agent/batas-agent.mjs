@@ -13,8 +13,10 @@
 
 import {
     createPublicClient, createWalletClient, http, encodeAbiParameters, parseAbiParameters,
-    keccak256, concat, pad, toHex, formatUnits, getAddress,
+    keccak256, concat, formatUnits, getAddress,
 } from 'viem';
+
+import { toProgram } from './swapvm.mjs';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import 'dotenv/config';
@@ -79,22 +81,9 @@ const ERC20_ABI = [
 ];
 
 // --- SwapVM program encoding -------------------------------------------------
-// Instruction layout is [opcode: 1][args length: 1][args: N]. Kept explicit rather than pulled
-// from a helper, because getting it wrong silently produces a program that reverts on chain.
-
-const instruction = (opcode, args = '0x') => {
-    const body = args.slice(2);
-    if (body.length % 2 !== 0) throw new Error('args must be whole bytes');
-    const len = body.length / 2;
-    if (len > 255) throw new Error(`args too long: ${len}`);
-    return concat([toHex(opcode, { size: 1 }), toHex(len, { size: 1 }), args]);
-};
-
-const policyEnvelope = (maxAmountIn, minRateE18) =>
-    instruction(OP.POLICY_ENVELOPE, concat([pad(toHex(maxAmountIn), { size: 16 }), pad(toHex(minRateE18), { size: 16 })]));
-const feeFlatIn = (feeBps) => instruction(OP.FEE_FLAT_IN, pad(toHex(feeBps), { size: 3 }));
-const xycSwap = () => instruction(OP.XYC_SWAP);
-const salt = (value) => instruction(OP.SALT, pad(toHex(value), { size: 8 }));
+// Shared with the decoder and with MandateLib on the Solidity side, rather than written a second
+// time here. The first version of this file had its own inline encoder and silently dropped the
+// Deadline instruction, so every mandate the agent granted was one that never expired.
 
 const buildOrder = (maker, program) => ({
     maker,
@@ -191,13 +180,18 @@ async function main() {
     console.log(`  floor  ${formatUnits(minRateE18, 18)} B per A  (${pct(SLIPPAGE_BPS, 10000n)}% under spot)`);
     console.log(`  cap    ${formatUnits(maxAmountIn, 18)} A        (${pct(CAP_BPS, 10000n)}% of reserve)`);
     console.log(`  fee    ${Number(FEE_BPS) / Number(BPS) * 100}%`);
+    console.log(`  expires in 2 hours`);
 
-    const program = concat([
-        policyEnvelope(maxAmountIn, minRateE18),
-        feeFlatIn(FEE_BPS),
-        xycSwap(),
-        salt(BigInt(Math.floor(Date.now() / 1000))),
-    ]);
+    // Expiry is part of the grant, not decoration: a mandate with no deadline is authority with
+    // no end. Two hours matches what the demo grants.
+    const expiry = BigInt(Math.floor(Date.now() / 1000) + 2 * 60 * 60);
+    const program = toProgram({
+        maxAmountIn,
+        minRateE18,
+        expiry,
+        feeBps: FEE_BPS,
+        salt: BigInt(Math.floor(Date.now() / 1000)),
+    });
     const order = buildOrder(account.address, program);
 
     console.log(`\nprogram  ${program} (${(program.length - 2) / 2} bytes)`);
@@ -237,7 +231,11 @@ async function main() {
     console.log(`\nhttps://sepolia.etherscan.io/tx/${hash}`);
 }
 
-main().catch((e) => {
-    console.error(String(e.shortMessage || e.message || e));
-    process.exit(1);
-});
+// Only run when invoked directly. Importing this file — a test does, and so could any other
+// tool — must not fire off the whole flow as a side effect of loading it.
+if (import.meta.filename === process.argv[1]) {
+    main().catch((e) => {
+        console.error(String(e.shortMessage || e.message || e));
+        process.exit(1);
+    });
+}
