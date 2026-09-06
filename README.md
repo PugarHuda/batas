@@ -228,6 +228,63 @@ bytes all sit in the data, and the log carries a single topic. A node therefore 
 events by maker or app, so the agent fetches and sifts client-side. Worth knowing before building
 any indexer on Aqua.
 
+## Paying for what the bytecode says
+
+A Batas position states its terms only as SwapVM bytecode. Anyone about to trade against one — or
+about to let an agent run under it — has to decode that stream to find out what it actually
+enforces. `agent/service.mjs` does that decoding and sells it per call over
+[x402](https://www.x402.org/) on Hedera, settled through the
+[Blocky402](https://blocky402.com/) facilitator.
+
+```bash
+node agent/service.mjs                     # the paid endpoint
+node agent/inspect.mjs 0x2120...           # pay 0.001 HBAR and read the answer
+```
+
+A real settlement, confirmed on the Hedera mirror node:
+
+```
+result       SUCCESS
+0.0.10388401  -0.001 HBAR     agent, paying
+0.0.10388560  +0.001 HBAR     service, paid
+0.0.7162784   -0.0024552      Blocky402 covering the network fee
+```
+
+No API key, no account, no subscription. The first request returns `402`, the client settles and
+retries, and the payment is the authentication.
+
+Decoded from the program the agent actually shipped:
+
+```
+guarded by PolicyEnvelope: true
+  @ 0 POLICY_ENVELOPE
+  @34 FEE_FLAT_IN
+  @39 XYC_SWAP
+  @41 SALT
+enforced mandate
+  max input   101
+  floor rate  1.92143732923348277
+  fee         0.3%
+  curve       constant product (x*y=k)
+```
+
+`guarded` is the field worth reading first. It is true only when `PolicyEnvelope` occupies the
+outermost position; anywhere else, later instructions can undo whatever it checked, and the service
+says so in plain words rather than leaving the caller to notice.
+
+### Two things worth knowing before building this
+
+The official Hedera x402 proof of concept points its **testnet** configuration at `x402.org` and
+reaches for Blocky402 only on mainnet. The Hedera track requires Blocky402. It does serve
+`hedera:testnet` — at `api.testnet.blocky402.com`, whose `/supported` sits at the root rather than
+under the `/v1` path the site advertises. Copy the PoC as-is and you settle through the wrong
+facilitator with everything appearing to work.
+
+Payment is priced in **HBAR rather than USDC**. An HTS token has to be associated with an account
+before it can be received; HBAR does not. That is one less step between a caller and an answer,
+which is the entire point of paying per request. The client also caps itself at 0.01 HBAR per call
+through x402 spend controls — the same idea the contracts enforce, one layer up.
+
 ## What the tests prove
 
 **Aqua layer** — a swap inside every limit settles and moves real tokens; expiry refuses however
