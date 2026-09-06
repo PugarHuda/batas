@@ -13,7 +13,7 @@ import { XYCSwap } from "@1inch/swap-vm/src/instructions/XYCSwap.sol";
 import { FeeFlatIn } from "@1inch/swap-vm/src/instructions/FeeFlat.sol";
 import { Deadline } from "@1inch/swap-vm/src/instructions/Controls.sol";
 
-import { AmanatRouter } from "../src/AmanatRouter.sol";
+import { BatasRouter } from "../src/BatasRouter.sol";
 import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
 
 /// @dev Aqua-backed mode: the maker ships liquidity to the router and the encoded order is the
@@ -21,7 +21,7 @@ import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
 ///   a balance instruction, which is why AquaOpcodes carries none.
 contract PolicyEnvelopeTest is Test {
     Aqua internal aqua;
-    AmanatRouter internal swapVM;
+    BatasRouter internal swapVM;
     TokenMock internal tokenA;
     TokenMock internal tokenB;
 
@@ -34,7 +34,7 @@ contract PolicyEnvelopeTest is Test {
 
     function setUp() public {
         aqua = new Aqua();
-        swapVM = new AmanatRouter(address(aqua), address(0), address(this), "Amanat", "1.0.0");
+        swapVM = new BatasRouter(address(aqua), address(0), address(this), "Batas", "1.0.0");
 
         tokenA = new TokenMock("A", "A");
         tokenB = new TokenMock("B", "B");

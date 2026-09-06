@@ -14,7 +14,7 @@ import { XYCSwap } from "@1inch/swap-vm/src/instructions/XYCSwap.sol";
 import { FeeFlatIn } from "@1inch/swap-vm/src/instructions/FeeFlat.sol";
 import { CoreInvariants } from "@1inch/swap-vm/test/invariants/CoreInvariants.t.sol";
 
-import { AmanatRouter } from "../src/AmanatRouter.sol";
+import { BatasRouter } from "../src/BatasRouter.sol";
 import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
 
 /// @notice Runs PolicyEnvelope against SwapVM's own invariant harness.
@@ -27,7 +27,7 @@ import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
 ///   here are set far outside the probe amounts on purpose.
 contract PolicyEnvelopeInvariantsTest is Test, CoreInvariants {
     Aqua internal aqua;
-    AmanatRouter internal swapVM;
+    BatasRouter internal swapVM;
     TokenMock internal tokenA;
     TokenMock internal tokenB;
 
@@ -44,7 +44,7 @@ contract PolicyEnvelopeInvariantsTest is Test, CoreInvariants {
 
     function setUp() public {
         aqua = new Aqua();
-        swapVM = new AmanatRouter(address(aqua), address(0), address(this), "Amanat", "1.0.0");
+        swapVM = new BatasRouter(address(aqua), address(0), address(this), "Batas", "1.0.0");
 
         tokenA = new TokenMock("A", "A");
         tokenB = new TokenMock("B", "B");

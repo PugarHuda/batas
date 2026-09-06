@@ -14,7 +14,7 @@ import { XYCSwap } from "@1inch/swap-vm/src/instructions/XYCSwap.sol";
 import { FeeFlatIn } from "@1inch/swap-vm/src/instructions/FeeFlat.sol";
 import { Salt } from "@1inch/swap-vm/src/instructions/Controls.sol";
 
-import { AmanatRouter } from "../src/AmanatRouter.sol";
+import { BatasRouter } from "../src/BatasRouter.sol";
 import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
 
 /// @notice End-to-end walkthrough on a live chain: grant a mandate, trade inside it, then watch
@@ -36,7 +36,7 @@ contract Demo is Script {
         uint256 pk = vm.envUint("SEPOLIA_PRIVATE_KEY");
         address me = vm.addr(pk);
 
-        AmanatRouter router = AmanatRouter(payable(ROUTER));
+        BatasRouter router = BatasRouter(payable(ROUTER));
         (address t0, address t1) = TOKEN_A < TOKEN_B ? (TOKEN_A, TOKEN_B) : (TOKEN_B, TOKEN_A);
 
         // Aqua permanently burns a strategy hash, so the same terms need a fresh salt each run.
@@ -72,7 +72,7 @@ contract Demo is Script {
 
         // A trade inside the mandate settles. Output goes to a separate address so the transfer
         // is visible on-chain rather than netting out against the maker's own reserve.
-        address recipient = address(uint160(uint256(keccak256("amanat.demo.recipient"))));
+        address recipient = address(uint160(uint256(keccak256("batas.demo.recipient"))));
         uint256 beforeOut = IERC20(t1).balanceOf(recipient);
         (uint256 amountIn, uint256 amountOut,) = router.swap(order, 10e18, _takerData(me, recipient));
         console.log("settled: in %s out %s", amountIn, amountOut);

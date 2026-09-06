@@ -1,11 +1,11 @@
-// Amanat agent.
+// Batas agent.
 //
 // Reads the live position on Sepolia, decides what mandate the owner should be asked to grant,
 // encodes the SwapVM program itself, and ships it. Every number below comes off the chain; nothing
 // here is simulated.
 //
-//   node agent/amanat-agent.mjs            observe and decide, no transaction
-//   node agent/amanat-agent.mjs --ship     also ship the mandate it decided on
+//   node agent/batas-agent.mjs            observe and decide, no transaction
+//   node agent/batas-agent.mjs --ship     also ship the mandate it decided on
 //
 // The agent chooses within bounds it cannot widen: the floor price it proposes is derived from the
 // spot it observed, and whatever it proposes is enforced by PolicyEnvelope inside the VM. That is

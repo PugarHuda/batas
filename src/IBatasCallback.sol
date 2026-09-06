@@ -3,8 +3,8 @@ pragma solidity 0.8.30;
 
 /// @notice Implemented by takers. Called after output tokens have been sent but before the
 ///   app verifies payment, so the taker can source the input however it likes.
-interface IAmanatCallback {
-    function amanatSwapCallback(
+interface IBatasCallback {
+    function batasSwapCallback(
         address tokenIn,
         address tokenOut,
         uint256 amountIn,

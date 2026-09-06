@@ -6,10 +6,10 @@ import { TokenMock } from "@1inch/solidity-utils/contracts/mocks/TokenMock.sol";
 
 import { IAqua } from "@1inch/aqua/src/interfaces/IAqua.sol";
 
-import { AmanatApp } from "../src/AmanatApp.sol";
-import { AmanatRouter } from "../src/AmanatRouter.sol";
+import { BatasApp } from "../src/BatasApp.sol";
+import { BatasRouter } from "../src/BatasRouter.sol";
 
-/// @notice Deploys Amanat against the canonical Aqua registry on Sepolia.
+/// @notice Deploys Batas against the canonical Aqua registry on Sepolia.
 /// @dev Aqua is already live at the deterministic address below, so nothing about the liquidity
 ///   layer is re-deployed. Only our own app and the SwapVM router carrying PolicyEnvelope are,
 ///   which the 1inch track permits ("redeployments of a modified SwapVM contract is allowed").
@@ -27,15 +27,15 @@ contract Deploy is Script {
 
         vm.startBroadcast(pk);
 
-        AmanatApp app = new AmanatApp(IAqua(AQUA));
-        console.log("AmanatApp", address(app));
+        BatasApp app = new BatasApp(IAqua(AQUA));
+        console.log("BatasApp", address(app));
 
-        AmanatRouter router = new AmanatRouter(AQUA, address(0), deployer, "Amanat", "1.0.0");
-        console.log("AmanatRouter", address(router));
+        BatasRouter router = new BatasRouter(AQUA, address(0), deployer, "Batas", "1.0.0");
+        console.log("BatasRouter", address(router));
 
         // Demo pair. Mintable so the walkthrough can be replayed without hunting for faucets.
-        TokenMock tokenA = new TokenMock("Amanat Demo USD", "aUSD");
-        TokenMock tokenB = new TokenMock("Amanat Demo ETH", "aETH");
+        TokenMock tokenA = new TokenMock("Batas Demo USD", "aUSD");
+        TokenMock tokenB = new TokenMock("Batas Demo ETH", "aETH");
         console.log("tokenA", address(tokenA));
         console.log("tokenB", address(tokenB));
 

@@ -7,16 +7,16 @@ import { TokenMock } from "@1inch/solidity-utils/contracts/mocks/TokenMock.sol";
 import { Aqua } from "@1inch/aqua/src/Aqua.sol";
 import { IAqua } from "@1inch/aqua/src/interfaces/IAqua.sol";
 
-import { AmanatApp } from "../src/AmanatApp.sol";
+import { BatasApp } from "../src/BatasApp.sol";
 import { Mandate, MandateLib } from "../src/Mandate.sol";
-import { IAmanatCallback } from "../src/IAmanatCallback.sol";
+import { IBatasCallback } from "../src/IBatasCallback.sol";
 
 /// @dev The test contract is the taker: it receives the callback and pays for the swap there.
-contract AmanatAppTest is Test, IAmanatCallback {
+contract BatasAppTest is Test, IBatasCallback {
     using MandateLib for Mandate;
 
     Aqua internal aqua;
-    AmanatApp internal app;
+    BatasApp internal app;
     TokenMock internal tokenIn;
     TokenMock internal tokenOut;
 
@@ -28,7 +28,7 @@ contract AmanatAppTest is Test, IAmanatCallback {
 
     function setUp() public {
         aqua = new Aqua();
-        app = new AmanatApp(IAqua(address(aqua)));
+        app = new BatasApp(IAqua(address(aqua)));
 
         tokenIn = new TokenMock("In", "IN");
         tokenOut = new TokenMock("Out", "OUT");
@@ -67,11 +67,12 @@ contract AmanatAppTest is Test, IAmanatCallback {
             maxAmountIn: 100e18,
             minRateE18: 1.5e18,
             expiry: uint64(block.timestamp + 2 hours),
-            salt: bytes32(0)
+            feeBps: 0.003e7,
+            salt: 0
         });
     }
 
-    function amanatSwapCallback(
+    function batasSwapCallback(
         address tokenIn_,
         address,
         uint256 amountIn,
@@ -114,7 +115,7 @@ contract AmanatAppTest is Test, IAmanatCallback {
         _ship(m);
 
         vm.warp(m.expiry);
-        vm.expectRevert(abi.encodeWithSelector(AmanatApp.MandateExpired.selector, m.expiry, block.timestamp));
+        vm.expectRevert(abi.encodeWithSelector(BatasApp.MandateExpired.selector, m.expiry, block.timestamp));
         app.swap(m, 10e18, 0, address(this), "");
     }
 
@@ -125,7 +126,7 @@ contract AmanatAppTest is Test, IAmanatCallback {
 
         uint256 tooBig = uint256(m.maxAmountIn) + 1;
         vm.expectRevert(
-            abi.encodeWithSelector(AmanatApp.MandateAmountInExceeded.selector, tooBig, m.maxAmountIn)
+            abi.encodeWithSelector(BatasApp.MandateAmountInExceeded.selector, tooBig, m.maxAmountIn)
         );
         app.swap(m, tooBig, 0, address(this), "");
     }
@@ -137,9 +138,11 @@ contract AmanatAppTest is Test, IAmanatCallback {
         _ship(m);
 
         uint256 amountIn = 50e18;
-        uint256 amountOut = (amountIn * RESERVE_OUT) / (RESERVE_IN + amountIn);
+        // Derived from the shared library rather than restated, so the test cannot drift from
+        // the pricing the app and the compiled program both use.
+        uint256 amountOut = MandateLib.quoteExactIn(m, RESERVE_IN, RESERVE_OUT, amountIn);
         vm.expectRevert(
-            abi.encodeWithSelector(AmanatApp.MandateRateTooLow.selector, amountOut, amountIn, m.minRateE18)
+            abi.encodeWithSelector(BatasApp.MandateRateTooLow.selector, amountOut, amountIn, m.minRateE18)
         );
         app.swap(m, amountIn, 0, address(this), "");
     }
@@ -150,7 +153,7 @@ contract AmanatAppTest is Test, IAmanatCallback {
         _ship(m);
 
         vm.warp(m.expiry);
-        vm.expectRevert(abi.encodeWithSelector(AmanatApp.MandateExpired.selector, m.expiry, block.timestamp));
+        vm.expectRevert(abi.encodeWithSelector(BatasApp.MandateExpired.selector, m.expiry, block.timestamp));
         app.quote(m, 10e18);
     }
 

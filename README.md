@@ -1,6 +1,6 @@
-# Amanat
+# Batas
 
-*Amanat* — Indonesian for **mandate**: authority entrusted within limits that must not be exceeded.
+*Batas* — Indonesian for **mandate**: authority entrusted within limits that must not be exceeded.
 
 An autonomous agent can run your liquidity position. It cannot exceed the terms you granted it,
 because the only contract allowed to touch your tokens refuses to settle a swap that breaks them.
@@ -39,7 +39,7 @@ actually gate the money.
 
 ### 1. The mandate *is* the Aqua strategy
 
-`Aqua.ship()` hashes the strategy bytes you hand it. Amanat passes the encoded mandate as those
+`Aqua.ship()` hashes the strategy bytes you hand it. Batas passes the encoded mandate as those
 bytes, so the mandate hash and the strategy hash are the same value. The terms are not metadata
 attached to the position; they are its identity. Aqua refuses to re-ship a hash it has already
 seen, so the terms cannot be quietly rewritten afterwards.
@@ -49,7 +49,7 @@ without storing a byte of it.
 
 ### 2. The limits are checked before tokens move
 
-[`AmanatApp`](src/AmanatApp.sol) is a constant-product Aqua application. Every swap validates the
+[`BatasApp`](src/BatasApp.sol) is a constant-product Aqua application. Every swap validates the
 mandate *before* `AQUA.pull()`, because after `pull()` the tokens have already left.
 
 ### 3. And again inside the VM
@@ -76,13 +76,13 @@ before the fee ever touched the amounts.
 | What | File |
 |---|---|
 | Mandate terms, and why the hash is the strategy hash | [`src/Mandate.sol`](src/Mandate.sol) |
-| Aqua application; limits checked before `pull()` | [`src/AmanatApp.sol`](src/AmanatApp.sol) |
+| Aqua application; limits checked before `pull()` | [`src/BatasApp.sol`](src/BatasApp.sol) |
 | Wrapping SwapVM instruction, opcode slot `0x21` | [`src/PolicyEnvelope.sol`](src/PolicyEnvelope.sol) |
-| Router carrying the extended instruction set | [`src/AmanatRouter.sol`](src/AmanatRouter.sol) |
-| Aqua-layer tests | [`test/AmanatApp.t.sol`](test/AmanatApp.t.sol) |
+| Router carrying the extended instruction set | [`src/BatasRouter.sol`](src/BatasRouter.sol) |
+| Aqua-layer tests | [`test/BatasApp.t.sol`](test/BatasApp.t.sol) |
 | VM-layer tests | [`test/PolicyEnvelope.t.sol`](test/PolicyEnvelope.t.sol) |
 
-Nothing in `node_modules/@1inch/**` is edited. `AmanatOpcodes` claims one of the `_Ix` slots
+Nothing in `node_modules/@1inch/**` is edited. `BatasOpcodes` claims one of the `_Ix` slots
 `OpcodeList.sol` reserves per family bank for third parties — `_21`, in the 0x20-0x3f conditions
 and access guards bank, beside `Deadline` and the taker gates. The router is a redeployment, which
 the 1inch track permits.
@@ -116,8 +116,8 @@ went out.
 | Contract | Address |
 |---|---|
 | Aqua (canonical, not ours) | [`0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`](https://sepolia.etherscan.io/address/0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a) |
-| `AmanatRouter` (SwapVM + PolicyEnvelope) | [`0xe2fC5c03b4103dC703316bB3D781a1b47E82561E`](https://sepolia.etherscan.io/address/0xe2fC5c03b4103dC703316bB3D781a1b47E82561E) |
-| `AmanatApp` | [`0x73dc537aC0e276dED9B9a84a69CBF1705eFbfEd9`](https://sepolia.etherscan.io/address/0x73dc537aC0e276dED9B9a84a69CBF1705eFbfEd9) |
+| `BatasRouter` (SwapVM + PolicyEnvelope) | [`0xe2fC5c03b4103dC703316bB3D781a1b47E82561E`](https://sepolia.etherscan.io/address/0xe2fC5c03b4103dC703316bB3D781a1b47E82561E) |
+| `BatasApp` | [`0x73dc537aC0e276dED9B9a84a69CBF1705eFbfEd9`](https://sepolia.etherscan.io/address/0x73dc537aC0e276dED9B9a84a69CBF1705eFbfEd9) |
 | Demo token A | [`0xD1BE5EeD764424BFA0389BF79964B6fBE7725B54`](https://sepolia.etherscan.io/address/0xD1BE5EeD764424BFA0389BF79964B6fBE7725B54) |
 | Demo token B | [`0xd504a056906583c9F9Ac3622FBE8edBA4cD9d3E8`](https://sepolia.etherscan.io/address/0xd504a056906583c9F9Ac3622FBE8edBA4cD9d3E8) |
 
@@ -150,12 +150,12 @@ hash, which is how the same terms get a fresh position.
 
 ## The agent
 
-`agent/amanat-agent.mjs` is the half the project is named for. It reads the live position on
+`agent/batas-agent.mjs` is the half the project is named for. It reads the live position on
 Sepolia, decides what mandate to grant, encodes the SwapVM program itself, and ships it.
 
 ```bash
-node agent/amanat-agent.mjs          # observe and decide, no transaction
-node agent/amanat-agent.mjs --ship   # also grant the mandate it decided on
+node agent/batas-agent.mjs          # observe and decide, no transaction
+node agent/batas-agent.mjs --ship   # also grant the mandate it decided on
 ```
 
 A real run against the deployed position:

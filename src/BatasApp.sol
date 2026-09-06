@@ -7,16 +7,18 @@ import { IAqua } from "@1inch/aqua/src/interfaces/IAqua.sol";
 import { AquaApp } from "@1inch/aqua/src/AquaApp.sol";
 
 import { Mandate, MandateLib } from "./Mandate.sol";
-import { IAmanatCallback } from "./IAmanatCallback.sol";
+import { IBatasCallback } from "./IBatasCallback.sol";
 
-/// @title AmanatApp
+/// @title BatasApp
 /// @notice A constant-product Aqua application whose every swap must satisfy the maker's mandate.
+/// @dev Same `Mandate` type the router's program is compiled from, and the same pricing library,
+///   so this is a second surface over one system rather than a parallel implementation.
 /// @dev Aqua's security model is a single sentence: whichever app the maker ships to may pull
 ///   their tokens, and `Aqua.pull()` checks nothing beyond `msg.sender`. This contract is
 ///   therefore not merely a strategy — it is the only thing standing between an autonomous
 ///   agent and the maker's wallet. Every limit is checked here, before `pull()`, because after
 ///   `pull()` the tokens have already left.
-contract AmanatApp is AquaApp {
+contract BatasApp is AquaApp {
     using Math for uint256;
     using MandateLib for Mandate;
 
@@ -40,7 +42,7 @@ contract AmanatApp is AquaApp {
         bytes32 mandateHash = m.hash();
         (uint256 balanceIn, uint256 balanceOut) =
             AQUA.safeBalances(m.maker, address(this), mandateHash, m.tokenIn, m.tokenOut);
-        amountOut = _quote(balanceIn, balanceOut, amountIn);
+        amountOut = _quote(m, balanceIn, balanceOut, amountIn);
         _checkMandate(m, amountIn, amountOut);
     }
 
@@ -56,12 +58,12 @@ contract AmanatApp is AquaApp {
         (uint256 balanceIn, uint256 balanceOut) =
             AQUA.safeBalances(m.maker, address(this), mandateHash, m.tokenIn, m.tokenOut);
 
-        amountOut = _quote(balanceIn, balanceOut, amountIn);
+        amountOut = _quote(m, balanceIn, balanceOut, amountIn);
         _checkMandate(m, amountIn, amountOut);
         require(amountOut >= amountOutMin, InsufficientOutputAmount(amountOut, amountOutMin));
 
         AQUA.pull(m.maker, mandateHash, m.tokenOut, amountOut, to);
-        IAmanatCallback(msg.sender).amanatSwapCallback(
+        IBatasCallback(msg.sender).batasSwapCallback(
             m.tokenIn, m.tokenOut, amountIn, amountOut, m.maker, mandateHash, takerData
         );
         _safeCheckAquaPush(m.maker, mandateHash, m.tokenIn, balanceIn + amountIn);
@@ -69,13 +71,15 @@ contract AmanatApp is AquaApp {
         emit MandateEnforced(mandateHash, m.maker, msg.sender, amountIn, amountOut);
     }
 
-    /// @dev Constant product, rounding down so the remainder stays with the maker.
-    function _quote(uint256 balanceIn, uint256 balanceOut, uint256 amountIn)
+    /// @dev Pricing lives in MandateLib, shared with the compiled SwapVM program, so the two
+    ///   enforcement surfaces cannot drift apart. Constant product after a maker fee, rounding
+    ///   toward the maker at every step.
+    function _quote(Mandate calldata m, uint256 balanceIn, uint256 balanceOut, uint256 amountIn)
         internal
         pure
         returns (uint256 amountOut)
     {
-        amountOut = (amountIn * balanceOut) / (balanceIn + amountIn);
+        amountOut = MandateLib.quoteExactIn(m, balanceIn, balanceOut, amountIn);
     }
 
     /// @dev The mandate itself. Ordered cheapest check first.

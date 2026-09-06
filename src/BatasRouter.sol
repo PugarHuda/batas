@@ -24,7 +24,7 @@ import { PolicyEnvelope } from "./PolicyEnvelope.sol";
 ///   `virtual`, so it is terminal. `OpcodeList.sol` reserves `_Ix` slots per family bank for
 ///   third parties; `_21` sits in the 0x20-0x3f "conditions and access guards" bank, beside
 ///   `Deadline` and the taker gates.
-contract AmanatOpcodes is AquaOpcodes {
+contract BatasOpcodes is AquaOpcodes {
     using OpcodeOps for Opcode;
 
     function _runOpcode(Context memory ctx, uint256 opcode, bytes calldata args) internal override {
@@ -35,7 +35,7 @@ contract AmanatOpcodes is AquaOpcodes {
 
 /// @notice A SwapVM router wired to the extended instruction set.
 /// @dev The 1inch track permits redeploying a modified SwapVM; nothing in the vendor tree is edited.
-contract AmanatRouter is Simulator, SwapVM, AmanatOpcodes {
+contract BatasRouter is Simulator, SwapVM, BatasOpcodes {
     constructor(address aqua, address weth, address owner, string memory name, string memory version)
         SwapVM(aqua, weth, owner, name, version)
     { }
