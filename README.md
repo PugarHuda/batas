@@ -148,6 +148,62 @@ Each run salts the program, because Aqua permanently burns a strategy hash once 
 `Salt` is the instruction that exists for exactly this: a no-op whose bytes change the program
 hash, which is how the same terms get a fresh position.
 
+## The agent
+
+`agent/amanat-agent.mjs` is the half the project is named for. It reads the live position on
+Sepolia, decides what mandate to grant, encodes the SwapVM program itself, and ships it.
+
+```bash
+node agent/amanat-agent.mjs          # observe and decide, no transaction
+node agent/amanat-agent.mjs --ship   # also grant the mandate it decided on
+```
+
+A real run against the deployed position:
+
+```
+observed 1 mandate(s); reading the newest
+reserves 1010 A / 1980.256839312058774023 B
+spot     1.960650335952533439 B per A
+
+decision
+  floor  1.92143732923348277 B per A  (2.00% under spot)
+  cap    101 A                        (10.00% of reserve)
+
+program  0x2120...0753050000208000000006a9d5af1 (51 bytes)
+
+encoding check
+  local  0x1530fd094a015fdeee9bb6be195e8043b8f62ed61f2e636727c107d42529f2cb
+  chain  0x1530fd094a015fdeee9bb6be195e8043b8f62ed61f2e636727c107d42529f2cb
+  agree
+```
+
+Every number is read from the chain. The spot price is derived from the reserves Aqua reports, the
+floor is one slippage budget under it, and the cap is a slice of the reserve — which is what
+actually bounds how far one trade can walk the price.
+
+The **encoding check** is the part worth pausing on. The agent assembles the instruction stream
+itself, byte by byte, then asks the deployed router to hash the resulting order. If a single
+opcode, length prefix or trait bit were wrong, the two hashes would differ and it refuses to ship.
+The chain agrees rather than being taken on trust.
+
+Mandate granted by that run:
+[`0x8379a396…`](https://sepolia.etherscan.io/tx/0x8379a396285fd97b5ea189238c697afbb9e0160fc5f171a2ce1121d4daa10b3a).
+
+And the point of the whole design: the agent picks these numbers, but it cannot widen them once
+granted. `PolicyEnvelope` enforces whatever it proposed, inside the VM, for as long as the mandate
+lives.
+
+### Two things the chain taught the encoder
+
+`MakerTraits` for an Aqua-backed order with no hooks is the Aqua flag at bit 254 plus four `uint16`
+order-data offsets, all 40, because `data` opens with two addresses and nothing else. That was
+decoded from a live order rather than assumed.
+
+`Aqua.Shipped` declares **no indexed parameters at all** — maker, app, strategy hash and strategy
+bytes all sit in the data, and the log carries a single topic. A node therefore cannot filter these
+events by maker or app, so the agent fetches and sifts client-side. Worth knowing before building
+any indexer on Aqua.
+
 ## What the tests prove
 
 **Aqua layer** — a swap inside every limit settles and moves real tokens; expiry refuses however
