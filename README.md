@@ -276,6 +276,53 @@ bytes all sit in the data, and the log carries a single topic. A node therefore 
 events by maker or app, so the agent fetches and sifts client-side. Worth knowing before building
 any indexer on Aqua.
 
+## The mandate as a name
+
+A mandate is authority granted within limits, for a while, revocably, to one holder. ENSv2 has all
+four as primitives rather than as conventions someone agrees to honour, so the grant is expressed
+as a name rather than described by one.
+
+```bash
+node agent/ens.mjs --deploy         # deploy the mandate registry, once
+node agent/ens.mjs --grant agent    # grant a subname whose expiry matches the live mandate
+node agent/ens.mjs --read agent     # what it currently authorises
+node agent/ens.mjs --revoke agent   # take it back early
+```
+
+The registry is a `UserRegistry` proxy deployed through ENS's own `VerifiableFactory`, at
+[`0x945800Bd…`](https://sepolia.etherscan.io/address/0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B).
+Reading the granted name back off chain:
+
+```
+name          agent
+expiry        2026-09-06T15:41:14.000Z
+holder        0x1100000        SET_RESOLVER | SET_SUBREGISTRY
+transferable  false
+```
+
+| Property of a mandate | ENSv2 primitive |
+|---|---|
+| Expiring | `expiry` is a parameter of `register()`, not a record anyone has to remember to check |
+| Revocable | the grantor keeps `ROLE_UNREGISTER`; `unregister()` burns the token immediately |
+| Non-transferable | `ROLE_CAN_TRANSFER_ADMIN` is withheld, so the name is soulbound to its holder |
+| Scoped | the role bitmap names exactly what the holder may change, and nothing more |
+
+**That expiry is not a coincidence.** It is read from the live position on chain and is the same
+timestamp compiled into the program's `Deadline` instruction. The name and the authority it stands
+for end at the same moment, because an identity that outlives the permission it represents is a
+lie waiting to be believed.
+
+What the holder is refused matters as much as what it gets, and `agent/ens.test.mjs` pins each
+one: no `ROLE_CAN_TRANSFER_ADMIN`, so the grant cannot be sold; no `ROLE_UNREGISTER`, so it cannot
+erase the record of itself; no `ROLE_RENEW`, so it cannot extend its own authority; no
+`ROLE_REGISTRAR`, so it cannot mint further names. Getting one of those shifts wrong is silent —
+the registration still succeeds, the name simply permits more than intended.
+
+> ENSv2 is in beta on Sepolia and the deployment moved once during this project: the registry
+> contracts are a different size now than they were in August. Every address here was re-checked
+> with `cast code` before use, and the role values came from the specification rather than from
+> memory.
+
 ## A name other software can look up
 
 The agent is registered in the canonical

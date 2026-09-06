@@ -23,11 +23,12 @@
   "scripts": {
     "test": "npm run test:sol && npm run test:js && npm run test:api",
     "test:sol": "forge test",
-    "test:js": "node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs",
+    "test:js": "node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs",
     "test:api": "playwright test --project=local",
     "service": "node agent/service.mjs",
     "agent": "node agent/batas-agent.mjs",
     "inspect": "node agent/inspect.mjs",
-    "test:prod": "playwright test --project=production"
+    "test:prod": "playwright test --project=production",
+    "ens": "node agent/ens.mjs"
   }
 }
