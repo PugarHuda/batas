@@ -433,14 +433,31 @@ the position or spending anything on chain:
 $ node agent/ens.mjs --revoke agent
 revoked "agent"
 
-$ node agent/batas-agent.mjs
-mandate name "agent": mandate name "agent" expired at 2026-09-06T14:58:00.000Z
+$ node agent/batas-agent.mjs --ship
+mandate name "agent": mandate name "agent" was revoked at 2026-09-06T22:18:24.000Z, ahead of its term
 refusing to act without a valid mandate name
+
+$ node agent/ens.mjs --grant agent      # and the agent resumes
+mandate name "agent": held and unexpired
+  43190 minutes of authority left
 ```
 
-Grant it again and the agent resumes. That check is what separates an integration from a mention:
-until the agent consulted the name, "revocable" was a property the registry offered and nothing
-used.
+That check is what separates an integration from a mention: until the agent consulted the name,
+"revocable" was a property the registry offered and nothing used.
+
+> Running that cycle for real is what showed the report was wrong. `unregister` does not zero the
+> expiry — it sets it to the moment of revocation — so a name the owner *pulled* and one that
+> simply *ran out* both read as "expired", and the operator of a stopped agent was told the wrong
+> reason. Worse, the branch meant to catch revocation was unreachable: it hung off a `try/catch`
+> waiting for `ownerOf` to revert, and this registry answers a burned name with the zero address
+> instead. Had the expiry check not shadowed it, the report would have been "held by 0x0000…",
+> which is true and useless.
+>
+> Two signals separate them, and both cost nothing. `grant()` sets the name to expire with the
+> mandate, so an expiry falling short of the mandate's own deadline means someone cut it short —
+> and a name already burned while its term still runs is revoked outright. The judgement now lives
+> in `classifyName`, apart from the chain reads, because logic that can only be exercised by
+> sending a transaction does not get exercised.
 
 > Making it load-bearing immediately exposed a bug. The registry's token id is the labelhash with
 > its **low 32 bits cleared** — those hold a version counter it bumps on re-registration, so a

@@ -157,40 +157,75 @@ export const isSoulbound = (bitmap) => (bitmap & ROLE_CAN_TRANSFER_ADMIN) === 0n
  * this before it acts, and stops when the answer is no. Expiry does the same thing on a timer
  * without anyone having to be awake for it.
  */
-export async function mandateNameStatus(pub, registry, label, holder) {
-    const now = Math.floor(Date.now() / 1000);
-    // Ask the registry for the current token id rather than deriving one: it carries a version
-    // counter in its low bits that only the registry knows the value of.
-    const id = await pub.readContract({
-        address: registry, abi: REGISTRY_ABI, functionName: 'findTokenId', args: [label],
-    });
+export const ZERO = '0x0000000000000000000000000000000000000000';
+const iso = (unix) => new Date(unix * 1000).toISOString();
 
-    const expiry = Number(
-        await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'findExpiry', args: [label] }),
-    );
+/**
+ * Decide what the registry's answers mean, given nothing but those answers.
+ *
+ * Split out from the reads because this is where the judgement lives, and judgement that can only
+ * be exercised by sending a transaction does not get exercised. The two mistakes it exists to
+ * prevent were both silent: treating a burned name as merely expired, and treating a name the
+ * owner pulled as one that ran out on its own.
+ *
+ * `grantedUntil` is the live mandate's deadline. `grant()` sets the name to expire with the
+ * mandate, so a name expiring earlier than that was cut short by someone.
+ */
+export function classifyName({ label, registry, expiry, owner, holder, now, grantedUntil }) {
     if (expiry === 0) {
-        return { valid: false, reason: `no mandate name "${label}" in ${registry}`, expiry: 0, secondsLeft: 0 };
+        return { valid: false, revoked: false, reason: `no mandate name "${label}" in ${registry}`, expiry: 0, secondsLeft: 0 };
     }
-    if (expiry <= now) {
+
+    const burned = !owner || owner === ZERO;
+    if (burned || expiry <= now) {
+        // Revoking sets the expiry to the moment of revocation, so a pulled name and a lapsed one
+        // look identical from the timestamp alone. These two signals separate them: an expiry that
+        // falls short of the granted term, or a name already burned while its term still runs.
+        const revoked = (grantedUntil !== undefined && expiry < Number(grantedUntil)) || (burned && expiry > now);
         return {
             valid: false,
-            reason: `mandate name "${label}" expired at ${new Date(expiry * 1000).toISOString()}`,
+            revoked,
+            reason: revoked
+                ? `mandate name "${label}" was revoked at ${iso(expiry)}, ahead of its term`
+                : `mandate name "${label}" expired at ${iso(expiry)}`,
             expiry,
             secondsLeft: 0,
         };
     }
 
-    let owner;
-    try {
-        owner = await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'ownerOf', args: [id] });
-    } catch {
-        return { valid: false, reason: `mandate name "${label}" has been revoked`, expiry, secondsLeft: 0 };
-    }
     if (owner.toLowerCase() !== holder.toLowerCase()) {
-        return { valid: false, reason: `mandate name "${label}" is held by ${owner}, not ${holder}`, expiry, secondsLeft: 0 };
+        return { valid: false, revoked: false, reason: `mandate name "${label}" is held by ${owner}, not ${holder}`, expiry, secondsLeft: 0 };
     }
 
-    return { valid: true, reason: 'held and unexpired', expiry, secondsLeft: expiry - now, owner };
+    return { valid: true, revoked: false, reason: 'held and unexpired', expiry, secondsLeft: expiry - now, owner };
+}
+
+/**
+ * Is the agent still authorised, and if not, why not.
+ *
+ * Reads the registry and hands the answers to `classifyName`. Pass the live mandate's deadline as
+ * `grantedUntil` to have a withdrawal reported as one rather than as a lapse.
+ */
+export async function mandateNameStatus(pub, registry, label, holder, { grantedUntil } = {}) {
+    // Ask the registry for the current token id rather than deriving one: it carries a version
+    // counter in its low bits that only the registry knows the value of, and `unregister` bumps it.
+    const id = await pub.readContract({
+        address: registry, abi: REGISTRY_ABI, functionName: 'findTokenId', args: [label],
+    });
+    const expiry = Number(
+        await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'findExpiry', args: [label] }),
+    );
+
+    // This registry answers `ownerOf` for a burned name with the zero address instead of reverting,
+    // so a try/catch around it catches nothing. It is checked as a value, which is what it is.
+    let owner = ZERO;
+    try {
+        owner = await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'ownerOf', args: [id] });
+    } catch { /* some registries do revert; that is burned too */ }
+
+    return classifyName({
+        label, registry, expiry, owner, holder, now: Math.floor(Date.now() / 1000), grantedUntil,
+    });
 }
 
 async function deploy() {

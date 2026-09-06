@@ -16,7 +16,8 @@ import {
     keccak256, concat, formatUnits, getAddress,
 } from 'viem';
 
-import { toProgram, decideMandate } from './swapvm.mjs';
+import { toProgram, decideMandate, decodeProgram, readMandate } from './swapvm.mjs';
+import { programFromStrategy } from './inspect.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { publishMandate } from './hcs.mjs';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -177,7 +178,14 @@ async function main() {
     const ensRegistry = process.env.BATAS_ENS_REGISTRY;
     if (ensRegistry) {
         const label = process.env.BATAS_MANDATE_NAME || 'agent';
-        const status = await mandateNameStatus(pub, getAddress(ensRegistry), label, account.address);
+        // The live mandate's own deadline. The name is granted to run exactly that long, so an
+        // earlier expiry on the name means the owner pulled it rather than that it ran out — and
+        // an agent reporting a withdrawal as a lapse tells its operator the wrong thing.
+        let grantedUntil;
+        try {
+            grantedUntil = readMandate(decodeProgram(programFromStrategy(latest.args.strategy))).expiry ?? undefined;
+        } catch { /* an undecodable strategy is not a reason to skip the authority check */ }
+        const status = await mandateNameStatus(pub, getAddress(ensRegistry), label, account.address, { grantedUntil });
         console.log('');
         console.log(`mandate name "${label}": ${status.reason}`);
         if (!status.valid) {
