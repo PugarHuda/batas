@@ -250,6 +250,43 @@ bytes all sit in the data, and the log carries a single topic. A node therefore 
 events by maker or app, so the agent fetches and sifts client-side. Worth knowing before building
 any indexer on Aqua.
 
+## A name other software can look up
+
+The agent is registered in the canonical
+[ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) Identity Registry as **agent #10120** on
+Sepolia — [`0xf64d588f…`](https://sepolia.etherscan.io/tx/0xf64d588f14bf0929d539701f583ab330752453e2c271ae8326df9d5050a5915b).
+
+```bash
+node agent/identity.mjs             # build the registration, simulate, show the id it would mint
+node agent/identity.mjs --register  # mint it
+node agent/identity.mjs --read 10120
+```
+
+ERC-8004 is an ERC-721 whose token URI resolves to a file describing what an agent is and where to
+reach it. The registry sits at `0x8004A818BFB912233c491871b3d84c89A494BD9e` — the same address on
+Ethereum Sepolia **and** Hedera testnet, which happen to be the two chains this project runs on.
+Both were checked for code before anything was written to either.
+
+The registration is a `data:` URI rather than a hosted link. A hosted file is a promise that some
+server stays up, and the point of an identity registry is that the answer survives. Alongside it,
+metadata entries keep the on-chain facts queryable without fetching the URI at all:
+
+```
+batas.chain        eip155:11155111
+batas.router       0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4
+batas.app          0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849
+batas.aqua         0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a
+batas.enforcement  swapvm-opcode:0x21
+```
+
+Nothing is advertised that cannot be checked. No endpoint is listed that this repo does not serve,
+because a registry full of dead links is worse than an empty one.
+
+> Two addresses circulate for these registries. The ones in most write-ups —
+> `0x8004A169…` and `0x8004BAa1…` — hold code on **mainnet only** and are empty on Sepolia. The
+> testnet deployments in the official `erc-8004/erc-8004-contracts` repository are the pair above.
+> Both were verified with `cast code` before use.
+
 ## Paying for what the bytecode says
 
 A Batas position states its terms only as SwapVM bytecode. Anyone about to trade against one — or

@@ -1,0 +1,152 @@
+// Register the Batas agent in the canonical ERC-8004 Identity Registry.
+//
+//   node agent/identity.mjs            build the registration and show what would be sent
+//   node agent/identity.mjs --register mint the identity on Sepolia
+//   node agent/identity.mjs --read 123 read an existing agent's registration back
+//
+// ERC-8004 gives an autonomous agent an identity other software can look up: an ERC-721 whose
+// token URI resolves to a registration file describing what the agent is and where to reach it.
+// The registry lives at the same address on Sepolia and Hedera testnet, which happen to be the two
+// chains this project runs on.
+//
+// The registration is stored as a data: URI rather than a hosted link. A hosted file is a promise
+// that some server stays up; the point of an identity registry is that the answer survives.
+
+import { createPublicClient, createWalletClient, http, getAddress, toHex } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { sepolia } from 'viem/chains';
+import 'dotenv/config';
+
+// Same address on Ethereum Sepolia and Hedera testnet. Verified to hold code on both.
+const IDENTITY_REGISTRY = getAddress('0x8004A818BFB912233c491871b3d84c89A494BD9e');
+
+const ROUTER = getAddress(process.env.BATAS_ROUTER || '0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4');
+const APP = getAddress(process.env.BATAS_APP || '0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849');
+const AQUA = getAddress('0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a');
+
+const REGISTRY_ABI = [
+    {
+        name: 'register', type: 'function', stateMutability: 'nonpayable',
+        inputs: [
+            { name: 'agentURI', type: 'string' },
+            {
+                name: 'metadata', type: 'tuple[]',
+                components: [{ name: 'metadataKey', type: 'string' }, { name: 'metadataValue', type: 'bytes' }],
+            },
+        ],
+        outputs: [{ type: 'uint256' }],
+    },
+    {
+        name: 'tokenURI', type: 'function', stateMutability: 'view',
+        inputs: [{ name: 'tokenId', type: 'uint256' }],
+        outputs: [{ type: 'string' }],
+    },
+    {
+        name: 'ownerOf', type: 'function', stateMutability: 'view',
+        inputs: [{ name: 'tokenId', type: 'uint256' }],
+        outputs: [{ type: 'address' }],
+    },
+];
+
+/**
+ * The registration file. Everything in here is checkable: the addresses hold code on Sepolia and
+ * the source is public, so a reader never has to take a claim on faith. Nothing is listed that
+ * cannot be verified — in particular no endpoint is advertised that this repo does not actually
+ * serve, because an identity registry full of dead links is worse than an empty one.
+ */
+function registrationFile(operator) {
+    return {
+        type: 'https://eips.ethereum.org/EIPS/eip-8004',
+        name: 'Batas',
+        description:
+            'An autonomous market maker on 1inch Aqua that cannot exceed the mandate it was granted. '
+            + 'It reads the live position, derives a floor price from the observed spot, compiles a SwapVM '
+            + 'program, and ships it. PolicyEnvelope enforces the size cap and floor inside the VM, so the '
+            + 'limits hold no matter which caller reaches the position.',
+        services: [
+            { name: 'source', endpoint: 'https://github.com/hudapugar/batas', version: '1' },
+        ],
+        operator,
+        registrations: [{ agentAddress: operator, chainId: sepolia.id }],
+    };
+}
+
+/** Metadata entries are the on-chain facts, kept queryable without fetching the URI at all. */
+function metadataEntries() {
+    const utf8 = (v) => toHex(new TextEncoder().encode(v));
+    return [
+        { metadataKey: 'batas.chain', metadataValue: utf8(`eip155:${sepolia.id}`) },
+        { metadataKey: 'batas.router', metadataValue: utf8(ROUTER) },
+        { metadataKey: 'batas.app', metadataValue: utf8(APP) },
+        { metadataKey: 'batas.aqua', metadataValue: utf8(AQUA) },
+        { metadataKey: 'batas.enforcement', metadataValue: utf8('swapvm-opcode:0x21') },
+    ];
+}
+
+const toDataUri = (obj) =>
+    `data:application/json;base64,${Buffer.from(JSON.stringify(obj)).toString('base64')}`;
+
+async function main() {
+    const key = process.env.SEPOLIA_PRIVATE_KEY;
+    if (!key) throw new Error('SEPOLIA_PRIVATE_KEY missing; copy .env.example to .env');
+
+    const account = privateKeyToAccount(key);
+    const transport = http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com');
+    const pub = createPublicClient({ chain: sepolia, transport });
+
+    const readIdx = process.argv.indexOf('--read');
+    if (readIdx !== -1) {
+        const tokenId = BigInt(process.argv[readIdx + 1]);
+        const [uri, owner] = await Promise.all([
+            pub.readContract({ address: IDENTITY_REGISTRY, abi: REGISTRY_ABI, functionName: 'tokenURI', args: [tokenId] }),
+            pub.readContract({ address: IDENTITY_REGISTRY, abi: REGISTRY_ABI, functionName: 'ownerOf', args: [tokenId] }),
+        ]);
+        console.log(`agent    #${tokenId}`);
+        console.log(`owner    ${owner}`);
+        const json = uri.startsWith('data:')
+            ? JSON.parse(Buffer.from(uri.split(',')[1], 'base64').toString())
+            : { hostedAt: uri };
+        console.log(JSON.stringify(json, null, 2));
+        return;
+    }
+
+    const file = registrationFile(account.address);
+    const agentURI = toDataUri(file);
+    const metadata = metadataEntries();
+
+    console.log(`registry ${IDENTITY_REGISTRY}`);
+    console.log(`operator ${account.address}`);
+    console.log(`uri      ${agentURI.length} chars, self-contained`);
+    console.log('metadata');
+    for (const m of metadata) console.log(`  ${m.metadataKey}`);
+
+    // Simulate first: the registry tells us the id it would mint, which is also a check that the
+    // call is well formed before any gas is spent.
+    const { result: predictedId } = await pub.simulateContract({
+        account,
+        address: IDENTITY_REGISTRY,
+        abi: REGISTRY_ABI,
+        functionName: 'register',
+        args: [agentURI, metadata],
+    });
+    console.log(`\nwould mint agent #${predictedId}`);
+
+    if (!process.argv.includes('--register')) {
+        console.log('run again with --register to mint it');
+        return;
+    }
+
+    const wallet = createWalletClient({ account, chain: sepolia, transport });
+    const hash = await wallet.writeContract({
+        address: IDENTITY_REGISTRY, abi: REGISTRY_ABI, functionName: 'register', args: [agentURI, metadata],
+    });
+    const receipt = await pub.waitForTransactionReceipt({ hash });
+    console.log(`tx       ${hash}`);
+    console.log(`status   ${receipt.status}  gas ${receipt.gasUsed}`);
+    console.log(`\nhttps://sepolia.etherscan.io/tx/${hash}`);
+}
+
+main().catch((e) => {
+    console.error(String(e.shortMessage || e.message || e));
+    process.exit(1);
+});
