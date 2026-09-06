@@ -71,6 +71,51 @@ program order, yet it executes inside it: at 0.3% the rate lands near 1.974 and 
 while at 5% the same mandate refuses the trade. A guard that merely ran first would have passed
 before the fee ever touched the amounts.
 
+## What already exists, and what does not
+
+This is a crowded problem and an empty position. Both halves are worth stating plainly.
+
+**The problem is not speculative.** The **Asset-Enforced Spend Mandate**
+draft, posted to Ethereum Magicians in June 2026 with participation from the ERC-8226 authors and
+MetaMask's delegation team, proposes token-level guardrails for agent wallets: a `spendGate` on the
+transfer path, `checkTransfer` returning reason codes like `EXPIRED` and `OVER_TX_CAP`. It reaches
+for the same word and nearly the same error taxonomy as this repository.
+
+It also shows where the ceiling of that approach is. A gate on the transfer path sees one leg. It
+can bound **how much leaves** and nothing else, because a token contract has no idea what comes
+back. `minRateE18` is not expressible there. Enforcement inside the settlement venue sees both
+legs, which is why Batas can bound the price a position accepts rather than only its size.
+
+**Enforcement elsewhere is advisory.** [ENShell](https://ethglobal.com/showcase/enshell-6t95y)
+(ETHGlobal Cannes 2026, top ten) routes agent intents through Chainlink CRE to an LLM that scores
+them 0–100,000 and answers approve/escalate/block. Wallet infrastructure — Turnkey, Openfort —
+places policy at the account layer. All of it runs before a signature and off-chain, which means a
+counterparty has to trust the operator's server, and a judgement made from a prompt can be argued
+with. `PolicyEnvelope` runs during settlement, has no prompt, and reverts.
+
+**In 1inch's own ecosystem, nobody has written a policy instruction.** The two Aqua winners went
+deep into the VM in other directions: [Aqua0](https://ethglobal.com/showcase/aqua0-u2krx) (Buenos
+Aires 2025, 1inch 4th, since incubated by 1inch) built new AMM curves as AquaApps across chains,
+and [KSwap-VM](https://ethglobal.com/showcase/kswap-vm-aix5n) (Lisbon 2026, 1inch 3rd) wrote
+K-framework semantics and proofs for the *existing* swap-vm instructions, filing real bug reports
+against them. Market structure and verification. No new constraint opcode, and no wrapping
+instruction outside 1inch's own fee family.
+
+**Naming an agent is not the novel part, and this repo does not claim it is.**
+[HumanENS](https://ethglobal.com/showcase/humanens-9qp31) issues per-agent subnames behind World ID,
+[AgentRadar](https://ethglobal.com/showcase/agentradar-4dx17) resolves ERC-8004 agents through a
+wildcard CCIP-Read resolver and ranks them, and Uniforum gave debating Uniswap agents subdomain
+identities. Batas uses ENSv2 for something those do not: the subname is not a label but the
+**revocation lever**. The holder is granted `0x1100000` and nothing more, `UNREGISTER` and `RENEW`
+stay with the grantor, and withholding `ROLE_CAN_TRANSFER_ADMIN` makes the grant soulbound. Read
+[The name is a kill switch, not a label](#the-name-is-a-kill-switch-not-a-label) for the bitmap.
+
+**And the paid endpoint sells a different good than its neighbours.** Hedera's x402 bounty closed in
+July 2026 with five winners; the two published ones — Pinout and Mystic — meter a resource by the
+second. `/v1/mandate/explain` meters nothing. It sells a verdict that the party asking for it cannot
+produce alone: what a program's bytes actually permit, and whether the identity claiming to operate
+it holds the registration it names.
+
 ## Where to look
 
 | What | File |
