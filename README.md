@@ -66,8 +66,10 @@ Two properties follow that a plain sequential guard cannot offer:
 - **Nothing can undo the check.** Later instructions execute *inside* the wrapper. A fee appended
   behind the curve cannot push the amounts back out of bounds once the guard has already passed.
 
-`test_TrailingInstructionCannotEscapeTheEnvelope` pins exactly this: a 10% out-fee placed after the
-curve drags the rate from 2.0 to 1.8, and the mandate still catches it.
+`test_FeeBehindTheGuardStillCounted` pins exactly this. `FeeFlatIn` sits after the envelope in
+program order, yet it executes inside it: at 0.3% the rate lands near 1.974 and passes a 1.9 floor,
+while at 5% the same mandate refuses the trade. A guard that merely ran first would have passed
+before the fee ever touched the amounts.
 
 ## Where to look
 
@@ -80,13 +82,20 @@ curve drags the rate from 2.0 to 1.8, and the mandate still catches it.
 | Aqua-layer tests | [`test/AmanatApp.t.sol`](test/AmanatApp.t.sol) |
 | VM-layer tests | [`test/PolicyEnvelope.t.sol`](test/PolicyEnvelope.t.sol) |
 
-Nothing in `node_modules/@1inch/**` is edited. `AmanatOpcodes` extends `Opcodes` through the
-`_Ix` slots `OpcodeList.sol` reserves for third parties, and the router is a redeployment, which
+Nothing in `node_modules/@1inch/**` is edited. `AmanatOpcodes` claims one of the `_Ix` slots
+`OpcodeList.sol` reserves per family bank for third parties — `_21`, in the 0x20-0x3f conditions
+and access guards bank, beside `Deadline` and the taker gates. The router is a redeployment, which
 the 1inch track permits.
 
-> `AmanatOpcodes` extends `Opcodes`, not `OpcodesDebug`. The debug layer overrides `_runOpcode`
-> without re-declaring it `virtual`, so it is terminal — you can have custom opcodes *or* debug
-> opcodes, not both.
+Two things about which base class to extend, both learned the hard way:
+
+> **`AquaOpcodes`, not `Opcodes`.** The full set carries 24 instructions an Aqua strategy never
+> reaches for, including every balance instruction, because in Aqua mode balances come from Aqua
+> rather than from bytecode. Carrying them puts the router at 28,618 bytes against EIP-170's
+> 24,576 and it cannot be deployed at all. On `AquaOpcodes` it is 20,623.
+>
+> **Not `OpcodesDebug` either.** That layer overrides `_runOpcode` without re-declaring it
+> `virtual`, so it is terminal — you can have custom opcodes *or* debug opcodes, not both.
 
 ## Running it
 
