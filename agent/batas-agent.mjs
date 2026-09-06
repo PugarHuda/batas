@@ -20,10 +20,11 @@ import { sepolia } from 'viem/chains';
 import 'dotenv/config';
 
 const AQUA = getAddress('0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a');
-const ROUTER = getAddress('0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4');
+// Defaults are the Sepolia deployment; override to point at your own without editing this file.
+const ROUTER = getAddress(process.env.BATAS_ROUTER || '0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4');
 const TOKENS = [
-    getAddress('0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B'),
-    getAddress('0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81'),
+    getAddress(process.env.BATAS_TOKEN_A || '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B'),
+    getAddress(process.env.BATAS_TOKEN_B || '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81'),
 ].sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : 1));
 const [TOKEN_A, TOKEN_B] = TOKENS;
 

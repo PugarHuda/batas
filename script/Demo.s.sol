@@ -20,10 +20,14 @@ import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
 /// @notice End-to-end walkthrough on a live chain: grant a mandate, trade inside it, then watch
 ///   the same position refuse a trade that breaks it. Real ERC-20 transfers, no mocked settlement.
 contract Demo is Script {
+    /// @dev Aqua is canonical and identical on every chain it is live on.
     address internal constant AQUA = 0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a;
-    address internal constant ROUTER = 0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4;
-    address internal constant TOKEN_A = 0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B;
-    address internal constant TOKEN_B = 0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81;
+
+    /// @dev Defaults point at the Sepolia deployment so the walkthrough runs out of the box, but
+    ///   anyone who deploys their own set can point at it without editing this file.
+    address internal constant DEFAULT_ROUTER = 0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4;
+    address internal constant DEFAULT_TOKEN_A = 0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B;
+    address internal constant DEFAULT_TOKEN_B = 0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81;
 
     uint256 internal constant RESERVE_A = 1_000e18;
     uint256 internal constant RESERVE_B = 2_000e18; // opening rate 2.0
@@ -36,8 +40,13 @@ contract Demo is Script {
         uint256 pk = vm.envUint("SEPOLIA_PRIVATE_KEY");
         address me = vm.addr(pk);
 
-        BatasRouter router = BatasRouter(payable(ROUTER));
-        (address t0, address t1) = TOKEN_A < TOKEN_B ? (TOKEN_A, TOKEN_B) : (TOKEN_B, TOKEN_A);
+        address routerAddr = vm.envOr("BATAS_ROUTER", DEFAULT_ROUTER);
+        address tokenAAddr = vm.envOr("BATAS_TOKEN_A", DEFAULT_TOKEN_A);
+        address tokenBAddr = vm.envOr("BATAS_TOKEN_B", DEFAULT_TOKEN_B);
+        require(routerAddr.code.length > 0, "router has no code on this chain");
+
+        BatasRouter router = BatasRouter(payable(routerAddr));
+        (address t0, address t1) = tokenAAddr < tokenBAddr ? (tokenAAddr, tokenBAddr) : (tokenBAddr, tokenAAddr);
 
         // Aqua permanently burns a strategy hash, so the same terms need a fresh salt each run.
         // That is exactly what Salt is for: a no-op whose bytes change the program hash.
@@ -57,7 +66,7 @@ contract Demo is Script {
         TokenMock(t1).mint(me, RESERVE_B);
         IERC20(t0).approve(AQUA, type(uint256).max);
         IERC20(t1).approve(AQUA, type(uint256).max);
-        IERC20(t0).approve(ROUTER, type(uint256).max);
+        IERC20(t0).approve(routerAddr, type(uint256).max);
 
         address[] memory tokens = new address[](2);
         tokens[0] = t0;
@@ -66,7 +75,7 @@ contract Demo is Script {
         amounts[0] = RESERVE_A;
         amounts[1] = RESERVE_B;
 
-        bytes32 strategyHash = IAqua(AQUA).ship(ROUTER, abi.encode(order), tokens, amounts);
+        bytes32 strategyHash = IAqua(AQUA).ship(routerAddr, abi.encode(order), tokens, amounts);
         console.log("shipped, mandate hash:");
         console.logBytes32(strategyHash);
 
@@ -85,7 +94,7 @@ contract Demo is Script {
         // the whole script as failed, even though reverting is the behaviour being demonstrated.
         console.log("");
         console.log("to see the mandate refuse an oversized trade:");
-        console.log("  cast call %s ... 101e18   -> MandateAmountInExceeded", ROUTER);
+        console.log("  cast call %s ... 101e18   -> MandateAmountInExceeded", routerAddr);
     }
 
     function _order(address maker, address t0, address t1, bytes memory program)

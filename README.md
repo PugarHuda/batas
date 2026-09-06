@@ -125,7 +125,25 @@ went out.
 cp .env.example .env    # then fill in SEPOLIA_PRIVATE_KEY
 forge script script/Deploy.s.sol:Deploy --rpc-url $SEPOLIA_RPC_URL --broadcast
 forge script script/Demo.s.sol:Demo     --rpc-url $SEPOLIA_RPC_URL --broadcast
+node agent/batas-agent.mjs
 ```
+
+The demo and the agent default to the addresses above, so they run against a live position with no
+setup. To point them at your own deployment instead, set `BATAS_ROUTER`, `BATAS_TOKEN_A` and
+`BATAS_TOKEN_B` in `.env` — nothing needs editing in the source.
+
+The whole chain is exercised against a local fork before each release:
+
+```bash
+anvil --fork-url $SEPOLIA_RPC_URL &
+forge script script/Deploy.s.sol:Deploy --rpc-url http://127.0.0.1:8545 --broadcast
+BATAS_ROUTER=<deployed> BATAS_TOKEN_A=<deployed> BATAS_TOKEN_B=<deployed>   forge script script/Demo.s.sol:Demo --rpc-url http://127.0.0.1:8545 --broadcast
+```
+
+> If `forge script --broadcast` fails to decode constructor arguments, `out/` is holding artifacts
+> from source files that no longer exist and forge is matching a deployment against the wrong
+> bytecode. `forge clean` fixes it. This bit us after a rename, and the failure mode is nasty
+> because the script still prints plausible addresses while broadcasting nothing at all.
 
 ### A settled mandate, on-chain
 
