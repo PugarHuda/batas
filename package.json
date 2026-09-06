@@ -1,0 +1,12 @@
+{
+  "name": "amanat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mandates a machine enforces: scoped, expiring authority for autonomous market-making on 1inch Aqua",
+  "dependencies": {
+    "@1inch/aqua": "github:1inch/aqua#v1.0.0",
+    "@1inch/solidity-utils": "6.9.10",
+    "@openzeppelin/contracts": "5.4.0",
+    "forge-std": "github:foundry-rs/forge-std#v1.11.0"
+  }
+}
