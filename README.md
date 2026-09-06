@@ -99,15 +99,45 @@ Every dependency is pinned to an exact commit or version. That is deliberate: 1i
 `InstructionBuilder` with a `MemoryPtr` streaming API during this hackathon, and an unpinned
 install would silently hand a judge a different API than these tests pass on.
 
-### Deploying to Sepolia
+### Live on Sepolia
 
-Aqua is already live on Sepolia at `0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`, so the liquidity
-layer is used as-is — only our app and the modified router are deployed.
+Aqua is already deployed on Sepolia, so the liquidity layer is used as-is. Only our own contracts
+went out.
+
+| Contract | Address |
+|---|---|
+| Aqua (canonical, not ours) | [`0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`](https://sepolia.etherscan.io/address/0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a) |
+| `AmanatRouter` (SwapVM + PolicyEnvelope) | [`0xe2fC5c03b4103dC703316bB3D781a1b47E82561E`](https://sepolia.etherscan.io/address/0xe2fC5c03b4103dC703316bB3D781a1b47E82561E) |
+| `AmanatApp` | [`0x73dc537aC0e276dED9B9a84a69CBF1705eFbfEd9`](https://sepolia.etherscan.io/address/0x73dc537aC0e276dED9B9a84a69CBF1705eFbfEd9) |
+| Demo token A | [`0xD1BE5EeD764424BFA0389BF79964B6fBE7725B54`](https://sepolia.etherscan.io/address/0xD1BE5EeD764424BFA0389BF79964B6fBE7725B54) |
+| Demo token B | [`0xd504a056906583c9F9Ac3622FBE8edBA4cD9d3E8`](https://sepolia.etherscan.io/address/0xd504a056906583c9F9Ac3622FBE8edBA4cD9d3E8) |
 
 ```bash
 cp .env.example .env    # then fill in SEPOLIA_PRIVATE_KEY
 forge script script/Deploy.s.sol:Deploy --rpc-url $SEPOLIA_RPC_URL --broadcast
+forge script script/Demo.s.sol:Demo     --rpc-url $SEPOLIA_RPC_URL --broadcast
 ```
+
+### A settled mandate, on-chain
+
+`script/Demo.s.sol` grants a mandate and trades inside it against live Aqua. Real ERC-20
+transfers, no mocked settlement:
+
+| Step | Transaction |
+|---|---|
+| Ship liquidity under the mandate | [`0x6a808592…`](https://sepolia.etherscan.io/tx/0x6a8085926ffd8f6a63f9ecb0b1e7fe3029b3f5d8656683bdd85b50b2679f9840) |
+| Swap settled inside the mandate | [`0x9c063a11…`](https://sepolia.etherscan.io/tx/0x9c063a1127c40c456306a8b57ceccfe64c99baa062f3868b8ead59474bcb24b3) |
+
+10 tokenA in, **19.743160687941225977 tokenB** out to
+[`0x03ca8eaa…`](https://sepolia.etherscan.io/address/0x03ca8eaa1b939fd7a7bbcebd107ad48f52557b43) —
+constant product less the 0.3% fee, judged against the 1.9 floor and allowed through.
+
+An oversized trade against the same live position reverts with
+`MandateAmountInExceeded(101e18, 100e18)` before any token moves.
+
+Each run salts the program, because Aqua permanently burns a strategy hash once it has been used.
+`Salt` is the instruction that exists for exactly this: a no-op whose bytes change the program
+hash, which is how the same terms get a fresh position.
 
 ## What the tests prove
 
