@@ -13,19 +13,37 @@ import {
     policyEnvelope, deadline, feeFlatIn, xycSwap, salt, instruction,
 } from './swapvm.mjs';
 
-// The program the agent actually shipped to Sepolia, kept verbatim as a regression anchor.
+// The program actually shipped to Sepolia, kept verbatim as a regression anchor.
 const LIVE_PROGRAM =
+    '0x212000000000000000056bc75e2d6310000000000000000000001a5e27eef13e00002005006a9da768700300753050000208000000006a9d8b48';
+
+// And the one shipped before it, when script/Demo.s.sol chained instructions by hand and left
+// Deadline out. Kept because it is the real shape of the failure rather than a constructed one:
+// five terms look right, nothing errors, and the grant is permanent.
+const UNBOUNDED_PROGRAM =
     '0x2120000000000000000579a814e10a74000000000000000000001aaa51121b231412700300753050000208000000006a9d5ef4';
 
 test('decodes the program that is live on chain', () => {
     const r = explain(LIVE_PROGRAM);
     assert.equal(r.guarded, true);
-    assert.deepEqual(r.instructions.map((i) => i.name), ['POLICY_ENVELOPE', 'FEE_FLAT_IN', 'XYC_SWAP', 'SALT']);
-    assert.equal(r.mandate.maxAmountInFormatted, '101');
-    assert.equal(r.mandate.minRateFormatted, '1.92143732923348277');
+    assert.deepEqual(
+        r.instructions.map((i) => i.name),
+        ['POLICY_ENVELOPE', 'DEADLINE', 'FEE_FLAT_IN', 'XYC_SWAP', 'SALT'],
+    );
+    assert.equal(r.mandate.maxAmountInFormatted, '100');
+    assert.equal(r.mandate.minRateFormatted, '1.9');
     assert.equal(r.mandate.feePercent, 0.3);
     assert.equal(r.mandate.curve, 'constant product (x*y=k)');
-    assert.deepEqual(r.notes, []);
+    assert.equal(r.mandate.expiryISO, '2026-09-06T17:48:24.000Z');
+});
+
+test('the mandate that shipped without a deadline is reported as permanent', () => {
+    const r = explain(UNBOUNDED_PROGRAM);
+    // Everything else about it is well formed, which is precisely why the omission needed saying.
+    assert.equal(r.guarded, true);
+    assert.equal(r.mandate.maxAmountInFormatted, '101');
+    assert.equal(r.mandate.expiry, null);
+    assert.deepEqual(r.notes, ['No deadline: this mandate never expires and can only be ended by revoking it.']);
 });
 
 test('round-trips every term it encodes', () => {
@@ -125,4 +143,28 @@ test('curves are named individually', () => {
 
 test('arguments longer than a byte length prefix allows are refused at encode time', () => {
     assert.throws(() => instruction(OP.SALT, '0x' + '00'.repeat(256)), /args too long/);
+});
+
+test('a mandate with no deadline is called out, not passed over in silence', () => {
+    // The shape this test exists for: script/Demo.s.sol built its program instruction by
+    // instruction and left out Deadline, so every mandate it granted was permanent. The bytes
+    // decoded perfectly and the report said nothing, which is worse than an error — a caller
+    // paying for an explanation saw a bounded-looking position that could never be timed out.
+    const forever = policyEnvelope(100n * 10n ** 18n, 1_900_000_000_000_000_000n)
+        + feeFlatIn(30_000).slice(2) + xycSwap().slice(2) + salt(1n).slice(2);
+    const { mandate, notes } = explain(forever);
+
+    assert.equal(mandate.expiry, null);
+    assert.ok(
+        notes.some((n) => /never expires/.test(n)),
+        `a permanent mandate must be reported as one; got ${JSON.stringify(notes)}`,
+    );
+});
+
+test('a live deadline draws neither the expired note nor the missing one', () => {
+    const future = BigInt(Math.floor(Date.now() / 1000) + 3600);
+    const program = policyEnvelope(100n * 10n ** 18n, 1_900_000_000_000_000_000n)
+        + deadline(future).slice(2) + feeFlatIn(30_000).slice(2) + xycSwap().slice(2) + salt(1n).slice(2);
+    const { notes } = explain(program);
+    assert.ok(!notes.some((n) => /never expires|already passed/.test(n)), JSON.stringify(notes));
 });

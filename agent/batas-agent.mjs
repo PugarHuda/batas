@@ -18,6 +18,7 @@ import {
 
 import { toProgram, decideMandate } from './swapvm.mjs';
 import { mandateNameStatus } from './ens.mjs';
+import { publishMandate } from './hcs.mjs';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import 'dotenv/config';
@@ -261,6 +262,31 @@ async function main() {
     console.log(`  tx     ${hash}`);
     console.log(`  status ${receipt.status}  gas ${receipt.gasUsed}`);
     console.log(`\nhttps://sepolia.etherscan.io/tx/${hash}`);
+
+    // 6. Publish. The grant is now on Sepolia, but its date is a block's word. Submitting the same
+    //    bytes to HCS puts an independent consensus timestamp on them, which is what the inspection
+    //    service hands to anyone who later asks whether this mandate is real and how old it is.
+    //
+    //    This runs after settlement on purpose: publishing a mandate that failed to ship would
+    //    advertise authority that was never granted.
+    if (receipt.status !== 'success') return;
+    if (!process.env.BATAS_HCS_TOPIC) {
+        console.log('\nno BATAS_HCS_TOPIC set; the mandate was not published to Hedera');
+        return;
+    }
+    try {
+        const published = await publishMandate(null, {
+            program, maker: account.address, app: ROUTER, chainId: sepolia.id, strategyHash: chainHash,
+        });
+        console.log(`\npublished to HCS topic ${published.topicId}`);
+        console.log(`  sequence ${published.sequenceNumber}  tx ${published.transactionId}`);
+        console.log(`  https://hashscan.io/testnet/topic/${published.topicId}`);
+    } catch (e) {
+        // The mandate is granted either way; say the publication failed rather than implying the
+        // record exists.
+        console.error(`\nHCS publication failed: ${String(e.message || e)}`);
+        process.exitCode = 1;
+    }
 }
 
 // Only run when invoked directly. Importing this file — a test does, and so could any other

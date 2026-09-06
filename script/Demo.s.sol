@@ -10,12 +10,9 @@ import { IAqua } from "@1inch/aqua/src/interfaces/IAqua.sol";
 import { ISwapVM } from "@1inch/swap-vm/src/interfaces/ISwapVM.sol";
 import { MakerTraitsLib } from "@1inch/swap-vm/src/libs/MakerTraits.sol";
 import { TakerTraitsLib } from "@1inch/swap-vm/src/libs/TakerTraits.sol";
-import { XYCSwap } from "@1inch/swap-vm/src/instructions/XYCSwap.sol";
-import { FeeFlatIn } from "@1inch/swap-vm/src/instructions/FeeFlat.sol";
-import { Salt } from "@1inch/swap-vm/src/instructions/Controls.sol";
 
 import { BatasRouter } from "../src/BatasRouter.sol";
-import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
+import { Mandate, MandateLib } from "../src/Mandate.sol";
 
 /// @notice End-to-end walkthrough on a live chain: grant a mandate, trade inside it, then watch
 ///   the same position refuse a trade that breaks it. Real ERC-20 transfers, no mocked settlement.
@@ -35,6 +32,8 @@ contract Demo is Script {
     uint128 internal constant MAX_AMOUNT_IN = 100e18;
     uint128 internal constant MIN_RATE = 1.9e18;
     uint24 internal constant FEE_BPS = 0.003e7; // 0.3%
+    /// @dev Matches what the agent grants. A mandate without one is authority that never ends.
+    uint64 internal constant DURATION = 2 hours;
 
     function run() external {
         uint256 pk = vm.envUint("SEPOLIA_PRIVATE_KEY");
@@ -48,17 +47,29 @@ contract Demo is Script {
         BatasRouter router = BatasRouter(payable(routerAddr));
         (address t0, address t1) = tokenAAddr < tokenBAddr ? (tokenAAddr, tokenBAddr) : (tokenBAddr, tokenAAddr);
 
+        // Built through MandateLib rather than instruction by instruction. An inline chain here
+        // is how this script silently shipped mandates with no Deadline at all — the terms looked
+        // right in the log and the position simply never expired. One encoder, used by the tests
+        // and by the agent, is what stops that from being possible.
+        //
         // Aqua permanently burns a strategy hash, so the same terms need a fresh salt each run.
-        // That is exactly what Salt is for: a no-op whose bytes change the program hash.
-        bytes memory program = bytes.concat(
-            PolicyEnvelope.build(MAX_AMOUNT_IN, MIN_RATE),
-            FeeFlatIn.build(FEE_BPS),
-            XYCSwap.build(),
-            Salt.build(uint64(block.timestamp))
-        );
+        // That is what Salt is for: a no-op whose bytes change the program hash.
+        Mandate memory mandate = Mandate({
+            maker: me,
+            agent: me,
+            tokenIn: t0,
+            tokenOut: t1,
+            maxAmountIn: MAX_AMOUNT_IN,
+            minRateE18: MIN_RATE,
+            expiry: uint64(block.timestamp) + DURATION,
+            feeBps: FEE_BPS,
+            salt: uint64(block.timestamp)
+        });
+        bytes memory program = MandateLib.toProgram(mandate);
         ISwapVM.Order memory order = _order(me, t0, t1, program);
 
         console.log("mandate: max %s in, floor rate %s, 0.3%% fee", MAX_AMOUNT_IN, MIN_RATE);
+        console.log("expires at %s (%s seconds from now)", mandate.expiry, DURATION);
 
         vm.startBroadcast(pk);
 

@@ -221,6 +221,32 @@ Writing the test for it exposed a second problem: the file called `main()` at mo
 importing it ran the whole paid flow as a side effect of loading. `inspect.mjs`, `identity.mjs`
 and `batas-agent.mjs` now only run when invoked directly.
 
+### The same bug, twice, on opposite sides of the fence
+
+The JavaScript agent once built its program instruction by instruction and left `Deadline` out, so
+every mandate it granted was permanent. That was fixed by giving both sides one encoder —
+`MandateLib.toProgram` in Solidity, `toProgram` in `agent/swapvm.mjs` — and a parity test that
+compiles the first and compares it to the second.
+
+`script/Demo.s.sol` was still chaining instructions by hand. It shipped four of the five, and the
+one it dropped was `Deadline` again. Nothing caught it: the parity test compares the two encoders
+to each other and says nothing about who calls them, and the mandate on chain decoded perfectly —
+`101` cap, `1.92` floor, `0.3%` fee — with an expiry field that was simply absent.
+
+Two things changed. The demo builds a `Mandate` and calls `MandateLib.toProgram`, so there is no
+longer a second place to get it wrong. And `explain()` now says so out loud:
+
+```
+notes
+  - No deadline: this mandate never expires and can only be ended by revoking it.
+```
+
+That omission was the one gap in the report. A missing cap was called out, a missing floor was
+called out, an expiry in the past was called out — and the most open-ended grant of the set went
+unremarked, in the answer people pay for. The program that shipped without a deadline is kept in
+`swapvm.test.mjs` as the fixture for that note, because it is the real shape of the failure rather
+than a constructed one.
+
 Every dependency is pinned to an exact commit or version. That is deliberate: 1inch replaced
 `InstructionBuilder` with a `MemoryPtr` streaming API during this hackathon, and an unpinned
 install would silently hand a judge a different API than these tests pass on.
@@ -243,6 +269,18 @@ than taken from this repo on trust.
 | `BatasApp` | [`0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849`](https://sepolia.etherscan.io/address/0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849) |
 | Demo token A | [`0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B`](https://sepolia.etherscan.io/address/0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B) |
 | Demo token B | [`0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81`](https://sepolia.etherscan.io/address/0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81) |
+| ERC-8004 identity registry (canonical) | [`0x8004A818BFB912233c491871b3d84c89A494BD9e`](https://sepolia.etherscan.io/address/0x8004A818BFB912233c491871b3d84c89A494BD9e) |
+
+### Live on Hedera testnet
+
+| What | Where |
+|---|---|
+| Mandate publication topic | [`0.0.10394165`](https://hashscan.io/testnet/topic/0.0.10394165) |
+| Inspection service, paid | [`0.0.10388560`](https://hashscan.io/testnet/account/0.0.10388560) |
+| Agent, paying | [`0.0.10388401`](https://hashscan.io/testnet/account/0.0.10388401) |
+
+The topic is readable by anyone, with no account and no key:
+`https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages`
 
 ```bash
 cp .env.example .env    # then fill in SEPOLIA_PRIVATE_KEY
@@ -501,19 +539,61 @@ Decoded from the program the agent actually shipped:
 ```
 guarded by PolicyEnvelope: true
   @ 0 POLICY_ENVELOPE
-  @34 FEE_FLAT_IN
-  @39 XYC_SWAP
-  @41 SALT
+  @34 DEADLINE
+  @41 FEE_FLAT_IN
+  @46 XYC_SWAP
+  @48 SALT
 enforced mandate
-  max input   101
+  max input   17.573127545903015167
   floor rate  1.92143732923348277
   fee         0.3%
   curve       constant product (x*y=k)
+  expires     2026-09-06T17:50:13.000Z
+publication
+  published   2026-09-06T15:50:45.755Z  (HCS consensus, topic 0.0.10394165 #2)
+  granted by  0x39d2bae5eaeda9283535ddc98f1991c81ed5cd7e
+  verify      https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/2
+operator
+  agent #10123  Batas
+  held by     0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E
+  vouches     yes — the identity is held by the address that granted the mandate
 ```
 
 `guarded` is the field worth reading first. It is true only when `PolicyEnvelope` occupies the
 outermost position; anywhere else, later instructions can undo whatever it checked, and the service
 says so in plain words rather than leaving the caller to notice.
+
+### The part the caller could not have worked out alone
+
+Decoding is arithmetic. A caller with the bytes and an afternoon could do it themselves, which
+makes it a thin thing to charge for. The other two fields are not.
+
+**`publication`** answers *when these bytes became public*, from
+[Hedera Consensus Service](https://docs.hedera.com/hedera/sdks-and-apis/sdks/consensus-service).
+The mandate already exists on Sepolia — Aqua puts the whole strategy in its `Shipped` event — but
+that timestamp belongs to a block, and a counterparty checking it has to trust whichever RPC served
+them. HCS is an ordering service and nothing else: a message gets a consensus timestamp the network
+agrees on and a sequence number that cannot be reordered afterwards. `agent/hcs.mjs` submits the
+program at grant time; the service matches on the bytes in the request, so no extra input is
+needed. A program that decodes perfectly and has no record is a set of terms someone handed you a
+minute ago, which is a different thing from a grant that has been standing.
+
+The match is on the whole program, never a prefix or a hash. A mandate differing by one byte is a
+different grant, and a loose match would let one publication vouch for all of them.
+
+Reading it costs nothing and needs no account:
+
+```bash
+curl 'https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages'
+node agent/hcs.mjs --lookup 0x2120...      # or ask the same question locally
+```
+
+That is the property worth the trouble. The record is useful to a stranger *because* it does not
+route through us.
+
+**`operator`** answers *who is running this*, from the ERC-8004 registry, and `vouches` is the
+field that matters: an identity held by someone other than the address that granted the mandate is
+not evidence of anything, and the service says whose it actually is.
 
 ### Two things worth knowing before building this
 
@@ -542,6 +622,27 @@ than described.
 
 **VM layer** — a non-binding mandate leaves the strategy untouched; the cap and the floor both
 revert inside the VM; and a trailing instruction cannot escape the envelope.
+
+**Off chain** — the two encoders agree byte for byte on arbitrary terms; the decision math never
+returns a cap that its own floor would refuse; the ENSv2 role bitmaps withhold exactly the four
+rights that would break the grant; an ERC-8004 identity held by someone else does not vouch; and a
+publication record matches the whole program rather than a prefix, so one grant cannot stand in for
+another.
+
+**The paid surface** — Playwright drives the service the way a caller meets it: the free
+description names the network, price, facilitator and topic; every payload is refused with a `402`
+carrying a payment requirement rather than an error; and a malformed body cannot probe the decoder
+for free.
+
+```
+forge test          21 passing
+npm run test:js     76 passing
+npm run test:api     7 passing
+```
+
+The live checks in there are live on purpose. The ERC-8004 tests read the real registry on Sepolia
+and the publication tests read the real mirror node, because an identity check tested against a
+stand-in proves only that the stand-in agrees with itself.
 
 ## License
 

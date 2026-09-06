@@ -20,6 +20,7 @@ import 'dotenv/config';
 
 import { explain } from './swapvm.mjs';
 import { resolveAgent, vouchesFor } from './erc8004.mjs';
+import { lookupMandate } from './hcs.mjs';
 
 const PORT = Number(process.env.PORT || 4021);
 const FACILITATOR = process.env.X402_FACILITATOR_URL || 'https://api.testnet.blocky402.com';
@@ -46,8 +47,10 @@ app.use(express.json({ limit: '256kb' }));
 app.get('/', (_req, res) => {
     res.json({
         service: 'Batas mandate inspection',
-        describes: 'What limits a SwapVM program actually enforces, decoded from its bytecode.',
+        describes: 'What limits a SwapVM program actually enforces, decoded from its bytecode,'
+            + ' and when those exact bytes were published to Hedera Consensus Service.',
         endpoint: 'POST /v1/mandate/explain',
+        topic: process.env.BATAS_HCS_TOPIC ?? null,
         body: {
             program: '0x… SwapVM instruction stream',
             agentId: 'optional — an ERC-8004 id to resolve the operator behind the position',
@@ -86,6 +89,19 @@ app.post('/v1/mandate/explain', async (req, res) => {
         // A program that cannot be walked is a real answer, not a server fault: it tells the caller
         // the bytes they were handed are not a valid instruction stream.
         return res.status(422).json({ error: String(e.message || e), valid: false });
+    }
+
+    // When these bytes became public, according to a network none of the parties runs.
+    //
+    // Decoding tells a caller what the program permits. It cannot tell them whether the program is
+    // a real grant or something handed to them a minute ago, and the Sepolia timestamp is only as
+    // good as the RPC that served it. The HCS record answers that from an independent ordering
+    // service, and unlike the limits it is not something the caller could compute for themselves.
+    // No input needed: the match is on the bytes already in the request.
+    try {
+        answer.publication = await lookupMandate(null, program);
+    } catch (e) {
+        answer.publication = { published: null, error: String(e.message || e) };
     }
 
     // Who is running this position. The program cannot say — bytecode has no author — so the

@@ -123,7 +123,15 @@ async function main() {
     const post = () => paidFetch(`${SERVICE}/v1/mandate/explain`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ program }),
+        // The operator lookup is opt-in on the service side, so ask for it when we know who to ask
+        // about. Sending the maker alongside turns the answer from "an identity exists" into
+        // "that identity is held by the address that granted this mandate", which is the only form
+        // of it worth anything.
+        body: JSON.stringify({
+            program,
+            ...(process.env.BATAS_AGENT_ID ? { agentId: process.env.BATAS_AGENT_ID } : {}),
+            ...(process.env.BATAS_OWNER ? { maker: process.env.BATAS_OWNER } : {}),
+        }),
     });
 
     let res = await post();
@@ -160,6 +168,35 @@ async function main() {
     if (m.feePercent !== null) console.log(`  fee         ${m.feePercent}%`);
     if (m.curve) console.log(`  curve       ${m.curve}`);
     if (m.expiryISO) console.log(`  expires     ${m.expiryISO}`);
+    // What the limits alone cannot tell you: whether these bytes were ever published, and when.
+    // A program that decodes perfectly and has no publication record is a set of terms someone
+    // just handed you, which is a different thing from a mandate that has been standing for a day.
+    const p = body.publication;
+    if (p) {
+        console.log('publication');
+        if (p.published) {
+            console.log(`  published   ${p.publishedAt}  (HCS consensus, topic ${p.topic} #${p.sequenceNumber})`);
+            if (p.maker) console.log(`  granted by  ${p.maker}`);
+            console.log(`  verify      ${p.mirror}`);
+        } else if (p.published === false) {
+            console.log(`  not published — ${p.reason}`);
+        } else {
+            console.log(`  unknown — ${p.error}`);
+        }
+    }
+
+    if (body.operator) {
+        const o = body.operator;
+        console.log('operator');
+        if (!o.registered) {
+            console.log(`  no ERC-8004 identity${o.error ? ` — ${o.error}` : ''}`);
+        } else {
+            console.log(`  agent #${o.agentId}  ${o.registration?.name ?? '(unnamed)'}`);
+            console.log(`  held by     ${o.owner}`);
+            if (o.check) console.log(`  vouches     ${o.check.vouched ? 'yes' : 'no'} — ${o.check.reason}`);
+        }
+    }
+
     if (body.notes.length) {
         console.log('notes');
         for (const n of body.notes) console.log(`  - ${n}`);

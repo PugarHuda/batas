@@ -247,7 +247,13 @@ export function explain(program) {
             + 'undone by instructions that run after them, so treat the position as unbounded.',
         );
     }
-    if (t.expiry !== null && t.expiry * 1000 < Date.now()) {
+    if (t.expiry === null) {
+        // The omission that reads as an absence rather than a fault: a program with no Deadline
+        // decodes cleanly, prints no expiry, and grants authority that never ends. Both encoders
+        // build one now, but a caller is being paid to be told what these bytes actually say, and
+        // the most open-ended grant in the set must not be the one that goes unremarked.
+        notes.push('No deadline: this mandate never expires and can only be ended by revoking it.');
+    } else if (t.expiry * 1000 < Date.now()) {
         notes.push('The deadline has already passed; this position authorises nothing.');
     }
     if (t.maxAmountIn === null) notes.push('No size cap: a single trade may consume the whole reserve.');

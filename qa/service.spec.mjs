@@ -6,7 +6,7 @@ import { test, expect } from '@playwright/test';
 // still see a plausible response.
 
 const LIVE_PROGRAM =
-    '0x2120000000000000000579a814e10a74000000000000000000001aaa51121b231412700300753050000208000000006a9d5ef4';
+    '0x2120000000000000000579a814e10a74000000000000000000001aaa51121b2314122005006a9d899a700300753050000208000000006a9d6d7a';
 
 const decodeRequirement = (header) => JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
 
@@ -22,6 +22,10 @@ test('the free description says what is sold and what it costs', async ({ reques
     // x402.org, so this assertion is guarding against the easiest mistake in the integration.
     expect(body.facilitator).toContain('blocky402.com');
     expect(body.payTo).toMatch(/^0\.0\.\d+$/);
+    // The publication topic is part of what the answer is worth, so a caller must be able to see
+    // which ledger the service will check before deciding to pay for the check.
+    expect(body.topic, 'the HCS topic must be advertised, not implied').toMatch(/^0\.0\.\d+$/);
+    expect(body.describes).toContain('Hedera Consensus Service');
 });
 
 test('an unpaid request is refused with a payment requirement, not an error', async ({ request }) => {
