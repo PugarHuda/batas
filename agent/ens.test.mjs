@@ -61,6 +61,24 @@ test('grantor and holder rights do not overlap where it matters', () => {
     assert.equal(overlap, ROLE.SET_RESOLVER);
 });
 
+test('label ids clear the low 32 bits the registry uses as a version counter', async () => {
+    const { keccak256, toHex } = await import('viem');
+    const raw = BigInt(keccak256(toHex('agent')));
+
+    assert.equal(labelId('agent'), raw & ~0xffffffffn);
+    assert.equal(labelId('agent') & 0xffffffffn, 0n, 'version bits must be clear');
+    assert.notEqual(labelId('agent'), raw, 'a plain labelhash is not a token id');
+
+    // This is not a nicety. Passing the unmasked hash to ownerOf asks about a token that does not
+    // exist, and the zero address that comes back reads as "revoked" rather than as a wrong
+    // question — which is exactly how it was misdiagnosed the first time.
+    assert.notEqual(
+        raw & 0xffffffffn,
+        0n,
+        'this label has non-zero low bits, so the two forms genuinely differ',
+    );
+});
+
 test('label ids are stable and distinct', () => {
     assert.equal(labelId('agent'), labelId('agent'));
     assert.notEqual(labelId('agent'), labelId('agent2'));

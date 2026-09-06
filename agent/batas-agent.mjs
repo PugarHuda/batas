@@ -17,6 +17,7 @@ import {
 } from 'viem';
 
 import { toProgram } from './swapvm.mjs';
+import { mandateNameStatus } from './ens.mjs';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import 'dotenv/config';
@@ -162,7 +163,31 @@ async function main() {
         args: [account.address, ROUTER, strategyHash, TOKEN_A, TOKEN_B],
     });
 
-    // 2. Decide. Spot comes from the reserves the chain reports, not from a guess.
+    // 2. Check that it is allowed to act at all, before doing any work.
+    //
+    // The ENS mandate name is the owner's kill switch. Revoking it, or simply letting it expire,
+    // ends the agent's authority without touching the position or spending anything on chain. An
+    // agent that does not consult it turns that control into decoration, so the check runs before
+    // the transaction rather than after.
+    const ensRegistry = process.env.BATAS_ENS_REGISTRY;
+    if (ensRegistry) {
+        const label = process.env.BATAS_MANDATE_NAME || 'agent';
+        const status = await mandateNameStatus(pub, getAddress(ensRegistry), label, account.address);
+        console.log('');
+        console.log(`mandate name "${label}": ${status.reason}`);
+        if (!status.valid) {
+            console.error('refusing to act without a valid mandate name');
+            process.exitCode = 1;
+            return;
+        }
+        console.log(`  ${Math.floor(status.secondsLeft / 60)} minutes of authority left`);
+    } else {
+        console.log('');
+        console.log('no BATAS_ENS_REGISTRY set; skipping the mandate-name check');
+    }
+
+
+    // 3. Decide. Spot comes from the reserves the chain reports, not from a guess.
     const spotE18 = (reserveB * E18) / reserveA;
     console.log(`\nreserves ${formatUnits(reserveA, 18)} A / ${formatUnits(reserveB, 18)} B`);
     console.log(`spot     ${formatUnits(spotE18, 18)} B per A`);
@@ -196,7 +221,7 @@ async function main() {
 
     console.log(`\nprogram  ${program} (${(program.length - 2) / 2} bytes)`);
 
-    // 3. Prove the encoding. The router computes the order hash on chain; if our bytes were wrong
+    // 4. Prove the encoding. The router computes the order hash on chain; if our bytes were wrong
     //    in any way, these two would differ. This is the check that makes the encoder trustworthy.
     const localHash = keccak256(encodeOrder(order));
     const chainHash = await pub.readContract({
@@ -213,7 +238,7 @@ async function main() {
         return;
     }
 
-    // 4. Act.
+    // 5. Act.
     const balA = await pub.readContract({ address: TOKEN_A, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
     const balB = await pub.readContract({ address: TOKEN_B, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
     const shipA = balA < reserveA ? balA : reserveA;

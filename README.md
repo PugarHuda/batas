@@ -312,6 +312,32 @@ timestamp compiled into the program's `Deadline` instruction. The name and the a
 for end at the same moment, because an identity that outlives the permission it represents is a
 lie waiting to be believed.
 
+### The name is a kill switch, not a label
+
+The agent checks it before doing anything. Revoke the name and the agent stops, without touching
+the position or spending anything on chain:
+
+```
+$ node agent/ens.mjs --revoke agent
+revoked "agent"
+
+$ node agent/batas-agent.mjs
+mandate name "agent": mandate name "agent" expired at 2026-09-06T14:58:00.000Z
+refusing to act without a valid mandate name
+```
+
+Grant it again and the agent resumes. That check is what separates an integration from a mention:
+until the agent consulted the name, "revocable" was a property the registry offered and nothing
+used.
+
+> Making it load-bearing immediately exposed a bug. The registry's token id is the labelhash with
+> its **low 32 bits cleared** — those hold a version counter it bumps on re-registration, so a
+> stale approval cannot carry over to a name someone later re-registers. Passing a plain
+> `keccak256(label)` asks about a token that does not exist, and the zero address that comes back
+> reads as *revoked* rather than as a wrong question. The fix is to call the registry's own
+> `findTokenId`; the re-grant above is visible in the token id ending `…561` where the first ended
+> `…560`.
+
 What the holder is refused matters as much as what it gets, and `agent/ens.test.mjs` pins each
 one: no `ROLE_CAN_TRANSFER_ADMIN`, so the grant cannot be sold; no `ROLE_UNREGISTER`, so it cannot
 erase the record of itself; no `ROLE_RENEW`, so it cannot extend its own authority; no

@@ -77,6 +77,7 @@ const REGISTRY_ABI = [
     { name: 'roles', type: 'function', stateMutability: 'view', inputs: [{ name: 'anyId', type: 'uint256' }, { name: 'account', type: 'address' }], outputs: [{ type: 'uint256' }] },
     { name: 'hasRoles', type: 'function', stateMutability: 'view', inputs: [{ name: 'anyId', type: 'uint256' }, { name: 'roleBitmap', type: 'uint256' }, { name: 'account', type: 'address' }], outputs: [{ type: 'bool' }] },
     { name: 'ownerOf', type: 'function', stateMutability: 'view', inputs: [{ name: 'tokenId', type: 'uint256' }], outputs: [{ type: 'address' }] },
+    { name: 'findTokenId', type: 'function', stateMutability: 'view', inputs: [{ name: 'label', type: 'string' }], outputs: [{ type: 'uint256' }] },
 ];
 
 const AQUA_SHIPPED = {
@@ -103,8 +104,18 @@ const registryAddress = () => {
     return getAddress(a);
 };
 
-/** Token id for a label, per the registry's labelhash scheme. */
-export const labelId = (label) => BigInt(keccak256(toHex(label)));
+/**
+ * Base id for a label: the labelhash with its low 32 bits cleared.
+ *
+ * Those bits are a version counter the registry bumps when a name is re-registered, which is how
+ * ENSv2 stops a stale approval from carrying over to a name someone re-registered later. Using a
+ * plain `keccak256(label)` as the token id looks right and is wrong by exactly those 32 bits —
+ * `ownerOf` then answers about a token that does not exist and reports the zero address, which
+ * reads as "revoked" rather than as "you asked the wrong question".
+ *
+ * Prefer `findTokenId` on the registry itself where a call is possible; this is for when it is not.
+ */
+export const labelId = (label) => BigInt(keccak256(toHex(label))) & ~0xffffffffn;
 
 /** The expiry of the newest mandate this owner shipped, so the name cannot outlive it. */
 async function liveMandateExpiry(pub, owner) {
@@ -137,6 +148,50 @@ export const grantorRootRoles = () =>
 export const holderRoles = () => ROLE.SET_RESOLVER | ROLE.SET_SUBREGISTRY;
 
 export const isSoulbound = (bitmap) => (bitmap & ROLE_CAN_TRANSFER_ADMIN) === 0n;
+
+/**
+ * Whether a mandate name still authorises its holder to act.
+ *
+ * This is what turns the name from a label into a control. The grantor can end an agent's
+ * authority at any moment by calling `unregister`, and the agent is expected to notice: it reads
+ * this before it acts, and stops when the answer is no. Expiry does the same thing on a timer
+ * without anyone having to be awake for it.
+ */
+export async function mandateNameStatus(pub, registry, label, holder) {
+    const now = Math.floor(Date.now() / 1000);
+    // Ask the registry for the current token id rather than deriving one: it carries a version
+    // counter in its low bits that only the registry knows the value of.
+    const id = await pub.readContract({
+        address: registry, abi: REGISTRY_ABI, functionName: 'findTokenId', args: [label],
+    });
+
+    const expiry = Number(
+        await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'findExpiry', args: [label] }),
+    );
+    if (expiry === 0) {
+        return { valid: false, reason: `no mandate name "${label}" in ${registry}`, expiry: 0, secondsLeft: 0 };
+    }
+    if (expiry <= now) {
+        return {
+            valid: false,
+            reason: `mandate name "${label}" expired at ${new Date(expiry * 1000).toISOString()}`,
+            expiry,
+            secondsLeft: 0,
+        };
+    }
+
+    let owner;
+    try {
+        owner = await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'ownerOf', args: [id] });
+    } catch {
+        return { valid: false, reason: `mandate name "${label}" has been revoked`, expiry, secondsLeft: 0 };
+    }
+    if (owner.toLowerCase() !== holder.toLowerCase()) {
+        return { valid: false, reason: `mandate name "${label}" is held by ${owner}, not ${holder}`, expiry, secondsLeft: 0 };
+    }
+
+    return { valid: true, reason: 'held and unexpired', expiry, secondsLeft: expiry - now, owner };
+}
 
 async function deploy() {
     const { account, pub, wallet } = clients();
@@ -202,7 +257,7 @@ async function grant(label) {
 async function read(label) {
     const { account, pub } = clients();
     const registry = registryAddress();
-    const id = labelId(label);
+    const id = await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'findTokenId', args: [label] });
 
     const [expiry, holderRoles, grantorRoles] = await Promise.all([
         pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'findExpiry', args: [label] }),
@@ -226,7 +281,7 @@ async function read(label) {
 async function revoke(label) {
     const { account, pub, wallet } = clients();
     const registry = registryAddress();
-    const id = labelId(label);
+    const id = await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'findTokenId', args: [label] });
 
     const { request } = await pub.simulateContract({
         account, address: registry, abi: REGISTRY_ABI, functionName: 'unregister', args: [id],
