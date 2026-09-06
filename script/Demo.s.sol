@@ -32,8 +32,10 @@ contract Demo is Script {
     uint128 internal constant MAX_AMOUNT_IN = 100e18;
     uint128 internal constant MIN_RATE = 1.9e18;
     uint24 internal constant FEE_BPS = 0.003e7; // 0.3%
-    /// @dev Matches what the agent grants. A mandate without one is authority that never ends.
-    uint64 internal constant DURATION = 2 hours;
+    /// @dev Default length of the grant, matching the agent. A mandate without one is authority
+    ///   that never ends; a mandate whose length nobody can choose is a limit the maker does not
+    ///   actually control. Override with BATAS_MANDATE_HOURS.
+    uint256 internal constant DEFAULT_HOURS = 2;
 
     function run() external {
         uint256 pk = vm.envUint("SEPOLIA_PRIVATE_KEY");
@@ -61,7 +63,7 @@ contract Demo is Script {
             tokenOut: t1,
             maxAmountIn: MAX_AMOUNT_IN,
             minRateE18: MIN_RATE,
-            expiry: uint64(block.timestamp) + DURATION,
+            expiry: uint64(block.timestamp + vm.envOr("BATAS_MANDATE_HOURS", DEFAULT_HOURS) * 1 hours),
             feeBps: FEE_BPS,
             salt: uint64(block.timestamp)
         });
@@ -69,7 +71,7 @@ contract Demo is Script {
         ISwapVM.Order memory order = _order(me, t0, t1, program);
 
         console.log("mandate: max %s in, floor rate %s, 0.3%% fee", MAX_AMOUNT_IN, MIN_RATE);
-        console.log("expires at %s (%s seconds from now)", mandate.expiry, DURATION);
+        console.log("expires at %s (%s hours from now)", mandate.expiry, vm.envOr("BATAS_MANDATE_HOURS", DEFAULT_HOURS));
 
         vm.startBroadcast(pk);
 

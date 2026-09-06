@@ -37,6 +37,11 @@ contract directly and skip your checks.
 A **mandate** — a size cap, a floor price, and an expiry — enforced in the two places that
 actually gate the money.
 
+How long the grant lasts is the maker's to choose, through `BATAS_MANDATE_HOURS` — the demo script
+and the agent read the same variable, so the two cannot disagree about a term. The default is two
+hours. The deployed demo runs on thirty days so the position stays live long enough to be looked
+at; an agent that picked its own term would be choosing the one limit it is least entitled to.
+
 ### 1. The mandate *is* the Aqua strategy
 
 `Aqua.ship()` hashes the strategy bytes you hand it. Batas passes the encoded mandate as those
@@ -463,9 +468,11 @@ The agent is registered in the canonical
 Sepolia — [`0x7754ce40…`](https://sepolia.etherscan.io/tx/0x7754ce40fe3f6e892512965e1c4c23b43c52d9643b532eb6cfaaecefa42165e2).
 
 ```bash
-node agent/identity.mjs             # build the registration, simulate, show the id it would mint
-node agent/identity.mjs --register  # mint it
+node agent/identity.mjs                       # build the registration, simulate, show the id it would mint
+node agent/identity.mjs --register            # mint it
 node agent/identity.mjs --read 10123
+node agent/identity.mjs --update 10123        # show what has drifted
+node agent/identity.mjs --update 10123 --write
 ```
 
 ERC-8004 is an ERC-721 whose token URI resolves to a file describing what an agent is and where to
@@ -485,15 +492,31 @@ batas.aqua         0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a
 batas.enforcement  swapvm-opcode:0x21
 batas.x402.network hedera:testnet
 batas.x402.payTo   0.0.10388560
+batas.hcs.topic    0.0.10394165
+batas.ens.registry 0x…                 the kill switch, discoverable from the identity
 ```
 
-Its services list points at the source and at the live paid endpoint. An earlier registration,
-agent #10120, named a source URL that turned out not to exist; #10123 replaces it. That is the
-cost of guessing at a fact instead of checking it, and it is cheap only because registering again
-is cheap.
+An earlier registration, agent #10120, named a source URL that turned out not to exist; #10123
+replaces it. That is the cost of guessing at a fact instead of checking it.
+
+Keeping it current is `--update`, not a second `--register`. Minting again would leave the first
+identity standing and describing the same agent wrongly, with nothing to tell a reader which of the
+two to believe. The update writes only what actually differs — it reads `getMetadata` for every key
+first — so a run that changes nothing sends nothing.
 
 Nothing is advertised that cannot be checked. No endpoint is listed that this repo does not serve,
-because a registry full of dead links is worse than an empty one.
+because a registry full of dead links is worse than an empty one. The services list is what makes
+the identity self-sufficient:
+
+```
+source     https://github.com/PugarHuda/batas
+x402       https://batas-one.vercel.app/v1/mandate/explain
+mandates   https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages
+```
+
+The third one matters most. A reader who trusts neither this repository nor the paid endpoint can
+still check any grant this agent made, on a mirror node that is public, unauthenticated, and not
+ours. Identity leads to ledger; ledger holds the terms.
 
 > Two addresses circulate for these registries. The ones in most write-ups —
 > `0x8004A169…` and `0x8004BAa1…` — hold code on **mainnet only** and are empty on Sepolia. The
@@ -548,11 +571,11 @@ enforced mandate
   floor rate  1.92143732923348277
   fee         0.3%
   curve       constant product (x*y=k)
-  expires     2026-09-06T17:50:13.000Z
+  expires     2026-10-06T22:09:10.000Z
 publication
-  published   2026-09-06T15:50:45.755Z  (HCS consensus, topic 0.0.10394165 #2)
+  published   2026-09-06T22:09:24.382Z  (HCS consensus, topic 0.0.10394165 #3)
   granted by  0x39d2bae5eaeda9283535ddc98f1991c81ed5cd7e
-  verify      https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/2
+  verify      https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/3
 operator
   agent #10123  Batas
   held by     0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E

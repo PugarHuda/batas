@@ -83,8 +83,12 @@ test('the live registration resolves off Sepolia', async () => {
     assert.equal(agent.uriKind, 'inline', 'the registration is stored on chain, not behind a URL');
     assert.equal(agent.registration.name, 'Batas');
 
-    const services = agent.registration.services.map((s) => s.name);
-    assert.ok(services.includes('x402'), 'the paid endpoint is advertised in the registration');
+    const services = Object.fromEntries(agent.registration.services.map((s) => [s.name, s.endpoint]));
+    assert.ok(services.x402, 'the paid endpoint is advertised in the registration');
+    // The identity has to lead somewhere a reader can check without trusting us. The mirror node
+    // is public and unauthenticated, so this entry is what makes the registration self-sufficient
+    // rather than a pointer back to our own service.
+    assert.match(services.mandates, /mirrornode\.hedera\.com\/api\/v1\/topics\/0\.0\.\d+\/messages$/);
 });
 
 test('the live identity vouches for its own operator and for nobody else', async () => {

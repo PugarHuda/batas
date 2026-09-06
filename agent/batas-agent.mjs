@@ -41,6 +41,10 @@ const AQUA_FLAG = 1n << 254n;
 const ORDER_DATA_INDEXES = 0x0028002800280028n;
 const TRAITS = AQUA_FLAG | (ORDER_DATA_INDEXES << 160n);
 
+// How long a grant lasts, in hours. Shared with script/Demo.s.sol through the same variable so
+// the two never disagree about what a mandate's term is.
+const MANDATE_HOURS = BigInt(process.env.BATAS_MANDATE_HOURS || 2);
+
 const BPS = 10_000_000n; // SwapVM fee base, 1e7
 const E18 = 10n ** 18n;
 
@@ -213,11 +217,12 @@ async function main() {
         + ` the largest trade that still clears the floor)`,
     );
     console.log(`  fee    ${Number(FEE_BPS) / Number(BPS) * 100}%`);
-    console.log(`  expires in 2 hours`);
+    console.log(`  expires in ${MANDATE_HOURS} hour${MANDATE_HOURS === 1n ? '' : 's'}`);
 
     // Expiry is part of the grant, not decoration: a mandate with no deadline is authority with
-    // no end. Two hours matches what the demo grants.
-    const expiry = BigInt(Math.floor(Date.now() / 1000) + 2 * 60 * 60);
+    // no end. How long is the maker's call, not ours — an agent that picks its own term is
+    // choosing the one limit it is least entitled to. Two hours is the default the demo shares.
+    const expiry = BigInt(Math.floor(Date.now() / 1000)) + MANDATE_HOURS * 3600n;
     const program = toProgram({
         maxAmountIn,
         minRateE18,
