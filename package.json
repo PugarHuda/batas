@@ -7,6 +7,7 @@
     "@1inch/aqua": "github:1inch/aqua#v1.0.0",
     "@1inch/solidity-utils": "6.9.10",
     "@openzeppelin/contracts": "5.4.0",
-    "forge-std": "github:foundry-rs/forge-std#v1.11.0"
+    "forge-std": "github:foundry-rs/forge-std#v1.11.0",
+    "@1inch/swap-vm": "github:1inch/swap-vm"
   }
 }
