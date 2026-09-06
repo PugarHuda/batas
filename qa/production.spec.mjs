@@ -53,13 +53,24 @@ test('the advertised paid route demands payment', async ({ request }) => {
 });
 
 test('production and the local build agree on what is being sold', async ({ request }) => {
-    // Vercel serves the same Express app this repository runs, so a drift here means the deploy
-    // is stale rather than that the two were written differently.
-    const res = await request.get(`${PROD}/`, { timeout: 60_000 });
-    const body = await res.json();
-    expect(body.endpoint).toBe('POST /v1/mandate/explain');
-    expect(body.price).toBe('0.001 HBAR');
-    expect(body.payTo).toMatch(/^0\.0\.\d+$/);
+    // Vercel serves the same Express app this repository runs, so a drift here means the deploy is
+    // stale rather than that the two were written differently.
+    //
+    // This used to assert three fields that have never changed, under a comment claiming it caught
+    // staleness. It did not, and could not: the first time production actually fell behind — a
+    // deploy blocked by a daily quota — the test passed. It now starts this repository's own app
+    // and compares the two descriptions, which is the only way the claim can be true.
+    const { default: app } = await import('../agent/service.mjs');
+    const server = await new Promise((resolve) => {
+        const s = app.listen(0, () => resolve(s));
+    });
+    try {
+        const local = await (await fetch(`http://127.0.0.1:${server.address().port}/`)).json();
+        const live = await (await request.get(`${PROD}/`, { timeout: 60_000 })).json();
+        expect(live, 'production is serving an older build than this repository').toEqual(local);
+    } finally {
+        await new Promise((resolve) => server.close(resolve));
+    }
 });
 
 test('an unknown path on the deployment is a plain 404', async ({ request }) => {
