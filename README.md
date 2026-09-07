@@ -801,6 +801,18 @@ than described.
 **VM layer** — a non-binding mandate leaves the strategy untouched; the cap and the floor both
 revert inside the VM; and a trailing instruction cannot escape the envelope.
 
+**Over time** — every other contract test settles one swap, and the claim this project makes is
+about a position an agent runs for hours. The cap bounds a single trade, not a day's volume, so the
+question worth answering is what stops someone taking the maximum again and again until the
+reserves are gone at a price the maker never agreed to.
+
+The floor does, without knowing anything about volume. Each trade is priced on the reserves as they
+stand, so working the position makes it dearer, and the mandate refuses as soon as the next trade
+would breach the floor. `test_RepeatedTradingCannotWalkThePositionBelowItsFloor` runs that sequence
+and checks all of it: every settled trade clears the floor alone, the rate never improves for the
+taker, the average across the whole run clears the floor too, and the position stops while the
+maker still holds more than half the reserve.
+
 **Off chain** — the two encoders agree byte for byte on arbitrary terms; the decision math never
 returns a cap that its own floor would refuse; the ENSv2 role bitmaps withhold exactly the four
 rights that would break the grant; an ERC-8004 identity held by someone else does not vouch; and a
@@ -812,10 +824,16 @@ description names the network, price, facilitator and topic; every payload is re
 carrying a payment requirement rather than an error; and a malformed body cannot probe the decoder
 for free.
 
+It also checks the spend cap binds. The client is capped at 0.01 HBAR per call — the same idea the
+contracts enforce, one layer up — and a cap that does not cap would be decoration on the one claim
+this project is about. The test runs on a key it generates itself: the refusal happens while the
+payload is being built, before anything is signed or sent, so an unfunded key reaches it, no HBAR
+can move even if the assertion is wrong, and CI needs no secret to run it.
+
 ```
-forge test          29 passing
+forge test          31 passing
 npm run test:js    115 passing
-npm run test:api     8 passing
+npm run test:api     9 passing
 ```
 
 **This document** — `agent/readme.test.mjs` walks the README and asks the chain about everything it

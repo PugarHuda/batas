@@ -298,4 +298,70 @@ contract BatasAppTest is Test, IBatasCallback {
             "both swaps paid out, and neither was double counted"
         );
     }
+
+    /// @notice Trading against the position repeatedly cannot walk it below its floor.
+    /// @dev Every other test here settles one swap. The claim the project actually makes is about a
+    ///   position an agent runs over time, and the cap bounds a single trade rather than a day's
+    ///   volume — so the question a reader should ask is what stops someone taking the maximum
+    ///   again and again until the reserves are drained at a price the maker never agreed to.
+    ///
+    ///   The floor does, and it does it without needing to know anything about volume. Each trade
+    ///   is priced on the reserves as they stand, so the rate falls as the position is worked, and
+    ///   the mandate refuses as soon as the next trade would breach the floor. What follows checks
+    ///   both halves: every settled trade clears the floor on its own, and the cumulative rate
+    ///   across all of them does too.
+    function test_RepeatedTradingCannotWalkThePositionBelowItsFloor() public {
+        Mandate memory m = _mandate();
+        _ship(m);
+
+        uint256 totalIn;
+        uint256 totalOut;
+        uint256 trades;
+        uint256 lastRate = type(uint256).max;
+
+        for (uint256 i = 0; i < 32; i++) {
+            uint256 amountIn = m.maxAmountIn;
+            try app.quote(m, amountIn) returns (uint256 quoted) {
+                uint256 amountOut = app.swap(m, amountIn, 0, address(this), "");
+                assertEq(amountOut, quoted, "quote and swap must agree at every point on the curve");
+
+                uint256 rate = (amountOut * 1e18) / amountIn;
+                assertGe(rate, m.minRateE18, "a settled trade below the floor is the failure this exists to prevent");
+                assertLe(rate, lastRate, "working the position must make it dearer, never cheaper");
+                lastRate = rate;
+
+                totalIn += amountIn;
+                totalOut += amountOut;
+                trades++;
+            } catch {
+                break;
+            }
+        }
+
+        assertGe(trades, 2, "this must exercise a sequence, not one trade and a refusal");
+        assertLt(trades, 32, "and must refuse before the loop runs out, or nothing bounded it");
+        assertGe(
+            totalOut * 1e18,
+            totalIn * uint256(m.minRateE18),
+            "the average rate across every trade must clear the floor too"
+        );
+    }
+
+    /// @notice And the position still holds real reserves when it stops.
+    /// @dev The point of the floor is that it refuses while there is still something to protect.
+    function test_ThePositionStopsWithReservesLeft() public {
+        Mandate memory m = _mandate();
+        _ship(m);
+
+        for (uint256 i = 0; i < 32; i++) {
+            try app.quote(m, m.maxAmountIn) returns (uint256) {
+                app.swap(m, m.maxAmountIn, 0, address(this), "");
+            } catch {
+                break;
+            }
+        }
+
+        // Whatever the maker has left is still theirs, in their own wallet, and it is not dust.
+        assertGt(tokenOut.balanceOf(maker), RESERVE_OUT / 2, "the floor should stop the drain well before the reserve does");
+    }
 }

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { randomBytes } from 'node:crypto';
 
 // The paid surface, exercised the way a caller meets it: an unpaid request, the 402 that comes
 // back, and what that 402 actually promises. Getting the payment requirement wrong is the failure
@@ -113,4 +114,28 @@ test('the discovery manifest is free, well formed, and outside the paywall', asy
     expect(r.accepts[0].asset).toBe(demanded.asset);
     expect(r.accepts[0].network).toBe(demanded.network);
     expect(r.accepts[0].payTo).toBe(demanded.payTo);
+});
+
+test('the client refuses to pay more than its cap, before creating a payment', async () => {
+    // The spend cap is advertised as the same idea the contracts enforce, one layer up: the agent
+    // is autonomous inside a number somebody else set. Nothing checked that it binds, and a cap
+    // that does not cap is decoration on the one claim this project is about.
+    //
+    // It runs on a key generated here rather than the real one. The refusal happens while the
+    // client is building the payload — before anything is signed or sent — so an unfunded key
+    // reaches it, no HBAR can move even if the assertion is wrong, and CI needs no secret.
+    const saved = { ...process.env };
+    process.env.HEDERA_AGENT_ID = '0.0.12345';
+    process.env.HEDERA_AGENT_KEY = `0x${randomBytes(32).toString('hex')}`;
+    process.env.X402_MAX_TINYBAR = '1'; // one tinybar against a price of 100,000
+    process.env.BATAS_SERVICE_URL = 'http://127.0.0.1:4021';
+    try {
+        const { payForExplanation } = await import('../agent/inspect.mjs');
+        await expect(payForExplanation(LIVE_PROGRAM)).rejects.toThrow(/spendControls|maxAmountPerPayment/i);
+    } finally {
+        for (const k of ['HEDERA_AGENT_ID', 'HEDERA_AGENT_KEY', 'X402_MAX_TINYBAR', 'BATAS_SERVICE_URL']) {
+            if (saved[k] === undefined) delete process.env[k];
+            else process.env[k] = saved[k];
+        }
+    }
 });
