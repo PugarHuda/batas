@@ -32,6 +32,17 @@ jobs:
 
       - run: npm ci
 
+      # Temporary: isolating why this environment builds BatasRouter 58 bytes larger than the
+      # machine that deployed it. Removed once the cause is known.
+      - name: build provenance
+        run: |
+          forge --version
+          forge build 2>&1 | grep -i solc || true
+          node -p "'router runtime: ' + (function(){const a=require('./out/BatasRouter.sol/BatasRouter.json').deployedBytecode.object.replace(/^0x/,'');const n=parseInt(a.slice(-4),16);return (a.length-4-n*2)/2})() + ' bytes'"
+          npm ls @1inch/solidity-utils --all 2>/dev/null | head -20
+          ls node_modules/@1inch/aqua/node_modules/@1inch/solidity-utils/package.json 2>/dev/null && node -p "require('./node_modules/@1inch/aqua/node_modules/@1inch/solidity-utils/package.json').version" || echo "no nested solidity-utils"
+          node -p "require('./node_modules/@1inch/solidity-utils/package.json').version"
+
       # Contracts: unit tests plus the fuzzed agreement between the two enforcement surfaces.
       - run: npm run test:sol
 
