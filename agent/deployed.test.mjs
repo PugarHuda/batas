@@ -19,6 +19,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 
 import { createPublicClient, http } from 'viem';
 import { sepolia } from 'viem/chains';
@@ -81,11 +82,20 @@ for (const [name, address] of [['BatasRouter', ROUTER], ['BatasApp', APP]]) {
         // Compared by length and by a slice rather than by dumping two kilobytes of hex on failure:
         // the useful information is that they differ and where, not the whole of both.
         const at = [...local].findIndex((c, i) => c !== chain[i]);
+        const sha = (h) => createHash('sha256').update(h).digest('hex').slice(0, 16);
         assert.equal(
             at,
             -1,
             `${name} at ${address} is not built from src/${name}.sol — first difference at byte `
-            + `${Math.floor(at / 2)} of ${local.length / 2}; redeploy before claiming it is`,
+            + `${Math.floor(at / 2)} of ${local.length / 2}
+`
+            + `  built here ${sha(local)} (${local.length / 2} bytes)
+`
+            + `  on chain   ${sha(chain)} (${chain.length / 2} bytes)
+`
+            + `  local  …${local.slice(Math.max(0, at - 24), at + 40)}
+`
+            + `  chain  …${chain.slice(Math.max(0, at - 24), at + 40)}`,
         );
     });
 }
