@@ -125,3 +125,21 @@ test('the verification inputs describe the contracts as they are now', async () 
         }
     }
 });
+
+test('no npm script is named in a way the host will run on deploy', async () => {
+    // Adding a script called "build" broke a Vercel deployment: the platform treats that name as
+    // the project's build command and ran `forge build --force` on a machine with no forge, which
+    // fails with exit 127 and no obvious connection to the change that caused it. The contracts
+    // build is `build:contracts` for that reason, and this keeps it that way.
+    //
+    // Nothing here needs a build step at deploy time — Vercel serves the Express app directly.
+    const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+    for (const reserved of ['build', 'vercel-build', 'now-build']) {
+        assert.equal(
+            pkg.scripts[reserved],
+            undefined,
+            `"${reserved}" is run automatically by the host on deploy; name it something else`,
+        );
+    }
+    assert.equal(pkg.scripts['build:contracts'], 'forge build --force', 'the contracts build must stay forced');
+});

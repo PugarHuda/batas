@@ -282,7 +282,7 @@ The deployed contract is the first, because that is what `forge create` produces
 bytecode a Foundry project deploys is not the bytecode its tests exercise**, which is worth knowing
 independently of this check — and which nothing here would have surfaced without it.
 
-CI now runs `forge build --force` first; `forge test` afterwards reuses the cache rather than
+CI now runs `npm run build:contracts` first; `forge test` afterwards reuses the cache rather than
 replacing it. `--force` because the cache decides rather than the command — whichever compiled
 first wins, so a warm tree from a test run survives a plain `forge build`, which is how this bit me
 a second time after I thought it was fixed. The toolchain stays pinned anyway, because everything
@@ -814,7 +814,7 @@ for free.
 
 ```
 forge test          29 passing
-npm run test:js    114 passing
+npm run test:js    115 passing
 npm run test:api     8 passing
 ```
 
