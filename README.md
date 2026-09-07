@@ -814,7 +814,7 @@ for free.
 
 ```
 forge test          29 passing
-npm run test:js    108 passing
+npm run test:js    114 passing
 npm run test:api     8 passing
 ```
 
@@ -826,6 +826,26 @@ recipient's balance. Two links have already gone wrong on this project — a reg
 GitHub URL that did not exist, and a registry address that holds code on mainnet only and reads as
 empty on Sepolia, which looks exactly like a correct address for an unregistered agent. A dead link
 costs more than a missing paragraph: it says the thing was described rather than built.
+
+```bash
+forge coverage --ir-minimum          # contracts
+npm run coverage                      # everything off chain
+```
+
+Coverage is a question generator here, not a score. On the contracts it reported 100% of lines and
+16% of branches, which is mostly Foundry mis-attributing under `via-ir` — but asking *which reverts
+any test actually asserted* found three that none did. Off chain it sits at 74% of lines, and what
+remains uncovered is almost entirely the paths that spend money or write to a chain: publishing to
+HCS, settling an x402 payment, granting and revoking names. Those are exercised by hand and
+recorded in this document rather than on every run, because a suite that costs HBAR to run is a
+suite people stop running.
+
+Two gaps it surfaced were worth closing. `latestProgramOnChain` had no test at all, and the
+walkthrough, the MCP tools and `inspect.mjs` all read the live position through it. And the mirror
+node answers `200` with an empty list for a topic id that never existed, so *"nobody published
+this"* and *"we asked a topic that is not there"* arrived looking identical — the second means the
+service is misconfigured, not that the mandate is unvouched. The topic endpoint does return `404`,
+so one extra request in the negative case separates them.
 
 The live checks in there are live on purpose. The ERC-8004 tests read the real registry on Sepolia
 and the publication tests read the real mirror node, because an identity check tested against a

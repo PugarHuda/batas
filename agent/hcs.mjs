@@ -153,10 +153,7 @@ export async function lookupMandate(topicId, program, { fetchImpl = fetch, maxPa
     let next = `/topics/${id}/messages?limit=100&order=asc`;
     for (let page = 0; page < maxPages && next; page++) {
         const res = await fetchImpl(next.startsWith('http') ? next : MIRROR + next.replace(/^\/api\/v1/, ''));
-        if (!res.ok) {
-            if (res.status === 404) return { topic: String(id), published: false, reason: 'topic not found on the mirror node' };
-            throw new Error(`mirror node ${res.status}`);
-        }
+        if (!res.ok) throw new Error(`mirror node ${res.status}`);
         const body = await res.json();
         for (const m of body.messages ?? []) {
             const record = parseMandateMessage(m.message);
@@ -176,7 +173,27 @@ export async function lookupMandate(topicId, program, { fetchImpl = fetch, maxPa
         }
         next = body.links?.next ?? null;
     }
-    return { topic: String(id), published: false, reason: 'these bytes have not been published to this topic' };
+    // Nothing matched. Before saying so, find out whether the topic is even real.
+    //
+    // The messages endpoint answers 200 with an empty list for a topic id that has never existed,
+    // so "nobody published this" and "we asked a topic that is not there" arrive looking identical
+    // — and the second one means the service is misconfigured, not that the mandate is unvouched.
+    // The topic endpoint does return 404, so one extra request in the negative case separates them.
+    const info = await fetchImpl(`${MIRROR}/topics/${id}`);
+    if (info.status === 404) {
+        return {
+            topic: String(id),
+            published: false,
+            topicExists: false,
+            reason: `topic ${id} does not exist on this network; nothing was actually checked`,
+        };
+    }
+    return {
+        topic: String(id),
+        published: false,
+        topicExists: true,
+        reason: 'these bytes have not been published to this topic',
+    };
 }
 
 // --- cli ---------------------------------------------------------------------

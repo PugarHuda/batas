@@ -45,7 +45,7 @@ async function resolveProgram(program) {
     }
     const found = await latestProgramOnChain();
     if (!found) {
-        throw new Error('no program given, and BATAS_OWNER is not set to read a live position from');
+        throw new Error('no program given, and no mandate has been shipped to the live router yet');
     }
     return { program: programFromStrategy(found.strategy), source: `live position ${found.strategyHash}` };
 }

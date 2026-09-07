@@ -9,8 +9,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeAbiParameters, parseAbiParameters, concat } from 'viem';
 
-import { programFromStrategy } from './inspect.mjs';
-import { toProgram } from './swapvm.mjs';
+import { programFromStrategy, latestProgramOnChain } from './inspect.mjs';
+import { toProgram, explain } from './swapvm.mjs';
 
 const TOKEN_A = '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B';
 const TOKEN_B = '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81';
@@ -69,4 +69,31 @@ test('the recovered program still decodes to the terms it was built from', async
     assert.equal(r.mandate.maxAmountInFormatted, '500');
     assert.equal(r.mandate.minRateFormatted, '2');
     assert.equal(r.mandate.expiry, Number(expiry));
+});
+
+// --- reading the live position ------------------------------------------------
+//
+// `latestProgramOnChain` had no test at all, and three things depend on it: the walkthrough, the
+// MCP tools when called without a program, and inspect.mjs itself. It walks Aqua's log backwards
+// in windows and filters client-side, because `Shipped` indexes nothing — so "found the wrong
+// position" and "found nothing" are both quiet failures that would surface as a confusing answer
+// somewhere else entirely.
+
+test('finds the newest mandate this owner shipped to the router', async () => {
+    const found = await latestProgramOnChain();
+    assert.ok(found, 'a mandate is live on the router; if this fails, run script/Demo.s.sol');
+    assert.match(found.strategyHash, /^0x[0-9a-f]{64}$/i);
+
+    const program = programFromStrategy(found.strategy);
+    const answer = explain(program);
+    assert.equal(answer.guarded, true, 'the live position must be guarded by PolicyEnvelope');
+    assert.ok(answer.mandate.expiry !== null, 'and carry a deadline');
+});
+
+test('the strategy it returns hashes to the mandate hash it returns', async () => {
+    // Aqua's strategy hash is keccak of the strategy bytes. If these two ever disagreed, the
+    // walkthrough would be describing one position and pointing at another.
+    const { keccak256 } = await import('viem');
+    const found = await latestProgramOnChain();
+    assert.equal(keccak256(found.strategy).toLowerCase(), found.strategyHash.toLowerCase());
 });

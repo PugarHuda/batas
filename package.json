@@ -35,6 +35,7 @@
     "hcs": "node agent/hcs.mjs",
     "mcp": "node agent/mcp.mjs",
     "walkthrough": "node agent/walkthrough.mjs",
-    "build": "forge build --force"
+    "build": "forge build --force",
+    "coverage": "node --test --experimental-test-coverage agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs"
   }
 }

@@ -132,3 +132,24 @@ test('an unknown label is answered, not guessed at', async () => {
     assert.equal(out.revoked, false, 'a name that was never granted was not revoked');
     assert.match(out.reason, /no mandate name/);
 });
+
+test('called with no program, the tools read the live position', async () => {
+    // The default path, and the one an assistant actually takes first: "what does the position
+    // enforce right now". It resolves through latestProgramOnChain, so a break there would show up
+    // here rather than as a confusing answer to a question nobody could see was misdirected.
+    const client = await connected();
+    const out = parse(await client.callTool({ name: 'read_mandate', arguments: {} }));
+
+    assert.match(out.source, /^live position 0x[0-9a-f]{64}$/i, 'the answer must say what it read');
+    assert.equal(out.guarded, true);
+    assert.ok(out.mandate.expiry !== null, 'the live mandate carries a deadline');
+});
+
+test('the publication tool agrees with the mandate tool about which position that is', async () => {
+    // Two tools, one live position. If they resolved differently an assistant could be told the
+    // limits of one grant and the publication record of another, and nothing would look wrong.
+    const client = await connected();
+    const read = parse(await client.callTool({ name: 'read_mandate', arguments: {} }));
+    const pub = parse(await client.callTool({ name: 'check_publication', arguments: {} }));
+    assert.equal(pub.source, read.source);
+});

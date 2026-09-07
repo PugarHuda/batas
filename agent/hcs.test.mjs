@@ -112,3 +112,24 @@ test('no topic configured is stated, not silently treated as unpublished', async
         if (saved !== undefined) process.env.BATAS_HCS_TOPIC = saved;
     }
 });
+
+test('a topic that does not exist is not reported as an unpublished mandate', async () => {
+    // The mirror node answers 200 with an empty list for a topic id that has never existed, so
+    // without the extra check these two arrive looking identical. They are not: one says nobody
+    // vouched for these bytes, the other says the service asked a question of nothing at all —
+    // a misconfiguration that would otherwise read as evidence against a perfectly good mandate.
+    const missing = await lookupMandate('0.0.999999999', PUBLISHED);
+    assert.equal(missing.published, false);
+    assert.equal(missing.topicExists, false);
+    assert.match(missing.reason, /does not exist/);
+    assert.match(missing.reason, /nothing was actually checked/);
+});
+
+test('and a real topic that simply lacks these bytes says so instead', {
+    skip: !TOPIC && 'BATAS_HCS_TOPIC not set',
+}, async () => {
+    const unpublished = await lookupMandate(null, '0xdeadbeef');
+    assert.equal(unpublished.published, false);
+    assert.equal(unpublished.topicExists, true, 'the configured topic is real');
+    assert.match(unpublished.reason, /not been published/);
+});
