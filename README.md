@@ -716,9 +716,18 @@ for free.
 
 ```
 forge test          21 passing
-npm run test:js     92 passing
+npm run test:js     99 passing
 npm run test:api     8 passing
 ```
+
+**This document** — `agent/readme.test.mjs` walks the README and asks the chain about everything it
+points at: every contract in the deployment table holds code, every linked transaction is on Sepolia
+and succeeded, the Hedera accounts and the publication topic exist, the sequence number quoted in the
+worked example is really on that topic, and the tokens the walkthrough says were paid out are in the
+recipient's balance. Two links have already gone wrong on this project — a registration naming a
+GitHub URL that did not exist, and a registry address that holds code on mainnet only and reads as
+empty on Sepolia, which looks exactly like a correct address for an unregistered agent. A dead link
+costs more than a missing paragraph: it says the thing was described rather than built.
 
 The live checks in there are live on purpose. The ERC-8004 tests read the real registry on Sepolia
 and the publication tests read the real mirror node, because an identity check tested against a
