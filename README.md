@@ -239,6 +239,31 @@ Writing the test for it exposed a second problem: the file called `main()` at mo
 importing it ran the whole paid flow as a side effect of loading. `inspect.mjs`, `identity.mjs`
 and `batas-agent.mjs` now only run when invoked directly.
 
+### The fix that was never deployed
+
+`BatasApp` on Sepolia was a version behind. `ZeroAmountOut` — the guard added after the fuzzer
+found that a one-wei input has its whole value eaten by the rounded-up fee, leaving the taker
+paying for nothing — existed in the source, in the tests and in this document, and not on chain.
+
+Nothing looked wrong. The tests passed, the address held code, the explorer showed a verified
+contract, and `verification/` offered a standard-json input to reproduce it. That input was a copy
+of the source from before the fix, so it agreed with the deployment and disagreed with the
+repository.
+
+The first attempt to check this was wrong too. Searching the deployed bytecode for the error's
+selector said "absent", which happened to be the right answer for the wrong reason — under
+`via_ir` the optimizer does not leave selectors lying around as searchable constants, and the same
+search on the freshly deployed contract also said "absent".
+
+What settles it is comparing the whole runtime: metadata dropped, because it hashes the source
+layout, and immutables blanked, because the artifact stores them as zeroes and the constructor
+writes them. The old app came out 2,777 bytes against 2,797 in the source, first differing at byte
+493.
+
+`agent/deployed.test.mjs` does that comparison on every run, for both contracts, and checks that
+the verification inputs still match the files they claim to be. A repository that says what is
+deployed should be able to prove it.
+
 ### What coverage found that reading did not
 
 `forge coverage` reported lines, statements and functions at 100% and **branches at 16%**. Foundry
@@ -320,7 +345,7 @@ than taken from this repo on trust.
 |---|---|
 | Aqua (canonical, not ours) | [`0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`](https://sepolia.etherscan.io/address/0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a) |
 | `BatasRouter` (SwapVM + PolicyEnvelope) | [`0x8e9BF70758AC73824135C05e70cbdf512713950E`](https://sepolia.etherscan.io/address/0x8e9BF70758AC73824135C05e70cbdf512713950E) |
-| `BatasApp` | [`0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849`](https://sepolia.etherscan.io/address/0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849) |
+| `BatasApp` | [`0xcB1C4f828Bb6aCc2Be50397017B100257671cC2f`](https://sepolia.etherscan.io/address/0xcB1C4f828Bb6aCc2Be50397017B100257671cC2f) |
 | Demo token A | [`0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B`](https://sepolia.etherscan.io/address/0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B) |
 | Demo token B | [`0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81`](https://sepolia.etherscan.io/address/0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81) |
 | ERC-8004 identity registry (canonical) | [`0x8004A818BFB912233c491871b3d84c89A494BD9e`](https://sepolia.etherscan.io/address/0x8004A818BFB912233c491871b3d84c89A494BD9e) |
@@ -553,7 +578,7 @@ metadata entries keep the on-chain facts queryable without fetching the URI at a
 ```
 batas.chain        eip155:11155111
 batas.router       0x8e9BF70758AC73824135C05e70cbdf512713950E
-batas.app          0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849
+batas.app          0xcB1C4f828Bb6aCc2Be50397017B100257671cC2f
 batas.aqua         0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a
 batas.enforcement  swapvm-opcode:0x21
 batas.x402.network hedera:testnet
@@ -765,7 +790,7 @@ for free.
 
 ```
 forge test          29 passing
-npm run test:js    105 passing
+npm run test:js    108 passing
 npm run test:api     8 passing
 ```
 

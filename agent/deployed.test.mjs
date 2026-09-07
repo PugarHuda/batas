@@ -1,0 +1,112 @@
+// Is what is deployed what is in this repository?
+//
+// This was not a hypothetical. `BatasApp` at 0x369D326c… was deployed before `ZeroAmountOut`
+// existed — the guard added to fix a bug the fuzzer found, where a one-wei input has its whole
+// value eaten by the rounded-up fee and the taker pays for nothing. The fix was written, tested,
+// documented and never deployed. Everything read as correct: the tests passed, the address held
+// code, the explorer showed a verified contract. It was simply a version behind on the one thing
+// that mattered.
+//
+// A verification artifact went stale the same way, so `verification/` described a contract that
+// was no longer the source either.
+//
+// Comparing selectors would not have caught it — under `via_ir` the optimizer does not leave error
+// selectors lying around as searchable constants, which is how the first attempt at this check
+// gave a confident wrong answer. So the whole runtime is compared instead, minus the trailing
+// metadata, which encodes a hash of the source layout and differs for reasons that are not the
+// code.
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+
+import { createPublicClient, http } from 'viem';
+import { sepolia } from 'viem/chains';
+
+import { ROUTER, APP } from './deployment.mjs';
+
+const client = createPublicClient({
+    chain: sepolia,
+    transport: http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
+});
+
+/**
+ * Drop the CBOR metadata Solidity appends to runtime code.
+ *
+ * The last two bytes give its length. It carries a hash of the source and of the compiler
+ * settings, so two builds of identical code can differ there — comparing it would report drift
+ * that is not drift.
+ */
+function withoutMetadata(hex) {
+    const body = String(hex).trim().replace(/^0x/, '').toLowerCase();
+    const len = parseInt(body.slice(-4), 16);
+    if (!Number.isFinite(len) || len * 2 + 4 > body.length) return body;
+    return body.slice(0, body.length - 4 - len * 2);
+}
+
+/**
+ * Blank the immutables.
+ *
+ * A compiled artifact leaves immutable slots as zeroes; the constructor writes them at deploy time.
+ * Comparing raw bytes therefore reports a difference for every immutable — the Aqua address, here —
+ * which is not drift. The artifact says exactly where they are.
+ */
+function maskImmutables(hex, refs) {
+    const bytes = Buffer.from(hex, 'hex');
+    for (const spans of Object.values(refs ?? {})) {
+        for (const { start, length } of spans) bytes.fill(0, start, start + length);
+    }
+    return bytes.toString('hex');
+}
+
+async function artifactOf(name) {
+    return JSON.parse(await readFile(new URL(`../out/${name}.sol/${name}.json`, import.meta.url), 'utf8'));
+}
+
+/** A short, comparable fingerprint: metadata dropped, immutables blanked. */
+async function fingerprints(name, address) {
+    const artifact = await artifactOf(name);
+    const refs = artifact.deployedBytecode.immutableReferences;
+    const onChain = await client.getCode({ address });
+    assert.ok(onChain && onChain !== '0x', `${address} holds no code`);
+    return {
+        chain: maskImmutables(withoutMetadata(onChain), refs),
+        local: maskImmutables(withoutMetadata(artifact.deployedBytecode.object), refs),
+    };
+}
+
+for (const [name, address] of [['BatasRouter', ROUTER], ['BatasApp', APP]]) {
+    test(`${name} on Sepolia is the ${name} in this repository`, async () => {
+        const { chain, local } = await fingerprints(name, address);
+        // Compared by length and by a slice rather than by dumping two kilobytes of hex on failure:
+        // the useful information is that they differ and where, not the whole of both.
+        const at = [...local].findIndex((c, i) => c !== chain[i]);
+        assert.equal(
+            at,
+            -1,
+            `${name} at ${address} is not built from src/${name}.sol — first difference at byte `
+            + `${Math.floor(at / 2)} of ${local.length / 2}; redeploy before claiming it is`,
+        );
+    });
+}
+
+test('the verification inputs describe the contracts as they are now', async () => {
+    // `verification/` exists so a reader can reproduce the bytecode without trusting the explorer.
+    // A stale one is worse than none: it invites someone to check, and then tells them the
+    // deployment does not match.
+    for (const name of ['BatasRouter', 'BatasApp']) {
+        const input = JSON.parse(
+            await readFile(new URL(`../verification/${name}.standard-input.json`, import.meta.url), 'utf8'),
+        );
+        for (const path of ['src/BatasApp.sol', 'src/PolicyEnvelope.sol', 'src/Mandate.sol', 'src/BatasRouter.sol']) {
+            const key = Object.keys(input.sources).find((k) => k.endsWith(path));
+            if (!key) continue;
+            const onDisk = await readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+            assert.equal(
+                input.sources[key].content,
+                onDisk.replace(/\r\n/g, '\n'),
+                `verification/${name}.standard-input.json carries an old copy of ${path}`,
+            );
+        }
+    }
+});
