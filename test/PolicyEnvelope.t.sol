@@ -256,4 +256,47 @@ contract PolicyEnvelopeTest is Test {
         vm.expectPartialRevert(Deadline.DeadlineReached.selector);
         swapVM.swap(order, 10e18, takerData);
     }
+
+    /// @notice An envelope whose args are shorter than its two limits is refused, not half-read.
+    /// @dev `InstructionArgs.at` is a raw `calldataload`; 1inch documents that the library "does
+    ///   not implement out-of-bounds read validations", leaving arg length to whoever built the
+    ///   program. For a fee or a curve that is fine — a misparse produces a wrong price and
+    ///   somebody notices. For this instruction it produces a *guard that passes*.
+    ///
+    ///   The program below proves what would otherwise happen. Its envelope declares sixteen bytes
+    ///   of args instead of thirty-two, so `minRateE18` is read from the sixteen bytes that follow:
+    ///   the fee instruction's header and the start of the curve. Removing the check and running
+    ///   this test gives a floor of 148889121703133190954033214317794426880 — a position that
+    ///   refuses every trade.
+    ///
+    ///   That direction is an accident of this layout, and that is the argument. The value comes
+    ///   from whatever bytes happen to sit after the envelope; a different program yields a floor
+    ///   near zero and an envelope that waves everything through, and an envelope that is the last
+    ///   instruction reads past `order.data` entirely. A guard whose strictness depends on its
+    ///   neighbours is not a guard, so the length is checked rather than reasoned about.
+    function test_RevertWhenEnvelopeArgsAreTruncated() public {
+        // Hand-built on purpose: PolicyEnvelope.build cannot express this, which is the point.
+        // [opcode 0x21][len 16][16 bytes of maxAmountIn] then the rest of an ordinary program.
+        bytes memory truncated = bytes.concat(
+            bytes1(0x21), bytes1(0x10), bytes16(uint128(100e18)),
+            FeeFlatIn.build(0.003e7),
+            XYCSwap.build()
+        );
+        ISwapVM.Order memory order = _order(truncated);
+        _ship(order);
+
+        bytes memory takerData = _takerData();
+        vm.expectPartialRevert(PolicyEnvelope.MandateArgsTruncated.selector);
+        swapVM.swap(order, 10e18, takerData);
+    }
+
+    /// @notice Exactly thirty-two bytes is accepted; the check is a floor, not a fixed width.
+    function test_ExactlyThirtyTwoArgBytesIsAccepted() public {
+        ISwapVM.Order memory order = _order(_program(100e18, 1.9e18, 0.003e7));
+        _ship(order);
+
+        bytes memory takerData = _takerData();
+        (uint256 amountIn,,) = swapVM.swap(order, 10e18, takerData);
+        assertEq(amountIn, 10e18, "a well formed envelope still settles");
+    }
 }

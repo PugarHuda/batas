@@ -14,7 +14,9 @@ import {
     FEE_WORTH_MENTIONING,
 } from './swapvm.mjs';
 
-// The program actually shipped to Sepolia, kept verbatim as a regression anchor.
+// A program actually shipped to Sepolia, kept verbatim as a regression anchor. Frozen on purpose:
+// the live position moves as mandates are renewed, and a fixture that chased it would test the
+// current chain state rather than the decoder.
 const LIVE_PROGRAM =
     '0x212000000000000000056bc75e2d6310000000000000000000001a5e27eef13e00002005006a9da768700300753050000208000000006a9d8b48';
 
@@ -24,7 +26,7 @@ const LIVE_PROGRAM =
 const UNBOUNDED_PROGRAM =
     '0x2120000000000000000579a814e10a74000000000000000000001aaa51121b231412700300753050000208000000006a9d5ef4';
 
-test('decodes the program that is live on chain', () => {
+test('decodes a program exactly as it was shipped', () => {
     const r = explain(LIVE_PROGRAM);
     assert.equal(r.guarded, true);
     assert.deepEqual(

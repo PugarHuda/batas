@@ -19,7 +19,7 @@ import { createServer } from './mcp.mjs';
 import { xycSwap, salt } from './swapvm.mjs';
 
 const LIVE_PROGRAM =
-    '0x21200000000000000000f3e04a65862e64ff00000000000000001aaa51121b2314122005006ac57186700300753050000208000000006a9de486';
+    '0x21200000000000000000f3e04a65862e64ff00000000000000001aaa51121b2314122005006ac5c427700300753050000208000000006a9e3727';
 
 async function connected() {
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();

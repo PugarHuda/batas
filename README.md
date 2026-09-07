@@ -239,6 +239,42 @@ Writing the test for it exposed a second problem: the file called `main()` at mo
 importing it ran the whole paid flow as a side effect of loading. `inspect.mjs`, `identity.mjs`
 and `batas-agent.mjs` now only run when invoked directly.
 
+### What coverage found that reading did not
+
+`forge coverage` reported lines, statements and functions at 100% and **branches at 16%**. Foundry
+mis-attributes branches under `via-ir`, so the number itself is not worth much; what it was worth
+was checking which reverts any test actually asserted. Three had none.
+
+`InsufficientOutputAmount` — the taker's own slippage bound, never exercised. `ZeroAmountOut` — the
+guard added to fix a bug the fuzzer found, asserted nowhere by name, so removing it would have
+shown up only as a disagreement between two surfaces rather than as a failure. And `swap` hands
+control to `msg.sender` after the output has left and before payment is checked, the same shape as
+a flash swap, with a `nonReentrantStrategy` lock that nothing had ever tried to break.
+
+The lock holds. Re-entering a *different* position of the same maker is allowed — the key is
+`(maker, strategyHash)` — and that is now pinned too, because a per-position lock is the kind of
+narrowing that looks like an oversight until someone checks the accounting survives it.
+
+### A guard that read its limits from its neighbours
+
+`InstructionArgs.at` is a raw `calldataload`, and 1inch says so plainly: *"the library does not
+implement out-of-bounds read validations"*. Arg length is the program author's problem. For a fee
+or a curve that is a fair trade — a misparse produces a wrong price and somebody notices. For
+`PolicyEnvelope` it produces a guard that passes.
+
+An envelope declaring sixteen bytes of args instead of thirty-two read `minRateE18` out of the
+instruction that followed it. Removing the new length check and running
+`test_RevertWhenEnvelopeArgsAreTruncated` gives a floor of
+`148889121703133190954033214317794426880` — a position that refuses everything. That direction is
+an accident of the layout: the value comes from whatever bytes happen to sit after the envelope,
+and an envelope that is the last instruction reads past `order.data` entirely. A guard whose
+strictness depends on its neighbours is not a guard.
+
+It also settled a disagreement. The decoder in `agent/swapvm.mjs` already refused a short envelope
+rather than half-reading it, so until now the report and the chain described different programs.
+
+`parse` checks the length. The router was redeployed and re-verified for it.
+
 ### The same bug, twice, on opposite sides of the fence
 
 The JavaScript agent once built its program instruction by instruction and left `Deadline` out, so
@@ -283,7 +319,7 @@ than taken from this repo on trust.
 | Contract | Address |
 |---|---|
 | Aqua (canonical, not ours) | [`0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`](https://sepolia.etherscan.io/address/0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a) |
-| `BatasRouter` (SwapVM + PolicyEnvelope) | [`0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4`](https://sepolia.etherscan.io/address/0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4) |
+| `BatasRouter` (SwapVM + PolicyEnvelope) | [`0x8e9BF70758AC73824135C05e70cbdf512713950E`](https://sepolia.etherscan.io/address/0x8e9BF70758AC73824135C05e70cbdf512713950E) |
 | `BatasApp` | [`0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849`](https://sepolia.etherscan.io/address/0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849) |
 | Demo token A | [`0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B`](https://sepolia.etherscan.io/address/0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B) |
 | Demo token B | [`0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81`](https://sepolia.etherscan.io/address/0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81) |
@@ -331,8 +367,8 @@ transfers, no mocked settlement:
 
 | Step | Transaction |
 |---|---|
-| Ship liquidity under the mandate | [`0x00d0bc71…`](https://sepolia.etherscan.io/tx/0x00d0bc7132edd8ae9f18e1e5f3f71ca4c41ae3b50a6ae9e0d132d00d7b10561d) |
-| Swap settled inside the mandate | [`0xe08a5613…`](https://sepolia.etherscan.io/tx/0xe08a5613d58047cea2e1bde85069fd2fdd65e9585d2f5ea98c3d57500ec32c20) |
+| Ship liquidity under the mandate | [`0xf7269cb3…`](https://sepolia.etherscan.io/tx/0xf7269cb31c202733b5ba9342e3b7f1317c5de182abc2f50fb1f7a17cad5984f2) |
+| Swap settled inside the mandate | [`0x0aa39dcf…`](https://sepolia.etherscan.io/tx/0x0aa39dcfd55bd7df3936e6976e3922d5dfba8220dc3b5befb0c20c7533f3dba1) |
 
 10 tokenA in, **19.743160687941225977 tokenB** out to
 [`0x8474d483…`](https://sepolia.etherscan.io/address/0x8474d483Cc4374B8a16fE2D019717b23f0a5BD83) —
@@ -516,7 +552,7 @@ metadata entries keep the on-chain facts queryable without fetching the URI at a
 
 ```
 batas.chain        eip155:11155111
-batas.router       0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4
+batas.router       0x8e9BF70758AC73824135C05e70cbdf512713950E
 batas.app          0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849
 batas.aqua         0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a
 batas.enforcement  swapvm-opcode:0x21
@@ -601,11 +637,11 @@ enforced mandate
   floor rate  1.92143732923348277
   fee         0.3%
   curve       constant product (x*y=k)
-  expires     2026-10-06T22:09:10.000Z
+  expires     2026-10-07T04:01:43.000Z
 publication
-  published   2026-09-06T22:09:24.382Z  (HCS consensus, topic 0.0.10394165 #3)
+  published   2026-09-07T04:02:07.036Z  (HCS consensus, topic 0.0.10394165 #4)
   granted by  0x39d2bae5eaeda9283535ddc98f1991c81ed5cd7e
-  verify      https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/3
+  verify      https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/4
 operator
   agent #10123  Batas
   held by     0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E
@@ -728,8 +764,8 @@ carrying a payment requirement rather than an error; and a malformed body cannot
 for free.
 
 ```
-forge test          21 passing
-npm run test:js    104 passing
+forge test          29 passing
+npm run test:js    105 passing
 npm run test:api     8 passing
 ```
 

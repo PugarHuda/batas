@@ -31,6 +31,7 @@ library PolicyEnvelope {
 
     error MandateAmountInExceeded(uint256 amountIn, uint256 maxAmountIn);
     error MandateRateTooLow(uint256 amountOut, uint256 amountIn, uint256 minRateE18);
+    error MandateArgsTruncated(uint256 length);
 
     Opcode constant opcode = Opcode._21;
 
@@ -58,7 +59,19 @@ library PolicyEnvelope {
         ptrStart.patchLength(ptr);
     }
 
+    /// @dev The length check is not ceremony. `InstructionArgs.at` is a raw `calldataload` and
+    ///   1inch documents it as such — "the library does not implement out-of-bounds read
+    ///   validations" — so an envelope built with fewer than 32 bytes of args reads its limits out
+    ///   of whatever follows in calldata: the next instruction's bytes, or past the end of the
+    ///   program entirely. Every other instruction can afford that, because a misparsed fee or
+    ///   curve produces a wrong price and someone notices. This one produces a *guard that passes*,
+    ///   which is the failure nobody sees.
+    ///
+    ///   It also settles a disagreement between the two surfaces: the decoder in agent/swapvm.mjs
+    ///   already refuses a short PolicyEnvelope rather than half-reading it, so without this the
+    ///   report and the chain would describe different programs.
     function parse(bytes calldata args) internal pure returns (uint128 maxAmountIn, uint128 minRateE18) {
+        require(args.length >= 32, MandateArgsTruncated(args.length));
         maxAmountIn = args.at(0).asU128();
         minRateE18 = args.at(16).asU128();
     }

@@ -22,7 +22,7 @@ contract Demo is Script {
 
     /// @dev Defaults point at the Sepolia deployment so the walkthrough runs out of the box, but
     ///   anyone who deploys their own set can point at it without editing this file.
-    address internal constant DEFAULT_ROUTER = 0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4;
+    address internal constant DEFAULT_ROUTER = 0x8e9BF70758AC73824135C05e70cbdf512713950E;
     address internal constant DEFAULT_TOKEN_A = 0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B;
     address internal constant DEFAULT_TOKEN_B = 0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81;
 

@@ -274,6 +274,23 @@ async function grant(label) {
     const roles = holderRoles();
     const agentAddress = getAddress(process.env.BATAS_AGENT_ADDRESS || account.address);
 
+    // A live name cannot be registered over. The registry says so with a bare
+    // LabelAlreadyRegistered selector, which is correct and tells the operator nothing about what
+    // to do next — so the state is read first and the situation described.
+    const existing = await mandateNameStatus(pub, registry, label, agentAddress, { grantedUntil: expiry });
+    if (existing.valid) {
+        console.log(`
+"${label}" is already granted to ${agentAddress}`);
+        console.log(`  expires ${new Date(existing.expiry * 1000).toISOString()}`);
+        if (existing.expiry >= expiry) {
+            console.log('  it already covers this mandate; nothing to do');
+        } else {
+            console.log(`  but the mandate runs to ${new Date(expiry * 1000).toISOString()}`);
+            console.log(`  revoke it first to re-grant: node agent/ens.mjs --revoke ${label}`);
+        }
+        return;
+    }
+
     console.log(`\ngranting "${label}" to ${agentAddress}`);
     console.log(`  roles      SET_RESOLVER | SET_SUBREGISTRY`);
     console.log(`  withheld   CAN_TRANSFER_ADMIN (soulbound), UNREGISTER (grantor keeps it)`);
