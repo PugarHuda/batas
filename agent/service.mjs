@@ -13,13 +13,14 @@
 // host, and its /supported lives at the root rather than under /v1.
 
 import express from 'express';
+import { isAddress } from 'viem';
 import { HTTPFacilitatorClient, x402ResourceServer } from '@x402/core/server';
 import { ExactHederaScheme } from '@x402/hedera/exact/server';
 import { paymentMiddleware } from '@x402/express';
 import 'dotenv/config';
 
 import { explain } from './swapvm.mjs';
-import { resolveAgent, vouchesFor } from './erc8004.mjs';
+import { resolveAgent, vouchesFor, parseAgentId } from './erc8004.mjs';
 import { lookupMandate } from './hcs.mjs';
 import { HCS_TOPIC } from './deployment.mjs';
 
@@ -112,10 +113,17 @@ app.use(
     ),
 );
 
-app.post('/v1/mandate/explain', async (req, res) => {
-    const program = req.body?.program;
+/**
+ * The paid answer, as a function.
+ *
+ * Split out from the route so it can be exercised without going through the paywall — the branch
+ * below decides what a caller is told about somebody else's identity, and that is not something to
+ * leave untested because testing it through HTTP would cost money.
+ */
+export async function inspect(body) {
+    const program = body?.program;
     if (typeof program !== 'string' || !/^0x[0-9a-fA-F]*$/.test(program)) {
-        return res.status(400).json({ error: 'body must be { program: "0x..." }' });
+        return statusAnd(400, { error: 'body must be { program: "0x..." }' });
     }
 
     let answer;
@@ -124,7 +132,7 @@ app.post('/v1/mandate/explain', async (req, res) => {
     } catch (e) {
         // A program that cannot be walked is a real answer, not a server fault: it tells the caller
         // the bytes they were handed are not a valid instruction stream.
-        return res.status(422).json({ error: String(e.message || e), valid: false });
+        return statusAnd(422, { error: String(e.message || e), valid: false });
     }
 
     // When these bytes became public, according to a network none of the parties runs.
@@ -143,17 +151,35 @@ app.post('/v1/mandate/explain', async (req, res) => {
     // Who is running this position. The program cannot say — bytecode has no author — so the
     // answer comes from the ERC-8004 registry rather than from anyone's claim. Optional, because a
     // caller who only wants the limits should not pay for a chain read they did not ask for.
-    const { agentId, maker } = req.body ?? {};
+    const { agentId, maker } = body ?? {};
     if (agentId !== undefined) {
-        try {
-            const agent = await resolveAgent(agentId);
-            answer.operator = { ...agent, ...(maker ? { check: vouchesFor(agent, maker) } : {}) };
-        } catch (e) {
-            answer.operator = { registered: false, error: String(e.shortMessage || e.message || e) };
+        // `checked` separates the two answers that used to look alike. A malformed request, or an
+        // RPC that would not answer, reported `registered: false` — telling someone who had paid
+        // that an identity does not exist, when the truth was that we never managed to ask. That is
+        // a statement about a third party, and getting it wrong is worse than returning nothing.
+        const id = parseAgentId(agentId);
+        if (id === null) {
+            answer.operator = { checked: false, error: 'agentId must be a non-negative integer' };
+        } else if (maker !== undefined && !isAddress(maker)) {
+            answer.operator = { checked: false, error: 'maker must be a 0x-prefixed 20-byte address' };
+        } else {
+            try {
+                const agent = await resolveAgent(id);
+                answer.operator = { checked: true, ...agent, ...(maker ? { check: vouchesFor(agent, maker) } : {}) };
+            } catch (e) {
+                answer.operator = { checked: false, error: String(e.shortMessage || e.message || e) };
+            }
         }
     }
 
-    res.json(answer);
+    return statusAnd(200, answer);
+}
+
+const statusAnd = (status, payload) => ({ status, body: payload });
+
+app.post('/v1/mandate/explain', async (req, res) => {
+    const { status, body } = await inspect(req.body);
+    res.status(status).json(body);
 });
 
 export default app;

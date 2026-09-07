@@ -199,8 +199,11 @@ async function main() {
     if (body.operator) {
         const o = body.operator;
         console.log('operator');
-        if (!o.registered) {
-            console.log(`  no ERC-8004 identity${o.error ? ` — ${o.error}` : ''}`);
+        if (o.checked === false) {
+            // Not the same as "no identity". Saying so would be a claim about someone else.
+            console.log(`  not checked — ${o.error}`);
+        } else if (!o.registered) {
+            console.log('  no ERC-8004 identity under that id');
         } else {
             console.log(`  agent #${o.agentId}  ${o.registration?.name ?? '(unnamed)'}`);
             console.log(`  held by     ${o.owner}`);

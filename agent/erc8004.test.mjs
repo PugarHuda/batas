@@ -11,7 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseAgentURI, vouchesFor, resolveAgent, IDENTITY_REGISTRY } from './erc8004.mjs';
+import { parseAgentURI, vouchesFor, resolveAgent, parseAgentId, IDENTITY_REGISTRY } from './erc8004.mjs';
 
 const AGENT_ID = 10123n;
 const OWNER = '0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E';
@@ -101,4 +101,42 @@ test('an id that was never minted comes back unregistered, not empty', async () 
     const agent = await resolveAgent(2n ** 200n);
     assert.equal(agent.registered, false);
     assert.equal(agent.owner, undefined, 'a zero address here would read as a revoked identity');
+});
+
+
+test('an agent id is parsed strictly, because BigInt is not', () => {
+    // BigInt([]) is 0n. An empty array therefore asked the registry about agent #0 and got a real
+    // answer back, which the caller would read as an identity that exists.
+    assert.equal(parseAgentId([]), null);
+    assert.equal(parseAgentId({}), null);
+    assert.equal(parseAgentId(null), null);
+    assert.equal(parseAgentId(undefined), null);
+    assert.equal(parseAgentId('abc'), null);
+    assert.equal(parseAgentId('1e999'), null, 'exponent notation is not an id');
+    assert.equal(parseAgentId('0x10'), null, 'nor is hex');
+    assert.equal(parseAgentId(-1), null);
+    assert.equal(parseAgentId(1.5), null);
+    assert.equal(parseAgentId(Number.MAX_SAFE_INTEGER + 2), null, 'past safe integers a number is a guess');
+
+    assert.equal(parseAgentId('10123'), 10123n);
+    assert.equal(parseAgentId(' 10123 '), 10123n, 'whitespace from a form field is not a malformed id');
+    assert.equal(parseAgentId(10123), 10123n);
+    assert.equal(parseAgentId(10123n), 10123n);
+    assert.equal(parseAgentId(0), 0n, 'zero is a real id, and must not be confused with a rejection');
+});
+
+test('resolveAgent refuses an id it cannot trust rather than coercing one', async () => {
+    await assert.rejects(() => resolveAgent([]), /non-negative integer/);
+    await assert.rejects(() => resolveAgent('abc'), /non-negative integer/);
+});
+
+test('a maker that is not an address does not throw out of the vouching check', () => {
+    // It used to, and the service caught that as "registered: false" — a statement about a third
+    // party produced by our own bad argument handling.
+    const agent = { registered: true, agentId: '1', owner: OWNER };
+    for (const bad of [{}, [], 42, null, undefined, '0x', 'not-an-address']) {
+        const check = vouchesFor(agent, bad);
+        assert.equal(check.vouched, false);
+        assert.match(check.reason, /no maker address/);
+    }
 });

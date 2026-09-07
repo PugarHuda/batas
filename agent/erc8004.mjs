@@ -43,6 +43,21 @@ export function parseAgentURI(uri) {
 }
 
 /**
+ * Interpret whatever arrived as an agent id, or say it is not one.
+ *
+ * `BigInt()` is far more willing than it looks: `BigInt([])` is `0n`, so an empty array asked about
+ * agent #0 and got a real answer back. Everything else — an object, a float, a negative, "1e999" —
+ * throws from deep inside, which the caller then sees as the identity failing rather than as their
+ * own input being wrong. Neither is acceptable in something people pay for.
+ */
+export function parseAgentId(value) {
+    if (typeof value === 'bigint') return value >= 0n ? value : null;
+    if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0 ? BigInt(value) : null;
+    if (typeof value === 'string' && /^[0-9]+$/.test(value.trim())) return BigInt(value.trim());
+    return null;
+}
+
+/**
  * Resolve an agent id to what the registry actually holds.
  *
  * Everything returned is read from chain. Nothing is inferred, and an id that is not registered
@@ -50,7 +65,8 @@ export function parseAgentURI(uri) {
  * name" are very different things to tell someone about to trade.
  */
 export async function resolveAgent(agentId, { client, rpcUrl } = {}) {
-    const id = BigInt(agentId);
+    const id = parseAgentId(agentId);
+    if (id === null) throw new Error('agentId must be a non-negative integer');
     const pub = client ?? createPublicClient({
         chain: sepolia,
         transport: http(rpcUrl || process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
@@ -87,7 +103,12 @@ export async function resolveAgent(agentId, { client, rpcUrl } = {}) {
  * is not proof of anything, and saying so plainly is more useful than omitting the check.
  */
 export function vouchesFor(agent, makerAddress) {
-    if (!agent?.registered || !makerAddress) return { vouched: false, reason: 'no identity to check' };
+    if (!agent?.registered) return { vouched: false, reason: 'no identity to check' };
+    // A maker that is not a string used to throw out of `.toLowerCase()`, and the caller saw that as
+    // the identity being unregistered. Say what is actually wrong instead.
+    if (typeof makerAddress !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(makerAddress)) {
+        return { vouched: false, reason: 'no maker address to check against' };
+    }
     if (agent.owner?.toLowerCase() === makerAddress.toLowerCase()) {
         return { vouched: true, reason: 'the identity is held by the address that granted the mandate' };
     }

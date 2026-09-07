@@ -36,6 +36,14 @@ export const BPS = 10_000_000n; // SwapVM fee base, 1e7
 // limits — SwapVM will run whatever is encoded — but the point at which a reader deciding whether
 // to trade is better served by being told than by being left to do the arithmetic.
 export const FEE_WORTH_MENTIONING = 500_000; // 5% of the 1e7 base
+
+// How many instructions a report will list.
+//
+// A mandate is five. The decoder itself is fast — 60,000 instructions walk in 13ms — but listing
+// them turns a 234KB request into a 2.7MB answer, an 11.8x amplification on a route someone pays a
+// tenth of a cent to call. The terms below are still read from the whole program, so nothing is
+// decided on a partial view; only the listing is bounded, and a truncated one says so.
+export const MAX_LISTED_INSTRUCTIONS = 256;
 export const LONG_TERM_MS = 365 * 24 * 60 * 60 * 1000;
 export const E18 = 10n ** 18n;
 
@@ -262,6 +270,13 @@ export function explain(program) {
     } else if (t.expiry * 1000 < Date.now()) {
         notes.push('The deadline has already passed; this position authorises nothing.');
     }
+    if (instructions.length > MAX_LISTED_INSTRUCTIONS) {
+        notes.push(
+            `This program has ${instructions.length} instructions; the first ${MAX_LISTED_INSTRUCTIONS} are `
+            + 'listed. The terms below were read from all of them. A mandate is five instructions, so '
+            + 'a stream this long is doing something other than granting one.',
+        );
+    }
     if (t.maxAmountIn === null) notes.push('No size cap: a single trade may consume the whole reserve.');
     if (t.minRateE18 === null) notes.push('No floor price: the position will settle at any rate the curve produces.');
 
@@ -289,7 +304,10 @@ export function explain(program) {
 
     return {
         guarded,
-        instructions: instructions.map((i) => ({ offset: i.offset, name: i.name, args: `0x${i.args}` })),
+        instructionCount: instructions.length,
+        instructions: instructions
+            .slice(0, MAX_LISTED_INSTRUCTIONS)
+            .map((i) => ({ offset: i.offset, name: i.name, args: `0x${i.args}` })),
         mandate: {
             maxAmountIn: t.maxAmountIn?.toString() ?? null,
             maxAmountInFormatted: t.maxAmountIn === null ? null : formatUnits(t.maxAmountIn, 18),
