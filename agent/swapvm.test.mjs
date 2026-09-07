@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import {
     OP, decodeProgram, readMandate, explain,
     policyEnvelope, deadline, feeFlatIn, xycSwap, salt, instruction,
+    FEE_WORTH_MENTIONING,
 } from './swapvm.mjs';
 
 // The program actually shipped to Sepolia, kept verbatim as a regression anchor.
@@ -167,4 +168,49 @@ test('a live deadline draws neither the expired note nor the missing one', () =>
         + deadline(future).slice(2) + feeFlatIn(30_000).slice(2) + xycSwap().slice(2) + salt(1n).slice(2);
     const { notes } = explain(program);
     assert.ok(!notes.some((n) => /never expires|already passed/.test(n)), JSON.stringify(notes));
+});
+
+// --- terms that are present but do not limit ---------------------------------
+//
+// Everything the report said until now answered "is this term missing". A term can also be there,
+// decode cleanly, and leave the position open anyway — which is harder to notice precisely because
+// the report looks complete.
+
+const live = (over = {}) => {
+    const { fee = 30_000, seconds = 3600 } = over;
+    return policyEnvelope(100n * 10n ** 18n, 1_900_000_000_000_000_000n)
+        + deadline(Math.floor(Date.now() / 1000) + seconds).slice(2)
+        + feeFlatIn(fee).slice(2) + xycSwap().slice(2) + salt(1n).slice(2);
+};
+
+test('an ordinary fee draws no remark', () => {
+    assert.deepEqual(explain(live()).notes, []);
+});
+
+test('a fee large enough to matter is remarked on, with the threshold stated', () => {
+    const { notes } = explain(live({ fee: 800_000 })); // 8%
+    const note = notes.find((n) => /maker fee/.test(n));
+    assert.ok(note, JSON.stringify(notes));
+    assert.match(note, /8%/);
+    // The line has to say where it was drawn, so a reader can disagree with it rather than take it.
+    assert.match(note, /above the 5%/);
+});
+
+test('the fee threshold is a boundary, not a range', () => {
+    assert.deepEqual(explain(live({ fee: FEE_WORTH_MENTIONING })).notes, [], 'exactly at the line is ordinary');
+    assert.equal(explain(live({ fee: FEE_WORTH_MENTIONING + 1 })).notes.length, 1);
+});
+
+test('a deadline far enough out to bound nothing is remarked on', () => {
+    const { notes } = explain(live({ seconds: 400 * 86_400 }));
+    const note = notes.find((n) => /deadline is/.test(n));
+    assert.ok(note, JSON.stringify(notes));
+    assert.match(note, /400 days/);
+    // And it must not be confused with having no deadline at all: the two have different remedies.
+    assert.ok(!notes.some((n) => /never expires/.test(n)));
+});
+
+test('a year and a day is remarked on; a month is not', () => {
+    assert.deepEqual(explain(live({ seconds: 30 * 86_400 })).notes, []);
+    assert.equal(explain(live({ seconds: 366 * 86_400 })).notes.length, 1);
 });

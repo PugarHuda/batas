@@ -31,6 +31,12 @@ export const OP = {
 const NAMES = Object.fromEntries(Object.entries(OP).map(([k, v]) => [v, k]));
 
 export const BPS = 10_000_000n; // SwapVM fee base, 1e7
+
+// Where this report starts remarking on terms that are present but permissive. Not protocol
+// limits — SwapVM will run whatever is encoded — but the point at which a reader deciding whether
+// to trade is better served by being told than by being left to do the arithmetic.
+export const FEE_WORTH_MENTIONING = 500_000; // 5% of the 1e7 base
+export const LONG_TERM_MS = 365 * 24 * 60 * 60 * 1000;
 export const E18 = 10n ** 18n;
 
 // --- encoding ---------------------------------------------------------------
@@ -258,6 +264,28 @@ export function explain(program) {
     }
     if (t.maxAmountIn === null) notes.push('No size cap: a single trade may consume the whole reserve.');
     if (t.minRateE18 === null) notes.push('No floor price: the position will settle at any rate the curve produces.');
+
+    // Limits that are present but do not limit.
+    //
+    // Everything above answers "is this term missing". A term can also be there, decode cleanly,
+    // and still leave the position open — and that is the harder thing to notice, because the
+    // report looks complete. Both thresholds below are stated in the note rather than applied
+    // silently, so a reader can disagree with where the line was drawn.
+    if (t.feeBps !== null && t.feeBps > FEE_WORTH_MENTIONING) {
+        const pct = (t.feeBps / Number(BPS)) * 100;
+        notes.push(
+            `The maker fee is ${pct}%, above the ${(FEE_WORTH_MENTIONING / Number(BPS)) * 100}% this `
+            + 'report treats as ordinary. The fee is taken off the input before the curve prices it, '
+            + 'so it reduces what the floor is measured against.',
+        );
+    }
+    if (t.expiry !== null && t.expiry * 1000 > Date.now() + LONG_TERM_MS) {
+        const days = Math.round((t.expiry * 1000 - Date.now()) / 86_400_000);
+        notes.push(
+            `The deadline is ${days} days away. It is a real expiry, but at that distance it bounds `
+            + 'little in practice; revoking the grant is the control that still means something.',
+        );
+    }
 
     return {
         guarded,

@@ -7,6 +7,19 @@ because the only contract allowed to touch your tokens refuses to settle a swap 
 
 ---
 
+## See it work
+
+```bash
+npm run walkthrough              # free: everything anyone can verify without us
+npm run walkthrough -- --paid    # and then settle 0.001 HBAR for the rest
+```
+
+Five steps that read public chains and a public mirror node, then one that pays. The split is the
+argument: the limits are arithmetic on bytes anyone holds, so they cost nothing and route through
+nothing of ours. What the payment buys is one answer assembled across three networks — the terms,
+the consensus timestamp on which those exact bytes became public, and the identity behind the
+position with a check that it is held by the address that granted the mandate.
+
 ## The problem
 
 1inch's [Aqua](https://github.com/1inch/aqua) is a shared liquidity layer where a maker never
@@ -716,7 +729,7 @@ for free.
 
 ```
 forge test          21 passing
-npm run test:js     99 passing
+npm run test:js    104 passing
 npm run test:api     8 passing
 ```
 

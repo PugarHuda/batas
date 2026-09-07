@@ -33,6 +33,7 @@
     "test:prod": "playwright test --project=production",
     "ens": "node agent/ens.mjs",
     "hcs": "node agent/hcs.mjs",
-    "mcp": "node agent/mcp.mjs"
+    "mcp": "node agent/mcp.mjs",
+    "walkthrough": "node agent/walkthrough.mjs"
   }
 }
