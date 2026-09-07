@@ -824,7 +824,13 @@ description names the network, price, facilitator and topic; every payload is re
 carrying a payment requirement rather than an error; and a malformed body cannot probe the decoder
 for free.
 
-It also checks the spend cap binds. The client is capped at 0.01 HBAR per call — the same idea the
+It also checks that nothing answers with HTML. Body parsing fails before any route sees a request,
+and Express answers those with `<!DOCTYPE html>` and a 400 — from a service whose every consumer is
+an agent, an indexer or a facilitator, none of which can read markup. Malformed bodies now come back
+as JSON, oversized ones as a `413` that states the limit so the next attempt can fit inside it, and
+a wrong path as a `404` naming the routes that do exist.
+
+The same suite checks the spend cap binds. The client is capped at 0.01 HBAR per call — the same idea the
 contracts enforce, one layer up — and a cap that does not cap would be decoration on the one claim
 this project is about. The test runs on a key it generates itself: the refusal happens while the
 payload is being built, before anything is signed or sent, so an unfunded key reaches it, no HBAR
@@ -832,8 +838,8 @@ can move even if the assertion is wrong, and CI needs no secret to run it.
 
 ```
 forge test          31 passing
-npm run test:js    115 passing
-npm run test:api     9 passing
+npm run test:js    126 passing
+npm run test:api    13 passing
 ```
 
 **This document** — `agent/readme.test.mjs` walks the README and asks the chain about everything it

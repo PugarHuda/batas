@@ -47,6 +47,20 @@ const resourceServer = new x402ResourceServer(new HTTPFacilitatorClient({ url: F
 const app = express();
 app.use(express.json({ limit: '256kb' }));
 
+// Body parsing fails before any route sees the request, and Express answers those with an HTML
+// error page — `<!DOCTYPE html>` and a 400, from a service whose every other answer is JSON.
+// Nothing that calls this endpoint is a browser: it is agents, indexers and facilitators, and an
+// HTML page is not an answer any of them can read.
+app.use((err, _req, res, next) => {
+    if (err?.type === 'entity.parse.failed') {
+        return res.status(400).json({ error: 'body must be valid JSON' });
+    }
+    if (err?.type === 'entity.too.large') {
+        return res.status(413).json({ error: 'body must be under 256kb', limit: err.limit });
+    }
+    return next(err);
+});
+
 // Free: what this service is and what it charges. Anything that costs money to answer is behind
 // the paywall below.
 app.get('/', (_req, res) => {
@@ -180,6 +194,16 @@ const statusAnd = (status, payload) => ({ status, body: payload });
 app.post('/v1/mandate/explain', async (req, res) => {
     const { status, body } = await inspect(req.body);
     res.status(status).json(body);
+});
+
+// Express's default 404 is an HTML page, for the same non-existent browser. A machine that reached
+// the wrong path is told the right ones rather than handed markup it cannot read.
+app.use((req, res) => {
+    res.status(404).json({
+        error: `no route for ${req.method} ${req.path}`,
+        free: ['GET /', 'GET /.well-known/x402'],
+        paid: ['POST /v1/mandate/explain'],
+    });
 });
 
 export default app;

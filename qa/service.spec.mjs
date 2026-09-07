@@ -139,3 +139,64 @@ test('the client refuses to pay more than its cap, before creating a payment', a
         }
     }
 });
+
+// --- HTTP edges ---------------------------------------------------------------
+//
+// Nothing that calls this endpoint is a browser. It is agents, indexers and facilitators, so every
+// answer has to be machine-readable — including the ones that say no. Body parsing fails before any
+// route sees the request, and Express answered those with an HTML error page from a service whose
+// every other response is JSON.
+
+test('a malformed body is refused as JSON, not as an HTML error page', async ({ request }) => {
+    const res = await request.post('/v1/mandate/explain', {
+        headers: { 'Content-Type': 'application/json' },
+        data: '{broken',
+    });
+    expect(res.status()).toBe(400);
+    expect(res.headers()['content-type']).toContain('application/json');
+    expect((await res.json()).error).toMatch(/valid JSON/);
+});
+
+test('a body past the limit is refused as JSON, with the limit stated', async ({ request }) => {
+    const res = await request.post('/v1/mandate/explain', {
+        headers: { 'Content-Type': 'application/json' },
+        data: JSON.stringify({ program: `0x${'00'.repeat(200_000)}` }),
+    });
+    expect(res.status()).toBe(413);
+    expect(res.headers()['content-type']).toContain('application/json');
+
+    const body = await res.json();
+    expect(body.limit).toBe(262_144);
+    // A caller told "too large" without being told the size cannot fix it on the next attempt.
+    expect(body.error).toMatch(/256kb/);
+});
+
+test('no route answers with HTML, whatever it is sent', async ({ request }) => {
+    const attempts = [
+        ['/', 'GET', undefined],
+        ['/.well-known/x402', 'GET', undefined],
+        ['/v1/mandate/explain', 'POST', { program: LIVE_PROGRAM }],
+        ['/v1/mandate/explain', 'POST', {}],
+        ['/v1/nothing/here', 'POST', {}],
+    ];
+    for (const [path, method, data] of attempts) {
+        const res = method === 'GET'
+            ? await request.get(path)
+            : await request.post(path, { data });
+        const type = res.headers()['content-type'] ?? '';
+        expect(type, `${method} ${path} answered ${type}`).not.toContain('text/html');
+    }
+});
+
+test('concurrent callers all get the same payment requirement', async ({ request }) => {
+    // The facilitator handshake runs on the request path, so a burst is where a shared client would
+    // show up as inconsistent terms — one caller quoted a different price than another.
+    const results = await Promise.all(
+        Array.from({ length: 8 }, () => request.post('/v1/mandate/explain', { data: { program: LIVE_PROGRAM } })),
+    );
+    const requirements = results.map((r) => {
+        expect(r.status()).toBe(402);
+        return decodeRequirement(r.headers()['payment-required']).accepts[0];
+    });
+    for (const accepts of requirements) expect(accepts).toEqual(requirements[0]);
+});

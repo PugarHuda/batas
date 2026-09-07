@@ -79,8 +79,23 @@ test('production and the local build agree on what is being sold', async ({ requ
     }
 });
 
-test('an unknown path on the deployment is a plain 404', async ({ request }) => {
+test('an unknown path on the deployment is a plain 404, in JSON', async ({ request }) => {
+    // The drift check above compares the two description surfaces. It cannot see behaviour, and
+    // behaviour is where the deployment fell behind last: Express answers an unknown path with an
+    // HTML page by default, which is useless to every consumer this endpoint has. Asserting the
+    // content type here is what makes that visible on the deployment rather than only locally.
     const res = await request.post(`${PROD}/v1/nothing/here`, { data: {}, timeout: 60_000 });
     expect(res.status()).toBe(404);
     expect(res.headers()['payment-required']).toBeUndefined();
+    expect(res.headers()['content-type'], 'production is behind: 404s still answer HTML').toContain('application/json');
+});
+
+test('and a malformed body is refused as JSON on the deployment too', async ({ request }) => {
+    const res = await request.post(`${PROD}/v1/mandate/explain`, {
+        headers: { 'Content-Type': 'application/json' },
+        data: '{broken',
+        timeout: 60_000,
+    });
+    expect(res.status()).toBe(400);
+    expect(res.headers()['content-type'], 'production is behind: parse errors still answer HTML').toContain('application/json');
 });
