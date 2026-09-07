@@ -23,7 +23,7 @@
     "@playwright/test": "^1.63.0"
   },
   "scripts": {
-    "test": "npm run test:sol && npm run test:js && npm run test:api",
+    "test": "npm run build && npm run test:sol && npm run test:js && npm run test:api",
     "test:sol": "forge test",
     "test:js": "node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs",
     "test:api": "playwright test --project=local",
@@ -34,6 +34,7 @@
     "ens": "node agent/ens.mjs",
     "hcs": "node agent/hcs.mjs",
     "mcp": "node agent/mcp.mjs",
-    "walkthrough": "node agent/walkthrough.mjs"
+    "walkthrough": "node agent/walkthrough.mjs",
+    "build": "forge build --force"
   }
 }

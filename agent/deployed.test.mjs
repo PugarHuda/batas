@@ -95,7 +95,12 @@ for (const [name, address] of [['BatasRouter', ROUTER], ['BatasApp', APP]]) {
 `
             + `  local  …${local.slice(Math.max(0, at - 24), at + 40)}
 `
-            + `  chain  …${chain.slice(Math.max(0, at - 24), at + 40)}`,
+            + `  chain  …${chain.slice(Math.max(0, at - 24), at + 40)}
+`
+            + '  note: out/ must come from `forge build`. `forge test` compiles src/ differently'
+            + ' — 20,596 bytes for BatasRouter against 20,538 — so an artifact left by a test'
+            + ' run differs here for reasons that are not a stale deployment. Run `forge build`'
+            + ' and try again before redeploying anything.',
         );
     });
 }

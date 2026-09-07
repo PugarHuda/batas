@@ -264,12 +264,29 @@ writes them. The old app came out 2,777 bytes against 2,797 in the source, first
 the verification inputs still match the files they claim to be. A repository that says what is
 deployed should be able to prove it.
 
-It found one more thing immediately. The comparison passed locally and failed in CI, because the
-workflow installed `stable` — forge 1.8.1, which does not emit the same bytes for `BatasRouter` as
-the 1.8.0 that deployed it. Everything else here was already pinned: the compiler, the
-dependencies, the `swap-vm` commit. The toolchain was the one thing still free to move underneath a
-deployment nobody had touched. **Reproducing these contracts needs Foundry 1.8.0**, and CI now says
-so rather than discovering it.
+It found one more thing immediately, and it was not what it looked like. The comparison passed
+locally and failed in CI at byte 1,169, so the first guess was the toolchain — CI installed
+`stable` while the deployment came from 1.8.0. Pinning it changed nothing. The lengths were the
+clue: 20,596 bytes built against 20,538 on chain, with every jump destination after that point
+shifted by the difference.
+
+`forge build` and `forge test` do not compile `src/` the same way.
+
+```
+forge clean && forge build   →  BatasRouter runtime 20,538 bytes
+forge clean && forge test    →  BatasRouter runtime 20,596 bytes
+```
+
+The deployed contract is the first, because that is what `forge create` produces. CI ran only
+`forge test`, so it compared the chain against an artifact no deployment ever came from. **The
+bytecode a Foundry project deploys is not the bytecode its tests exercise**, which is worth knowing
+independently of this check — and which nothing here would have surfaced without it.
+
+CI now runs `forge build --force` first; `forge test` afterwards reuses the cache rather than
+replacing it. `--force` because the cache decides rather than the command — whichever compiled
+first wins, so a warm tree from a test run survives a plain `forge build`, which is how this bit me
+a second time after I thought it was fixed. The toolchain stays pinned anyway, because everything
+else already is.
 
 ### What coverage found that reading did not
 

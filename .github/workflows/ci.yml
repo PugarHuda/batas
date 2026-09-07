@@ -32,16 +32,16 @@ jobs:
 
       - run: npm ci
 
-      # Temporary: isolating why this environment builds BatasRouter 58 bytes larger than the
-      # machine that deployed it. Removed once the cause is known.
-      - name: build provenance
-        run: |
-          forge --version
-          forge build 2>&1 | grep -i solc || true
-          node -p "'router runtime: ' + (function(){const a=require('./out/BatasRouter.sol/BatasRouter.json').deployedBytecode.object.replace(/^0x/,'');const n=parseInt(a.slice(-4),16);return (a.length-4-n*2)/2})() + ' bytes'"
-          npm ls @1inch/solidity-utils --all 2>/dev/null | head -20
-          ls node_modules/@1inch/aqua/node_modules/@1inch/solidity-utils/package.json 2>/dev/null && node -p "require('./node_modules/@1inch/aqua/node_modules/@1inch/solidity-utils/package.json').version" || echo "no nested solidity-utils"
-          node -p "require('./node_modules/@1inch/solidity-utils/package.json').version"
+      # `forge build` before `forge test`, and the order matters.
+      #
+      # The two commands do not compile src/ the same way: from a clean tree, `forge build` emits a
+      # BatasRouter runtime of 20,538 bytes and `forge test` emits 20,596. The deployed contract is
+      # the former, because that is what `forge create` produces. agent/deployed.test.mjs compares
+      # the two, so it needs the build artifact — and once `forge build` has written it, `forge
+      # test` reuses the cache rather than replacing it. `--force` because the cache, not the
+      # command, decides: whichever compiled first wins, so a warm tree from a test run would
+      # otherwise survive a plain `forge build`.
+      - run: forge build --force
 
       # Contracts: unit tests plus the fuzzed agreement between the two enforcement surfaces.
       - run: npm run test:sol
