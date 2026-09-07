@@ -17,7 +17,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned, not "stable". agent/deployed.test.mjs compares the bytecode on Sepolia against a
+      # local build, and forge 1.8.1 does not produce the same bytes for BatasRouter as the 1.8.0
+      # that deployed it. Everything else here is already pinned — solc, the dependencies, the
+      # swap-vm commit — and the toolchain was the one thing left that could move underneath a
+      # deployment nobody had changed.
       - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.0
 
       - uses: actions/setup-node@v4
         with:

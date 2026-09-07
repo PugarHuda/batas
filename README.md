@@ -264,6 +264,13 @@ writes them. The old app came out 2,777 bytes against 2,797 in the source, first
 the verification inputs still match the files they claim to be. A repository that says what is
 deployed should be able to prove it.
 
+It found one more thing immediately. The comparison passed locally and failed in CI, because the
+workflow installed `stable` — forge 1.8.1, which does not emit the same bytes for `BatasRouter` as
+the 1.8.0 that deployed it. Everything else here was already pinned: the compiler, the
+dependencies, the `swap-vm` commit. The toolchain was the one thing still free to move underneath a
+deployment nobody had touched. **Reproducing these contracts needs Foundry 1.8.0**, and CI now says
+so rather than discovering it.
+
 ### What coverage found that reading did not
 
 `forge coverage` reported lines, statements and functions at 100% and **branches at 16%**. Foundry
