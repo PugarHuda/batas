@@ -21,6 +21,7 @@ import 'dotenv/config';
 import { explain } from './swapvm.mjs';
 import { resolveAgent, vouchesFor } from './erc8004.mjs';
 import { lookupMandate } from './hcs.mjs';
+import { HCS_TOPIC } from './deployment.mjs';
 
 const PORT = Number(process.env.PORT || 4021);
 const FACILITATOR = process.env.X402_FACILITATOR_URL || 'https://api.testnet.blocky402.com';
@@ -53,7 +54,7 @@ app.get('/', (_req, res) => {
         describes: 'What limits a SwapVM program actually enforces, decoded from its bytecode,'
             + ' and when those exact bytes were published to Hedera Consensus Service.',
         endpoint: 'POST /v1/mandate/explain',
-        topic: process.env.BATAS_HCS_TOPIC ?? null,
+        topic: HCS_TOPIC,
         body: {
             program: '0x… SwapVM instruction stream',
             agentId: 'optional — an ERC-8004 id to resolve the operator behind the position',
@@ -134,7 +135,7 @@ app.post('/v1/mandate/explain', async (req, res) => {
     // service, and unlike the limits it is not something the caller could compute for themselves.
     // No input needed: the match is on the bytes already in the request.
     try {
-        answer.publication = await lookupMandate(null, program);
+        answer.publication = await lookupMandate(HCS_TOPIC, program);
     } catch (e) {
         answer.publication = { published: null, error: String(e.message || e) };
     }

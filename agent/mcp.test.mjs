@@ -106,17 +106,29 @@ test('check_agent_authority reads the live mandate name', {
     assert.equal(typeof out.expiry, 'number');
 });
 
-test('a missing configuration is reported rather than answered as "not authorised"', async () => {
-    // These two are not the same, and confusing them would have an assistant tell someone their
-    // agent had been revoked when in fact nothing was ever looked up.
-    const saved = process.env.BATAS_ENS_REGISTRY;
-    delete process.env.BATAS_ENS_REGISTRY;
-    try {
-        const client = await connected();
-        const res = await client.callTool({ name: 'check_agent_authority', arguments: {} });
-        assert.equal(res.isError, true);
-        assert.match(res.content[0].text, /must be set/);
-    } finally {
-        if (saved !== undefined) process.env.BATAS_ENS_REGISTRY = saved;
-    }
+test('authority carries why it ended, not only that it did', async () => {
+    // This replaced a test that could no longer fail. It deleted an environment variable the tool
+    // had already read at import, so the guard it checked was unreachable — and once the live
+    // deployment became the default, the "not configured" case stopped existing at all.
+    //
+    // What is still worth pinning is the distinction an assistant actually needs: a grant that ran
+    // out and one the owner pulled call for different responses, and a result that only said
+    // "invalid" would collapse them.
+    const client = await connected();
+    const out = parse(await client.callTool({ name: 'check_agent_authority', arguments: {} }));
+
+    assert.equal(typeof out.valid, 'boolean');
+    assert.equal(typeof out.revoked, 'boolean', 'revocation must be reported as its own fact');
+    assert.ok(!(out.valid && out.revoked), 'a live name cannot also be a revoked one');
+    if (!out.valid) assert.match(out.reason, /revoked|expired|no mandate name|is held by/);
+});
+
+test('an unknown label is answered, not guessed at', async () => {
+    const client = await connected();
+    const out = parse(await client.callTool({
+        name: 'check_agent_authority', arguments: { label: 'no-such-mandate-name' },
+    }));
+    assert.equal(out.valid, false);
+    assert.equal(out.revoked, false, 'a name that was never granted was not revoked');
+    assert.match(out.reason, /no mandate name/);
 });

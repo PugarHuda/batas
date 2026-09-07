@@ -18,12 +18,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import 'dotenv/config';
 
-// Same address on Ethereum Sepolia and Hedera testnet. Verified to hold code on both.
-const IDENTITY_REGISTRY = getAddress('0x8004A818BFB912233c491871b3d84c89A494BD9e');
-
-const ROUTER = getAddress(process.env.BATAS_ROUTER || '0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4');
-const APP = getAddress(process.env.BATAS_APP || '0x369D326cB0Ef400EB1AA1E2Aa62bC12F791c4849');
-const AQUA = getAddress('0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a');
+import { AQUA, ROUTER, APP, IDENTITY_REGISTRY, HCS_TOPIC, ENS_REGISTRY } from './deployment.mjs';
 
 const REGISTRY_ABI = [
     {
@@ -71,7 +66,7 @@ const REGISTRY_ABI = [
     },
 ];
 
-const HCS_TOPIC = process.env.BATAS_HCS_TOPIC || '0.0.10394165';
+
 const MIRROR_TOPIC = `https://testnet.mirrornode.hedera.com/api/v1/topics/${HCS_TOPIC}/messages`;
 
 /**
@@ -117,7 +112,7 @@ function metadataEntries() {
         { metadataKey: 'batas.hcs.topic', metadataValue: utf8(HCS_TOPIC) },
         // The kill switch, so that revocation is discoverable from the identity rather than only
         // from this repository.
-        { metadataKey: 'batas.ens.registry', metadataValue: utf8(process.env.BATAS_ENS_REGISTRY || '') },
+        { metadataKey: 'batas.ens.registry', metadataValue: utf8(ENS_REGISTRY) },
     ].filter((m) => m.metadataValue !== '0x');
 }
 

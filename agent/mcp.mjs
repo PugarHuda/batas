@@ -30,6 +30,7 @@ import { explain } from './swapvm.mjs';
 import { lookupMandate } from './hcs.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { payForExplanation, latestProgramOnChain, programFromStrategy } from './inspect.mjs';
+import { OWNER, ENS_REGISTRY, MANDATE_NAME, HCS_TOPIC } from './deployment.mjs';
 
 const HEX = /^0x[0-9a-fA-F]*$/;
 
@@ -96,7 +97,7 @@ export function createServer() {
         async ({ program }) => {
             try {
                 const { program: p, source } = await resolveProgram(program);
-                return text(JSON.stringify({ source, ...(await lookupMandate(null, p)) }, null, 2));
+                return text(JSON.stringify({ source, ...(await lookupMandate(HCS_TOPIC, p)) }, null, 2));
             } catch (e) {
                 return fail(String(e.message ?? e));
             }
@@ -118,17 +119,15 @@ export function createServer() {
             },
         },
         async ({ label, grantedUntil }) => {
-            const registry = process.env.BATAS_ENS_REGISTRY;
-            const holder = process.env.BATAS_OWNER;
-            if (!registry || !holder) return fail('BATAS_ENS_REGISTRY and BATAS_OWNER must be set to read the mandate name');
+            const registry = ENS_REGISTRY;
+            const holder = OWNER;
             try {
                 const pub = createPublicClient({
                     chain: sepolia,
                     transport: http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
                 });
                 const status = await mandateNameStatus(
-                    pub, getAddress(registry), label || process.env.BATAS_MANDATE_NAME || 'agent',
-                    getAddress(holder), { grantedUntil },
+                    pub, getAddress(registry), label || MANDATE_NAME, getAddress(holder), { grantedUntil },
                 );
                 return text(JSON.stringify(status, null, 2));
             } catch (e) {

@@ -24,14 +24,15 @@ import 'dotenv/config';
 
 import { decodeProgram, readMandate } from './swapvm.mjs';
 import { programFromStrategy } from './inspect.mjs';
+import { AQUA, ROUTER } from './deployment.mjs';
 
 // ENSv2 beta on Sepolia. Checked for code before use; these moved once already during the beta.
 const VERIFIABLE_FACTORY = getAddress('0x10Dc6333cDfe1FCEF624c6E0A8221b91804cD7ef');
 const USER_REGISTRY_IMPL = getAddress('0x624a25D67b59d587752ebEC8DdEd8827dAE52050');
 const PERMISSIONED_RESOLVER = getAddress('0x9EAE5c2730a7dd16bDD1dEE6421A1b91e3b0365e');
 
-const AQUA = getAddress('0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a');
-const ROUTER = getAddress(process.env.BATAS_ROUTER || '0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4');
+
+
 
 // From the ENSv2 Permissioned Registry. Roles sit four bits apart; the admin of a role is that
 // role shifted left by 128.

@@ -21,13 +21,13 @@ import { lookupMandate } from './hcs.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { resolveAgent, vouchesFor } from './erc8004.mjs';
 import { latestProgramOnChain, programFromStrategy, payForExplanation } from './inspect.mjs';
+import { OWNER, ENS_REGISTRY, MANDATE_NAME, AGENT_ID, HCS_TOPIC } from './deployment.mjs';
 
 const step = (n, title) => console.log(`\n${n}. ${title}\n${'─'.repeat(60)}`);
 const line = (k, v) => console.log(`   ${k.padEnd(12)} ${v}`);
 
 async function main() {
-    const owner = process.env.BATAS_OWNER;
-    if (!owner) throw new Error('set BATAS_OWNER to the address that granted the mandate');
+    const owner = OWNER;
 
     step(1, 'The position, read off Sepolia');
     const found = await latestProgramOnChain();
@@ -35,7 +35,7 @@ async function main() {
     const program = programFromStrategy(found.strategy);
     line('mandate', found.strategyHash);
     line('program', `${program.slice(0, 42)}… (${(program.length - 2) / 2} bytes)`);
-    line('verify', `https://sepolia.etherscan.io/address/${getAddress(owner)}`);
+    line('verify', `https://sepolia.etherscan.io/address/${owner}`);
 
     step(2, 'What those bytes permit — arithmetic, free, reproducible');
     const answer = explain(program);
@@ -48,7 +48,7 @@ async function main() {
     for (const n of answer.notes) console.log(`   note         ${n}`);
 
     step(3, 'When those exact bytes became public — Hedera, free, not ours');
-    const pub = await lookupMandate(null, program);
+    const pub = await lookupMandate(HCS_TOPIC, program);
     if (pub.published) {
         line('published', pub.publishedAt);
         line('consensus', `topic ${pub.topic} #${pub.sequenceNumber}`);
@@ -58,16 +58,14 @@ async function main() {
     }
 
     step(4, 'Whether the agent may still act — ENSv2, free, the owner\'s switch');
-    const registry = process.env.BATAS_ENS_REGISTRY;
-    if (!registry) {
-        line('skipped', 'BATAS_ENS_REGISTRY not set');
-    } else {
+    const registry = ENS_REGISTRY;
+    {
         const client = createPublicClient({
             chain: sepolia,
             transport: http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
         });
         const status = await mandateNameStatus(
-            client, getAddress(registry), process.env.BATAS_MANDATE_NAME || 'agent', getAddress(owner),
+            client, registry, MANDATE_NAME, owner,
             { grantedUntil: m.expiry ?? undefined },
         );
         line('authority', status.valid ? 'live' : (status.revoked ? 'revoked by the owner' : 'ended'));
@@ -76,10 +74,8 @@ async function main() {
     }
 
     step(5, 'Who is behind it — ERC-8004');
-    const agentId = process.env.BATAS_AGENT_ID;
-    if (!agentId) {
-        line('skipped', 'BATAS_AGENT_ID not set');
-    } else {
+    const agentId = AGENT_ID;
+    {
         const agent = await resolveAgent(agentId);
         line('agent', `#${agent.agentId}  ${agent.registration?.name ?? '(unnamed)'}`);
         line('held by', agent.owner);

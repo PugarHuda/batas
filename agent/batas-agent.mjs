@@ -20,17 +20,11 @@ import { toProgram, decideMandate, decodeProgram, readMandate } from './swapvm.m
 import { programFromStrategy } from './inspect.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { publishMandate } from './hcs.mjs';
+import { AQUA, ROUTER, TOKENS, ENS_REGISTRY, MANDATE_NAME } from './deployment.mjs';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import 'dotenv/config';
 
-const AQUA = getAddress('0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a');
-// Defaults are the Sepolia deployment; override to point at your own without editing this file.
-const ROUTER = getAddress(process.env.BATAS_ROUTER || '0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4');
-const TOKENS = [
-    getAddress(process.env.BATAS_TOKEN_A || '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B'),
-    getAddress(process.env.BATAS_TOKEN_B || '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81'),
-].sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : 1));
 const [TOKEN_A, TOKEN_B] = TOKENS;
 
 // Opcodes, read from @1inch/swap-vm/src/libs/OpcodeList.sol.
@@ -175,9 +169,9 @@ async function main() {
     // ends the agent's authority without touching the position or spending anything on chain. An
     // agent that does not consult it turns that control into decoration, so the check runs before
     // the transaction rather than after.
-    const ensRegistry = process.env.BATAS_ENS_REGISTRY;
+    const ensRegistry = ENS_REGISTRY;
     if (ensRegistry) {
-        const label = process.env.BATAS_MANDATE_NAME || 'agent';
+        const label = MANDATE_NAME;
         // The live mandate's own deadline. The name is granted to run exactly that long, so an
         // earlier expiry on the name means the owner pulled it rather than that it ran out — and
         // an agent reporting a withdrawal as a lapse tells its operator the wrong thing.

@@ -11,18 +11,17 @@
 import { wrapFetchWithPayment, x402Client, decodePaymentResponseHeader } from '@x402/fetch';
 import { ExactHederaScheme } from '@x402/hedera/exact/client';
 import { createClientHederaSigner, PrivateKey } from '@x402/hedera';
-import { createPublicClient, http, getAddress, decodeAbiParameters, parseAbiParameters } from 'viem';
+import { createPublicClient, http, decodeAbiParameters, parseAbiParameters } from 'viem';
 import { sepolia } from 'viem/chains';
 import 'dotenv/config';
 
+import { AQUA, ROUTER, OWNER, AGENT_ID } from './deployment.mjs';
+
 const SERVICE = process.env.BATAS_SERVICE_URL || 'http://localhost:4021';
-const AQUA = getAddress('0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a');
-const ROUTER = getAddress(process.env.BATAS_ROUTER || '0x228E82831afaC5dd9EbDE3489E9e18Ae9c7bcbf4');
 
 /** Pull the newest program this owner shipped to the router, straight out of Aqua's event log. */
 export async function latestProgramOnChain() {
-    const owner = process.env.BATAS_OWNER;
-    if (!owner) return null;
+    const owner = OWNER;
 
     const pub = createPublicClient({
         chain: sepolia,
@@ -127,8 +126,8 @@ export async function payForExplanation(program, { log = () => {} } = {}) {
         // of it worth anything.
         body: JSON.stringify({
             program,
-            ...(process.env.BATAS_AGENT_ID ? { agentId: process.env.BATAS_AGENT_ID } : {}),
-            ...(process.env.BATAS_OWNER ? { maker: process.env.BATAS_OWNER } : {}),
+            ...(AGENT_ID ? { agentId: AGENT_ID } : {}),
+            ...(OWNER ? { maker: OWNER } : {}),
         }),
     });
 
@@ -160,7 +159,7 @@ async function main() {
     if (!program) {
         const found = await latestProgramOnChain();
         if (!found) {
-            throw new Error('pass a program as an argument, or set BATAS_OWNER to read the live position');
+            throw new Error(`no mandate shipped to ${ROUTER} by ${OWNER}; run script/Demo.s.sol first`);
         }
         program = programFromStrategy(found.strategy);
         console.log(`reading the live position ${found.strategyHash}`);
