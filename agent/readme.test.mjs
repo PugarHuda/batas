@@ -164,6 +164,33 @@ test('the addresses that resolve to nothing here are never given in a usable for
     }
 });
 
+/**
+ * A receipt, insisted upon.
+ *
+ * The default endpoint fronts a pool, and the backends in it do not all hold the same receipts:
+ * one linked transaction answers on roughly half of the calls and "could not be found" on the
+ * rest, independently each time. A single ask was enough to make this test claim the transaction
+ * is not on Sepolia — a gap in our own RPC pool reported as a fact about the chain, which is the
+ * same mistake as reporting our own bad arguments as somebody else's missing identity.
+ *
+ * One yes settles it. A no settles nothing, so absence has to survive being asked again, and the
+ * error behind the last one is carried into the message rather than swallowed: a transport that
+ * is down and a transaction that never happened must not read alike.
+ */
+async function receiptOf(hash, attempts = 12) {
+    let last;
+    for (let i = 0; i < attempts; i++) {
+        const receipt = await client.getTransactionReceipt({ hash }).catch((error) => {
+            last = error;
+            return null;
+        });
+        if (receipt) return receipt;
+    }
+    throw new Error(
+        `${hash} is linked from the README and no backend returned it in ${attempts} tries — ` +
+            `last answer: ${last?.shortMessage ?? last?.message ?? 'none'}`,
+    );
+}
 
 test('every Sepolia transaction the README links to actually happened', async () => {
     // These are the receipts for the claims: the mandate shipped, the swap settled, the identity
@@ -174,8 +201,11 @@ test('every Sepolia transaction the README links to actually happened', async ()
     assert.ok(hashes.length >= 2, `expected the walkthrough to link its transactions; found ${hashes.length}`);
 
     for (const hash of hashes) {
-        const receipt = await client.getTransactionReceipt({ hash }).catch(() => null);
-        assert.ok(receipt, `${hash} is linked from the README but is not on Sepolia`);
+        const receipt = await receiptOf(hash);
         assert.equal(receipt.status, 'success', `${hash} is linked as evidence but reverted`);
     }
+
+    // And asking again must not have turned the check into a rubber stamp: a hash that was never
+    // mined has to stay refused, however many times it is asked for.
+    await assert.rejects(receiptOf(`0x${'de'.repeat(32)}`), /no backend returned it/);
 });
