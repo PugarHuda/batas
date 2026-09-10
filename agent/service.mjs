@@ -22,6 +22,8 @@ import 'dotenv/config';
 import { explain } from './swapvm.mjs';
 import { resolveAgent, vouchesFor, parseAgentId } from './erc8004.mjs';
 import { lookupMandate } from './hcs.mjs';
+import { decodeAnswer, publicationAnswer, authorityAnswer } from './free.mjs';
+import { page } from './ui.mjs';
 import { HCS_TOPIC } from './deployment.mjs';
 
 const PORT = Number(process.env.PORT || 4021);
@@ -63,7 +65,30 @@ app.use((err, _req, res, next) => {
 
 // Free: what this service is and what it charges. Anything that costs money to answer is behind
 // the paywall below.
-app.get('/', (_req, res) => {
+//
+// Two audiences, one URL. Every consumer this service was built for is a machine, and the suite
+// holds every route to answering JSON — but a person who pastes the hostname into a browser is not
+// served by a wall of it. So the page is handed to a caller whose `Accept` header actually says
+// `text/html`, which browsers send and none of the clients here do: the x402 client, the
+// facilitator, an indexer and the test suite all send `*/*` or `application/json` and get exactly
+// what they got before. The rule was never "HTML is wrong", it was "do not answer a machine in a
+// format it cannot read".
+// `?format=json` overrides it, because the page links to its own JSON and a link that serves the
+// page again would be a footer lying about where it goes.
+const wantsHtml = (req) =>
+    req.query?.format !== 'json' && String(req.headers.accept || '').includes('text/html');
+
+app.get('/', (req, res) => {
+    if (wantsHtml(req)) {
+        return res.type('html').send(page({
+            origin: PUBLIC_ORIGIN,
+            price: Number(PRICE.amount) / 1e8,
+            payTo: PAY_TO,
+            topic: HCS_TOPIC,
+            facilitator: FACILITATOR,
+            network: 'hedera:testnet',
+        }));
+    }
     res.json({
         service: 'Batas mandate inspection',
         describes: 'What limits a SwapVM program actually enforces, decoded from its bytecode,'
@@ -79,8 +104,35 @@ app.get('/', (_req, res) => {
         network: 'hedera:testnet',
         facilitator: FACILITATOR,
         payTo: PAY_TO,
+        free: {
+            'POST /v1/mandate/decode': 'what a program permits — arithmetic on bytes you already hold',
+            'POST /v1/mandate/publication': 'when those exact bytes became public, from a mirror node that is not ours',
+            'GET /v1/agent/authority': 'whether the ENSv2 mandate name still holds, and if not, lapsed or revoked',
+        },
     });
 });
+
+// The three free answers, at parity with the free MCP tools.
+//
+// Registered above the paywall so they are outside it by construction rather than by the payment
+// middleware happening not to name them. They give away nothing that was not already free: an
+// assistant holding the MCP server has been able to ask all three since it existed. What the
+// payment buys is still the one answer none of them contains — the operator's ERC-8004 identity,
+// and whether it vouches for the address that granted the mandate.
+const freely = (handler) => async (req, res) => {
+    try {
+        res.json(await handler(req));
+    } catch (e) {
+        res.status(400).json({ error: String(e.shortMessage ?? e.message ?? e) });
+    }
+};
+
+app.post('/v1/mandate/decode', freely((req) => decodeAnswer(req.body?.program)));
+app.post('/v1/mandate/publication', freely((req) => publicationAnswer(req.body?.program)));
+app.get('/v1/agent/authority', freely((req) => authorityAnswer({
+    label: req.query?.label,
+    grantedUntil: req.query?.grantedUntil === undefined ? undefined : Number(req.query.grantedUntil),
+})));
 
 // Discovery, per draft-hawkins-x402-dns-discovery. A manifest at this path is how an indexer or a
 // stranger's agent finds out that this host takes payment and what it sells, without being told
@@ -201,7 +253,13 @@ app.post('/v1/mandate/explain', async (req, res) => {
 app.use((req, res) => {
     res.status(404).json({
         error: `no route for ${req.method} ${req.path}`,
-        free: ['GET /', 'GET /.well-known/x402'],
+        free: [
+            'GET /',
+            'GET /.well-known/x402',
+            'POST /v1/mandate/decode',
+            'POST /v1/mandate/publication',
+            'GET /v1/agent/authority',
+        ],
         paid: ['POST /v1/mandate/explain'],
     });
 });

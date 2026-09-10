@@ -22,33 +22,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { createPublicClient, http, getAddress } from 'viem';
-import { sepolia } from 'viem/chains';
 import 'dotenv/config';
 
-import { explain } from './swapvm.mjs';
-import { lookupMandate } from './hcs.mjs';
-import { mandateNameStatus } from './ens.mjs';
-import { payForExplanation, latestProgramOnChain, programFromStrategy } from './inspect.mjs';
-import { OWNER, ENS_REGISTRY, MANDATE_NAME, HCS_TOPIC } from './deployment.mjs';
-
-const HEX = /^0x[0-9a-fA-F]*$/;
+import { decodeAnswer, publicationAnswer, authorityAnswer, resolveProgram } from './free.mjs';
+import { payForExplanation } from './inspect.mjs';
 
 const text = (s) => ({ content: [{ type: 'text', text: s }] });
 const fail = (s) => ({ content: [{ type: 'text', text: s }], isError: true });
-
-/** Resolve the program to talk about: the one given, or the live position on Sepolia. */
-async function resolveProgram(program) {
-    if (program) {
-        if (!HEX.test(program)) throw new Error('program must be a 0x hex string');
-        return { program, source: 'given' };
-    }
-    const found = await latestProgramOnChain();
-    if (!found) {
-        throw new Error('no program given, and no mandate has been shipped to the live router yet');
-    }
-    return { program: programFromStrategy(found.strategy), source: `live position ${found.strategyHash}` };
-}
 
 /**
  * A server per connection.
@@ -73,9 +53,7 @@ export function createServer() {
         },
         async ({ program }) => {
             try {
-                const { program: p, source } = await resolveProgram(program);
-                const answer = explain(p);
-                return text(JSON.stringify({ source, ...answer }, null, 2));
+                return text(JSON.stringify(await decodeAnswer(program), null, 2));
             } catch (e) {
                 return fail(String(e.message ?? e));
             }
@@ -96,8 +74,7 @@ export function createServer() {
         },
         async ({ program }) => {
             try {
-                const { program: p, source } = await resolveProgram(program);
-                return text(JSON.stringify({ source, ...(await lookupMandate(HCS_TOPIC, p)) }, null, 2));
+                return text(JSON.stringify(await publicationAnswer(program), null, 2));
             } catch (e) {
                 return fail(String(e.message ?? e));
             }
@@ -119,17 +96,8 @@ export function createServer() {
             },
         },
         async ({ label, grantedUntil }) => {
-            const registry = ENS_REGISTRY;
-            const holder = OWNER;
             try {
-                const pub = createPublicClient({
-                    chain: sepolia,
-                    transport: http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
-                });
-                const status = await mandateNameStatus(
-                    pub, getAddress(registry), label || MANDATE_NAME, getAddress(holder), { grantedUntil },
-                );
-                return text(JSON.stringify(status, null, 2));
+                return text(JSON.stringify(await authorityAnswer({ label, grantedUntil }), null, 2));
             } catch (e) {
                 return fail(String(e.shortMessage ?? e.message ?? e));
             }

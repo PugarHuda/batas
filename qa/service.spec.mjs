@@ -188,6 +188,63 @@ test('no route answers with HTML, whatever it is sent', async ({ request }) => {
     }
 });
 
+// --- the one surface meant for a person -------------------------------------
+//
+// Adding HTML to a service whose whole point is that it never answers HTML needs to be pinned from
+// both sides, or the next person to read the suite cannot tell an exception from an erosion.
+
+test('a browser gets a page; everything else still gets JSON', async ({ request }) => {
+    const html = await request.get('/', { headers: { Accept: 'text/html,application/xhtml+xml' } });
+    expect(html.status()).toBe(200);
+    expect(html.headers()['content-type']).toContain('text/html');
+    const body = await html.text();
+    expect(body).toContain('<title>Batas');
+    // The page must not reach for the paid route: everything on it is one of the free answers.
+    expect(body).not.toContain('/v1/mandate/explain');
+
+    for (const accept of ['*/*', 'application/json']) {
+        const res = await request.get('/', { headers: { Accept: accept } });
+        expect(res.headers()['content-type'], `Accept: ${accept}`).toContain('application/json');
+        expect((await res.json()).service).toBe('Batas mandate inspection');
+    }
+});
+
+test('and the page can link to its own JSON without being handed itself again', async ({ request }) => {
+    const res = await request.get('/?format=json', { headers: { Accept: 'text/html' } });
+    expect(res.headers()['content-type']).toContain('application/json');
+    expect((await res.json()).service).toBe('Batas mandate inspection');
+});
+
+test('the free routes are free, and are not the paid one in disguise', async ({ request }) => {
+    const decoded = await request.post('/v1/mandate/decode', { data: { program: LIVE_PROGRAM } });
+    expect(decoded.status(), 'a free route must never answer 402').toBe(200);
+    expect(decoded.headers()['payment-required']).toBeUndefined();
+
+    const answer = await decoded.json();
+    expect(answer.guarded).toBe(true);
+    expect(answer.mandate.minRateE18).toBeTruthy();
+    // What the payment buys must not leak out of the free door. These two fields are the paid
+    // answer, and a free route that carried them would leave nothing to sell.
+    expect(answer.publication, 'publication belongs to the paid answer').toBeUndefined();
+    expect(answer.operator, 'the operator identity belongs to the paid answer').toBeUndefined();
+});
+
+test('a free route refuses a bad program as a request error, not a server one', async ({ request }) => {
+    const res = await request.post('/v1/mandate/decode', { data: { program: 'not-hex' } });
+    expect(res.status()).toBe(400);
+    expect((await res.json()).error).toMatch(/0x hex/);
+});
+
+test('the description lists what is free and what is paid', async ({ request }) => {
+    const body = await (await request.get('/')).json();
+    expect(Object.keys(body.free)).toEqual([
+        'POST /v1/mandate/decode',
+        'POST /v1/mandate/publication',
+        'GET /v1/agent/authority',
+    ]);
+    expect(body.endpoint).toBe('POST /v1/mandate/explain');
+});
+
 test('concurrent callers all get the same payment requirement', async ({ request }) => {
     // The facilitator handshake runs on the request path, so a burst is where a shared client would
     // show up as inconsistent terms — one caller quoted a different price than another.

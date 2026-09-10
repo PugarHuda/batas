@@ -7,6 +7,53 @@ because the only contract allowed to touch your tokens refuses to settle a swap 
 
 ---
 
+## In sixty seconds
+
+A maker grants an agent a **cap, a floor and an expiry**. Those three terms are `abi.encode`d and
+handed to `Aqua.ship()` as the strategy bytes, so the mandate hash *is* the strategy hash — the
+terms are the position's identity, not a label on it. Two contracts then refuse to settle a swap
+that breaks them, and both refuse before any token moves.
+
+```mermaid
+flowchart TB
+    subgraph OFF["off chain"]
+        AG["<b>Agent</b><br/>reads the position, picks the terms,<br/>compiles the program itself"]
+        EN["<b>ENSv2 subname</b><br/>expiring · revocable · soulbound<br/><i>the agent asks before it acts</i>"]
+        AG -. "may I act?" .-> EN
+    end
+
+    subgraph SEP["Sepolia"]
+        MD["<b>Mandate</b><br/>cap · floor · expiry · fee · salt"]
+        RT["<b>BatasRouter</b><br/>SwapVM + PolicyEnvelope at slot 0x21"]
+        AP["<b>BatasApp</b><br/>Aqua application"]
+        AQ["<b>Aqua.pull</b><br/><i>checks only msg.sender</i>"]
+        WL["<b>Maker's wallet</b><br/>tokens never left it"]
+    end
+
+    subgraph HED["Hedera"]
+        HC["<b>HCS topic</b><br/>when these exact bytes<br/>became public"]
+        XP["<b>x402 endpoint</b><br/>0.001 HBAR for the answer<br/>a stranger cannot compute"]
+    end
+
+    AG -- "abi.encode(mandate) = strategy bytes" --> MD
+    MD -- "Aqua.ship hashes it" --> RT
+    MD --> AP
+    AG -- "publishes the bytes" --> HC
+    RT -- "guard passes, then" --> AQ
+    AP -- "guard passes, then" --> AQ
+    AQ -- "transferFrom" --> WL
+    HC -.-> XP
+    RT -.-> XP
+```
+
+| What stops the agent | Where it is enforced | What it costs to check |
+|---|---|---|
+| trade larger than the cap | `PolicyEnvelope` inside the VM, and `BatasApp` before `pull()` | nothing — it reverts |
+| price under the floor | same two surfaces, on the settled registers | nothing |
+| a mandate past its expiry | `Deadline` in the program, and `BatasApp` | nothing |
+| the maker changing their mind | the ENSv2 name the agent consults, or `Aqua.dock()` | one transaction |
+| *"was this grant ever public?"* | Hedera Consensus Service, read from a public mirror node | nothing, and it does not route through us |
+
 ## See it work
 
 ```bash
@@ -75,6 +122,33 @@ mandate *before* `AQUA.pull()`, because after `pull()` the tokens have already l
 [`PolicyEnvelope`](src/PolicyEnvelope.sol) is a new SwapVM instruction, built the way SwapVM's own
 fee instructions are: it delegates the rest of the program to `runLoop()` and inspects the settled
 registers when that returns. Placed first, it becomes the outermost frame of the program.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant T as Taker
+    participant R as BatasRouter
+    participant P as PolicyEnvelope 0x21
+    participant I as rest of the program
+    participant A as Aqua
+    participant M as Maker's wallet
+
+    T->>R: swap(order, amountIn)
+    R->>P: outermost instruction
+    P->>I: runLoop()
+    Note over I: Deadline · FeeFlatIn · XYCSwap · Salt
+    I-->>P: settled amountIn / amountOut
+    P->>P: amountIn within the cap?
+    P->>P: rate at or above the floor?
+    Note over P: reverts here, or returns
+    P-->>R: program complete
+    R->>A: pull / push
+    A->>M: transferFrom
+```
+
+Read the order once and the design falls out: every transfer in `SwapVM.swap` happens *after*
+`runLoop()` has returned, and `PolicyEnvelope` runs its checks inside that call. The guard is not
+merely early in the program — it is before settlement itself, on both surfaces.
 
 Two properties follow that a plain sequential guard cannot offer:
 
@@ -779,6 +853,44 @@ before it can be received; HBAR does not. That is one less step between a caller
 which is the entire point of paying per request. The client also caps itself at 0.01 HBAR per call
 through x402 spend controls — the same idea the contracts enforce, one layer up.
 
+## And by a person
+
+Everything above is a machine surface, and the suite holds every route to answering JSON because
+the consumers are agents, indexers and facilitators. A human who pastes the hostname into a browser
+is not one of those, and was being handed a wall of JSON.
+
+**https://batas-one.vercel.app** now serves a page to anyone whose `Accept` header actually says
+`text/html` — which browsers send and none of the clients here do. The x402 client, the
+facilitator, an indexer and the test suite all send `*/*` or `application/json` and get exactly
+what they got before. The rule was never *HTML is wrong*, it was *do not answer a machine in a
+format it cannot read*, and `qa/service.spec.mjs` now pins both directions of that.
+
+![The Batas web page: a mandate decoded from its bytes, its publication record, and the ENSv2 name
+that gates the agent](docs/web-ui.png)
+
+The page decodes any program you paste, and reads the live position as it loads: what the bytes
+permit, when they were published to HCS, and whether the agent's name still holds. It links to its
+own JSON at `/?format=json`, because a footer that promised JSON and served the page again would be
+a link lying about where it goes.
+
+It calls only free routes, and the suite asserts that the page never mentions the paid one. Those
+routes are new as HTTP but not new as answers — they sit at parity with the free MCP tools, which
+have given away the decode, the publication lookup and the authority check since they existed:
+
+| Free | What it answers | Its MCP twin |
+|---|---|---|
+| `POST /v1/mandate/decode` | what a program permits | `read_mandate` |
+| `POST /v1/mandate/publication` | when those exact bytes became public | `check_publication` |
+| `GET /v1/agent/authority` | whether the ENSv2 name still holds, and if not, lapsed or revoked | `check_agent_authority` |
+
+All six of those call `agent/free.mjs` rather than each implementing the question. Two encoders for
+one format is how this project once shipped mandates with no expiry, and two answers to one
+question would be the same mistake wearing a different hat.
+
+What stays paid is what it always was: the whole answer in one place, with the ERC-8004 identity and
+whether it vouches for the address that granted the mandate. A test asserts the free decode carries
+neither `publication` nor `operator`, so the free door cannot quietly become the paid one.
+
 ## Reachable by software that has never heard of it
 
 Two additions, both to standards other people already read.
@@ -925,7 +1037,7 @@ can move even if the assertion is wrong, and CI needs no secret to run it.
 ```
 forge test          35 passing
 npm run test:js    131 passing
-npm run test:api    13 passing
+npm run test:api    18 passing
 npm run test:prod    5 passing
 ```
 
