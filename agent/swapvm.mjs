@@ -45,6 +45,10 @@ export const FEE_WORTH_MENTIONING = 500_000; // 5% of the 1e7 base
 // decided on a partial view; only the listing is bounded, and a truncated one says so.
 export const MAX_LISTED_INSTRUCTIONS = 256;
 export const LONG_TERM_MS = 365 * 24 * 60 * 60 * 1000;
+/** Past this, a floor struck once at grant time has had time to stop describing the market. */
+export const FLOOR_GOES_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+/** `Deadline` carries five bytes; the same ceiling MandateLib.toProgram refuses past. */
+export const MAX_ENCODABLE_EXPIRY = 2 ** 40 - 1;
 export const E18 = 10n ** 18n;
 
 // --- encoding ---------------------------------------------------------------
@@ -77,14 +81,25 @@ export const salt = (value) => instruction(OP.SALT, pad(toHex(value), { size: 8 
  * after it, Deadline for the expiry term, then the fee ahead of the curve so the swap prices the
  * amount actually being exchanged, then Salt so identical terms can be shipped again.
  */
-export const toProgram = ({ maxAmountIn, minRateE18, expiry, feeBps, salt: saltValue }) =>
-    concat([
+export const toProgram = ({ maxAmountIn, minRateE18, expiry, feeBps, salt: saltValue }) => {
+    // The same two refusals MandateLib.toProgram makes, for the same reason: a term the program
+    // cannot carry must not be quietly turned into a different one. Without these, viem would
+    // still refuse the oversized expiry — but as a padding error about byte widths, which sends a
+    // reader looking at the encoder rather than at the mandate they wrote.
+    if (BigInt(expiry) > BigInt(MAX_ENCODABLE_EXPIRY)) {
+        throw new Error(`expiry ${expiry} is past ${MAX_ENCODABLE_EXPIRY}, the largest Deadline can carry`);
+    }
+    if (BigInt(feeBps) >= BPS) {
+        throw new Error(`fee ${feeBps} takes the whole input; it must be under the ${BPS} basis`);
+    }
+    return concat([
         policyEnvelope(maxAmountIn, minRateE18),
         deadline(expiry),
         feeFlatIn(feeBps),
         xycSwap(),
         salt(saltValue),
     ]);
+};
 
 // --- the decision ------------------------------------------------------------
 
@@ -267,7 +282,10 @@ export function explain(program) {
         // build one now, but a caller is being paid to be told what these bytes actually say, and
         // the most open-ended grant in the set must not be the one that goes unremarked.
         notes.push('No deadline: this mandate never expires and can only be ended by revoking it.');
-    } else if (t.expiry * 1000 < Date.now()) {
+    } else if ((t.expiry + 1) * 1000 <= Date.now()) {
+        // Past the expiry second, not at it. SwapVM's Deadline is `block.timestamp <= deadline`
+        // and BatasApp now matches it, so the whole of that second is still inside the grant and
+        // a report that called it dead would be describing a different rule than the chain runs.
         notes.push('The deadline has already passed; this position authorises nothing.');
     }
     if (instructions.length > MAX_LISTED_INSTRUCTIONS) {
@@ -292,6 +310,24 @@ export function explain(program) {
             `The maker fee is ${pct}%, above the ${(FEE_WORTH_MENTIONING / Number(BPS)) * 100}% this `
             + 'report treats as ordinary. The fee is taken off the input before the curve prices it, '
             + 'so it reduces what the floor is measured against.',
+        );
+    }
+    // The limit that is present, binds every trade, and still leaves the position open.
+    //
+    // minRateE18 is a number struck once, against the spot the reserves implied at grant time. It
+    // bounds how far trading can walk *this position's* price — that is what the repeated-trading
+    // test proves — and it says nothing about the price of the tokens anywhere else. The two are
+    // the same thing on the day the mandate is written and drift apart afterwards, so the longer
+    // the term, the less the floor is protecting. A caller deciding whether to trust a position
+    // has to be told which of the two it was sold.
+    if (t.minRateE18 !== null && t.expiry !== null && t.expiry * 1000 > Date.now() + FLOOR_GOES_STALE_MS) {
+        const days = Math.round((t.expiry * 1000 - Date.now()) / 86_400_000);
+        notes.push(
+            `The floor is a fixed rate chosen when this mandate was granted, not a reading of any `
+            + `market, and the mandate has ${days} days left — past the `
+            + `${FLOOR_GOES_STALE_MS / 86_400_000} days this report treats as short. It bounds how far `
+            + `trading can walk this position's own price. If the market moves under it, trades that `
+            + `empty the position at a rate the maker would no longer accept still satisfy the mandate.`,
         );
     }
     if (t.expiry !== null && t.expiry * 1000 > Date.now() + LONG_TERM_MS) {

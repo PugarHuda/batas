@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import {
     OP, decodeProgram, readMandate, explain,
     policyEnvelope, deadline, feeFlatIn, xycSwap, salt, instruction,
-    FEE_WORTH_MENTIONING,
+    FEE_WORTH_MENTIONING, MAX_ENCODABLE_EXPIRY, BPS, toProgram,
 } from './swapvm.mjs';
 
 // A program actually shipped to Sepolia, kept verbatim as a regression anchor. Frozen on purpose:
@@ -212,7 +212,57 @@ test('a deadline far enough out to bound nothing is remarked on', () => {
     assert.ok(!notes.some((n) => /never expires/.test(n)));
 });
 
-test('a year and a day is remarked on; a month is not', () => {
-    assert.deepEqual(explain(live({ seconds: 30 * 86_400 })).notes, []);
-    assert.equal(explain(live({ seconds: 366 * 86_400 })).notes.length, 1);
+test('a year and a day draws the deadline remark; a month draws only the floor one', () => {
+    // This used to assert a month was unremarkable. It is not: the floor is struck once at grant
+    // time and does not follow the market, so a month is long enough for the two to part company.
+    // The deadline remark is a different claim — that the expiry itself has stopped bounding
+    // anything — and still belongs to terms measured in years.
+    const month = explain(live({ seconds: 30 * 86_400 })).notes;
+    assert.equal(month.length, 1, JSON.stringify(month));
+    assert.match(month[0], /floor is a fixed rate/);
+
+    const year = explain(live({ seconds: 366 * 86_400 })).notes;
+    assert.equal(year.length, 2, JSON.stringify(year));
+    assert.ok(year.some((n) => /deadline is/.test(n)));
+});
+
+test('a floor with time to go stale is remarked on, with the threshold stated', () => {
+    const { notes } = explain(live({ seconds: 40 * 86_400 }));
+    const note = notes.find((n) => /floor is a fixed rate/.test(n));
+    assert.ok(note, JSON.stringify(notes));
+    assert.match(note, /40 days/);
+    // Where the line was drawn has to be in the note, so a reader can disagree with it.
+    assert.match(note, /past the 7 days/);
+});
+
+test('the staleness threshold is a boundary, not a range', () => {
+    assert.deepEqual(explain(live({ seconds: 7 * 86_400 })).notes, [], 'exactly a week is short');
+    assert.equal(explain(live({ seconds: 7 * 86_400 + 60 })).notes.length, 1);
+});
+
+test('a term short enough for its floor to still mean something draws nothing', () => {
+    assert.deepEqual(explain(live({ seconds: 2 * 3600 })).notes, [], 'the default two-hour grant');
+});
+
+test('the encoder refuses terms the program cannot carry', () => {
+    // The same two refusals MandateLib.toProgram makes. A mandate is compiled on both sides of the
+    // fence and the two must decline the same inputs, or the agent can ship what the contracts
+    // would never emit.
+    const terms = {
+        maxAmountIn: 100n * 10n ** 18n,
+        minRateE18: 1_900_000_000_000_000_000n,
+        expiry: Math.floor(Date.now() / 1000) + 3600,
+        feeBps: 30_000,
+        salt: 1n,
+    };
+    assert.ok(toProgram(terms).startsWith('0x'), 'ordinary terms must still compile');
+
+    assert.throws(
+        () => toProgram({ ...terms, expiry: MAX_ENCODABLE_EXPIRY + 1 }),
+        /largest Deadline can carry/,
+    );
+    assert.ok(toProgram({ ...terms, expiry: MAX_ENCODABLE_EXPIRY }), 'the largest one it can carry compiles');
+
+    assert.throws(() => toProgram({ ...terms, feeBps: Number(BPS) }), /takes the whole input/);
+    assert.ok(toProgram({ ...terms, feeBps: Number(BPS) - 1 }), 'a fee just under the basis compiles');
 });

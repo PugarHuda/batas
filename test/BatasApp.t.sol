@@ -126,9 +126,30 @@ contract BatasAppTest is Test, IBatasCallback {
         Mandate memory m = _mandate();
         _ship(m);
 
-        vm.warp(m.expiry);
+        // One second past, not the expiry second itself: that one is still inside the grant, and
+        // both surfaces agree it is. See test_TheExpirySecondIsHonouredByBothSurfaces.
+        vm.warp(uint256(m.expiry) + 1);
         vm.expectRevert(abi.encodeWithSelector(BatasApp.MandateExpired.selector, m.expiry, block.timestamp));
         app.swap(m, 10e18, 0, address(this), "");
+    }
+
+    /// @notice The agent field names who the grant went to; it gates nobody.
+    /// @dev Worth pinning in both directions, because a field that is part of the hash and read by
+    ///   nothing looks like an oversight until someone checks which it is. It is identity: the
+    ///   same terms granted to a different operator are a different position, publicly readable
+    ///   from Aqua's `Shipped` event. It is not permission: takers are whoever arrives, and a
+    ///   position only its operator could trade against would not be liquidity at all.
+    function test_TheAgentNamesTheGrantAndGatesNobody() public {
+        Mandate memory m = _mandate();
+        Mandate memory elsewhere = _mandate();
+        elsewhere.agent = makeAddr("some other agent");
+        assertTrue(m.hash() != elsewhere.hash(), "the operator must be part of the position's identity");
+
+        _ship(m);
+
+        assertTrue(address(this) != m.agent, "the taker in this test must not be the named agent");
+        uint256 amountOut = app.swap(m, 10e18, 0, address(this), "");
+        assertGt(amountOut, 0, "an ordinary taker must be able to trade against a mandated position");
     }
 
     /// @notice The size cap binds even though the pool could serve the trade.
@@ -164,7 +185,7 @@ contract BatasAppTest is Test, IBatasCallback {
         Mandate memory m = _mandate();
         _ship(m);
 
-        vm.warp(m.expiry);
+        vm.warp(uint256(m.expiry) + 1);
         vm.expectRevert(abi.encodeWithSelector(BatasApp.MandateExpired.selector, m.expiry, block.timestamp));
         app.quote(m, 10e18);
     }

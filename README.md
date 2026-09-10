@@ -374,7 +374,7 @@ than taken from this repo on trust.
 |---|---|
 | Aqua (canonical, not ours) | [`0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`](https://sepolia.etherscan.io/address/0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a) |
 | `BatasRouter` (SwapVM + PolicyEnvelope) | [`0x8e9BF70758AC73824135C05e70cbdf512713950E`](https://sepolia.etherscan.io/address/0x8e9BF70758AC73824135C05e70cbdf512713950E) |
-| `BatasApp` | [`0xcB1C4f828Bb6aCc2Be50397017B100257671cC2f`](https://sepolia.etherscan.io/address/0xcB1C4f828Bb6aCc2Be50397017B100257671cC2f) |
+| `BatasApp` | [`0x25E518b4138928da04DD65f0eD595b0924c3decE`](https://sepolia.etherscan.io/address/0x25E518b4138928da04DD65f0eD595b0924c3decE) |
 | Demo token A | [`0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B`](https://sepolia.etherscan.io/address/0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B) |
 | Demo token B | [`0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81`](https://sepolia.etherscan.io/address/0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81) |
 | ERC-8004 identity registry (canonical) | [`0x8004A818BFB912233c491871b3d84c89A494BD9e`](https://sepolia.etherscan.io/address/0x8004A818BFB912233c491871b3d84c89A494BD9e) |
@@ -430,6 +430,13 @@ constant product less the 0.3% fee, judged against the 1.9 floor and allowed thr
 
 An oversized trade against the same live position reverts with
 `MandateAmountInExceeded(101e18, 100e18)` before any token moves.
+
+> Both transactions predate the current `BatasApp`. The one in the table above was deployed after
+> a fuzzer, handed the expiry to vary, found the two enforcement surfaces disagreeing on the expiry
+> second itself — so a reader following these links lands on the address that came before it. The
+> mandate they settled and the terms they prove are unchanged; only the second surface was
+> corrected. `agent/deployed.test.mjs` is what makes that statement checkable rather than
+> reassuring.
 
 Each run salts the program, because Aqua permanently burns a strategy hash once it has been used.
 `Salt` is the instruction that exists for exactly this: a no-op whose bytes change the program
@@ -607,7 +614,7 @@ metadata entries keep the on-chain facts queryable without fetching the URI at a
 ```
 batas.chain        eip155:11155111
 batas.router       0x8e9BF70758AC73824135C05e70cbdf512713950E
-batas.app          0xcB1C4f828Bb6aCc2Be50397017B100257671cC2f
+batas.app          0x25E518b4138928da04DD65f0eD595b0924c3decE
 batas.aqua         0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a
 batas.enforcement  swapvm-opcode:0x21
 batas.x402.network hedera:testnet
@@ -677,7 +684,8 @@ result       SUCCESS
 No API key, no account, no subscription. The first request returns `402`, the client settles and
 retries, and the payment is the authentication.
 
-Decoded from the program the agent actually shipped:
+Decoded from the program the agent actually shipped, on a run of 2026-09-10 — the countdown in
+the last line is why this is dated:
 
 ```
 guarded by PolicyEnvelope: true
@@ -700,6 +708,12 @@ operator
   agent #10123  Batas
   held by     0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E
   vouches     yes — the identity is held by the address that granted the mandate
+notes
+  - The floor is a fixed rate chosen when this mandate was granted, not a reading of any
+    market, and the mandate has 27 days left — past the 7 days this report treats as short.
+    It bounds how far trading can walk this position's own price. If the market moves under
+    it, trades that empty the position at a rate the maker would no longer accept still
+    satisfy the mandate.
 ```
 
 `guarded` is the field worth reading first. It is true only when `PolicyEnvelope` occupies the
@@ -791,6 +805,47 @@ the MCP tool both call it; the spend cap and the cold-start retry live in one pl
 injected rather than assumed, because MCP speaks JSON-RPC over stdout and the narration the CLI
 prints would corrupt the stream.
 
+## What a mandate does not bound
+
+Three limits of this design, stated here because a mandate that is trusted for more than it
+enforces is worse than one nobody trusts.
+
+**The floor is a number, not an oracle.** `minRateE18` is struck once, against the spot the
+reserves implied when the mandate was granted, and it never moves again.
+`test_RepeatedTradingCannotWalkThePositionBelowItsFloor` proves what it does bound: each trade is
+priced on the reserves as they stand, so working the position makes it dearer and the mandate
+refuses before the next trade breaches the floor. That is a statement about *this position's* price
+path and nothing else. If the market moves underneath a long mandate, the floor keeps refusing
+trades below a rate that stopped describing anything, while every trade that empties the position
+at that stale rate satisfies it. The default term is two hours, which is short enough that the two
+prices are still the same price; the deployed demo runs thirty days so the position stays live for
+someone to look at, and thirty days is long enough for them to part company. `explain()` now says
+so whenever a mandate has more than seven days left, because the caller paying for an answer is
+exactly the party that needs to know which of the two they are being sold.
+
+**Revoking the name stops the agent, not the position.** The three controls have three different
+reaches, and only one of them is instant and total:
+
+| Control | Stops | Enforced by |
+|---|---|---|
+| ENSv2 subname | the agent, which checks it before acting | the agent's own cooperation |
+| `expiry` | every caller, at a time fixed when the grant was made | both surfaces, on chain |
+| `Aqua.dock()` | every caller, immediately | Aqua, by removing the allowance |
+
+Nothing in `BatasApp` or `PolicyEnvelope` reads the ENS registry. A revoked name stops the agent in
+this repository because that agent asks; a different program holding the same key would not be
+stopped by it, and neither would an ordinary taker trading against a position that is still shipped.
+Naming that plainly is the point — the name is a control over the *operator*, and the maker's
+control over the *money* is the term and the dock.
+
+**The mandate names its agent; it does not gate on it.** `Mandate.agent` is part of
+`abi.encode(m)` and therefore part of the strategy hash, so the same terms granted to a different
+operator are a different position and Aqua's `Shipped` event puts which one on chain. No contract
+compares it to a caller, and none should: takers are whoever arrives, and a position only one
+address may trade against is not liquidity.
+`test_TheAgentNamesTheGrantAndGatesNobody` pins both halves, because a field that is part of the
+hash and read by nothing looks like an oversight until someone checks which it is.
+
 ## What the tests prove
 
 **Aqua layer** — a swap inside every limit settles and moves real tokens; expiry refuses however
@@ -805,6 +860,18 @@ than described.
 
 **VM layer** — a non-binding mandate leaves the strategy untouched; the cap and the floor both
 revert inside the VM; and a trailing instruction cannot escape the envelope.
+
+**Agreement, on every term** — the fuzz that compares the two surfaces varies all five terms now.
+It used to hold `expiry` and `feeBps` fixed, which excused the two most able to disagree: the app
+reads a `uint64` timestamp while the compiled program carries a five-byte one, and the fee is a
+`uint24` fed into a basis of 1e7. Unfixing them found a disagreement on the first run, at the
+expiry second itself — SwapVM's `Deadline` is `block.timestamp <= deadline` and `BatasApp` was
+`<`, so for one second a mandate authorised a trade through the VM and refused it through the app.
+The struct says the expiry is the timestamp *after* which nothing is authorised, so the vendor
+instruction was reading the term correctly and this project's own surface was not. `MandateLib`
+also declines to compile a term the program cannot carry — an expiry past what five bytes hold, or
+a fee at the basis — rather than silently emitting a different one, which is the same argument as
+`PolicyEnvelope`'s length check one layer up.
 
 **Over time** — every other contract test settles one swap, and the claim this project makes is
 about a position an agent runs for hours. The cap bounds a single trade, not a day's volume, so the
@@ -842,9 +909,10 @@ payload is being built, before anything is signed or sent, so an unfunded key re
 can move even if the assertion is wrong, and CI needs no secret to run it.
 
 ```
-forge test          31 passing
-npm run test:js    126 passing
+forge test          35 passing
+npm run test:js    131 passing
 npm run test:api    13 passing
+npm run test:prod    5 passing
 ```
 
 **This document** — `agent/readme.test.mjs` walks the README and asks the chain about everything it

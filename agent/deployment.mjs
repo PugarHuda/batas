@@ -20,7 +20,7 @@ export const AQUA = getAddress('0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a');
 export const IDENTITY_REGISTRY = getAddress('0x8004A818BFB912233c491871b3d84c89A494BD9e');
 
 export const ROUTER = getAddress(env('BATAS_ROUTER', '0x8e9BF70758AC73824135C05e70cbdf512713950E'));
-export const APP = getAddress(env('BATAS_APP', '0xcB1C4f828Bb6aCc2Be50397017B100257671cC2f'));
+export const APP = getAddress(env('BATAS_APP', '0x25E518b4138928da04DD65f0eD595b0924c3decE'));
 export const TOKEN_A = getAddress(env('BATAS_TOKEN_A', '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B'));
 export const TOKEN_B = getAddress(env('BATAS_TOKEN_B', '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81'));
 

@@ -92,7 +92,13 @@ contract BatasApp is AquaApp {
         // testFuzz_SurfacesAgreeOnArbitraryTerms with amountIn = 1 wei, where a 0.3% fee rounds
         // up to the whole input and leaves the curve nothing to price.
         require(amountOut != 0, ZeroAmountOut(amountIn));
-        require(block.timestamp < m.expiry, MandateExpired(m.expiry, block.timestamp));
+        // Inclusive, and it took a fuzzer over the expiry to find out why. SwapVM's `Deadline`
+        // instruction is `block.timestamp <= deadline`; this was `<`, so for the one second that
+        // equals the expiry the mandate authorised a trade through the VM and refused the same
+        // trade here. The struct says "the timestamp after which the mandate no longer
+        // authorises anything", and at exactly that second nothing is yet after it — so the
+        // vendor instruction was reading the term correctly and this surface was not.
+        require(block.timestamp <= m.expiry, MandateExpired(m.expiry, block.timestamp));
         require(amountIn <= m.maxAmountIn, MandateAmountInExceeded(amountIn, m.maxAmountIn));
 
         // Cross-multiplied so no division is needed: amountOut / amountIn >= minRateE18 / 1e18.

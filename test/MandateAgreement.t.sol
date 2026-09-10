@@ -66,6 +66,14 @@ contract MandateAgreementTest is Test, IBatasCallback {
     }
 
     function _mandate(uint128 maxAmountIn, uint128 minRateE18) internal view returns (Mandate memory m) {
+        return _mandate(maxAmountIn, minRateE18, uint64(block.timestamp + 2 hours), 0.003e7);
+    }
+
+    function _mandate(uint128 maxAmountIn, uint128 minRateE18, uint64 expiry, uint24 feeBps)
+        internal
+        view
+        returns (Mandate memory m)
+    {
         m = Mandate({
             maker: maker,
             agent: agent,
@@ -73,8 +81,8 @@ contract MandateAgreementTest is Test, IBatasCallback {
             tokenOut: address(tokenB),
             maxAmountIn: maxAmountIn,
             minRateE18: minRateE18,
-            expiry: uint64(block.timestamp + 2 hours),
-            feeBps: 0.003e7,
+            expiry: expiry,
+            feeBps: feeBps,
             salt: 1
         });
     }
@@ -224,14 +232,29 @@ contract MandateAgreementTest is Test, IBatasCallback {
     ///   settle and agree to the wei, or both refuse. A case where one accepts and the other
     ///   rejects is the failure that matters, because then the mandate would mean different
     ///   things depending on which door a trade arrived through.
-    function testFuzz_SurfacesAgreeOnArbitraryTerms(uint128 rawCap, uint128 rawFloor, uint96 rawAmount)
-        public
-    {
+    ///
+    ///   All five terms vary, and the last two are why this signature grew. `expiry` and `feeBps`
+    ///   were held fixed here, which left the agreement unchecked in exactly the place the two
+    ///   surfaces encode a term differently: the app reads a `uint64` timestamp and the program
+    ///   carries a five-byte one, and the fee is a `uint24` fed into a basis of 1e7. Holding a
+    ///   term constant in a test about disagreement excuses the term most able to disagree.
+    function testFuzz_SurfacesAgreeOnArbitraryTerms(
+        uint128 rawCap,
+        uint128 rawFloor,
+        uint96 rawAmount,
+        uint64 rawExpiry,
+        uint24 rawFee
+    ) public {
+        // Somewhere with room on both sides, so "already expired" is as reachable as "still live".
+        vm.warp(1_800_000_000);
+
         uint128 cap = uint128(bound(rawCap, 0, 800e18));
         uint128 floorRate = uint128(bound(rawFloor, 0, 3e18));
         uint256 amountIn = bound(rawAmount, 1, 800e18);
+        uint64 expiry = uint64(bound(rawExpiry, block.timestamp - 1 days, block.timestamp + 90 days));
+        uint24 feeBps = uint24(bound(rawFee, 0, MandateLib.BPS - 1));
 
-        Mandate memory m = _mandate(cap, floorRate);
+        Mandate memory m = _mandate(cap, floorRate, expiry, feeBps);
         ISwapVM.Order memory order = _shipBoth(m);
 
         bool appOk;
@@ -250,6 +273,63 @@ contract MandateAgreementTest is Test, IBatasCallback {
 
         assertEq(appOk, vmOk, "one surface accepted a trade the other refused");
         if (appOk) assertEq(appOut, vmOut, "both accepted but priced it differently");
+    }
+
+    /// @dev `toProgram` is an internal library call, so a revert from it happens at the same call
+    ///   depth as the cheatcode and `expectRevert` cannot see it. This is the external door.
+    function compile(Mandate memory m) external pure returns (bytes memory) {
+        return m.toProgram();
+    }
+
+    /// @notice The expiry second itself belongs to whoever holds the mandate, on both surfaces.
+    /// @dev Found by the fuzz above the moment `expiry` stopped being held fixed. SwapVM's
+    ///   `Deadline` is `block.timestamp <= deadline`; `BatasApp` was `<`. For exactly one second
+    ///   the same mandate authorised a trade through the VM and refused it through the app, which
+    ///   is the disagreement this whole file exists to prevent, sitting in the term the file never
+    ///   varied. Pinned by name as well as by fuzz, because a boundary a fuzzer reaches by luck is
+    ///   one a later change can quietly move back.
+    function test_TheExpirySecondIsHonouredByBothSurfaces() public {
+        uint64 expiry = uint64(block.timestamp + 1 hours);
+        Mandate memory m = _mandate(500e18, 1e18, expiry, 0.003e7);
+        ISwapVM.Order memory order = _shipBoth(m);
+
+        vm.warp(expiry);
+        uint256 fromApp = app.quote(m, 10e18);
+        (, uint256 fromVm,) = router.quote(order, 10e18, _takerData());
+        assertEq(fromApp, fromVm, "the expiry second must price identically on both surfaces");
+        assertGt(fromApp, 0, "and must still be a live mandate");
+
+        vm.warp(expiry + 1);
+        vm.expectRevert();
+        app.quote(m, 10e18);
+        vm.expectRevert();
+        router.quote(order, 10e18, _takerData());
+    }
+
+    /// @notice The compiler declines terms the program cannot carry, rather than carrying others.
+    /// @dev `Deadline` holds five bytes. A `uint64` expiry past `uint40` would have been truncated
+    ///   silently, leaving the app checking one timestamp and the program another — the same
+    ///   disagreement as above, reached by a different road.
+    function test_AnExpiryTooLargeToEncodeIsRefused() public {
+        Mandate memory m = _mandate(500e18, 1e18, uint64(type(uint40).max) + 1, 0.003e7);
+        vm.expectRevert(
+            abi.encodeWithSelector(MandateLib.MandateExpiryUnencodable.selector, uint64(type(uint40).max) + 1)
+        );
+        this.compile(m);
+
+        // And the largest one it can carry still compiles.
+        m.expiry = uint64(type(uint40).max);
+        assertGt(this.compile(m).length, 0);
+    }
+
+    /// @notice A fee that consumes the whole input is not a fee, and is refused at compile time.
+    function test_AFeeAtOrPastTheBasisIsRefused() public {
+        Mandate memory m = _mandate(500e18, 1e18, uint64(block.timestamp + 1 hours), uint24(MandateLib.BPS));
+        vm.expectRevert(abi.encodeWithSelector(MandateLib.MandateFeeExceedsBasis.selector, uint24(MandateLib.BPS)));
+        this.compile(m);
+
+        m.feeBps = uint24(MandateLib.BPS - 1);
+        assertGt(this.compile(m).length, 0);
     }
 
     /// @notice A mandate whose floor is unreachable must be refused by both, never by one.
