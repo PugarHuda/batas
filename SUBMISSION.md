@@ -111,7 +111,7 @@ negotiation, scheduled transactions.
 | Requirement | Where it is met |
 |---|---|
 | Official Aqua/SwapVM contracts | Aqua used as-is at `0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`; nothing in `node_modules/@1inch/**` edited |
-| Redeployed modified SwapVM (permitted, and scored higher) | `BatasRouter` carries `PolicyEnvelope` at opcode slot `0x21` |
+| Redeployed modified SwapVM (permitted, and scored higher) | `BatasRouter` carries two new instructions: `PolicyEnvelope` at `0x21` and `MandateName` at `0x22` |
 | On-chain execution of token transfers, demoed | `script/Demo.s.sol` ships, settles and refuses in one run — real ERC-20 transfers, no mocked settlement |
 | Proper git commit history | 47+ commits across the event, each one a single argued change |
 
@@ -121,8 +121,13 @@ negotiation, scheduled transactions.
 |---|---|
 | Built on ENSv2, Sepolia | `UserRegistry` proxy via ENS's own `VerifiableFactory`, `0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B` |
 | ENSv2 features central to the product | the subname *is* the agent's authority: expiry matches the mandate's own deadline, grantor keeps `ROLE_UNREGISTER`, `ROLE_CAN_TRANSFER_ADMIN` withheld so it is soulbound |
-| Functional demo | `node agent/ens.mjs --revoke agent` stops the agent; `--grant` resumes it |
+| Functional demo | `node agent/killswitch.mjs --prove` — revoke the name and the *settlement* refuses |
 | Open source + video | yes |
+
+The part worth leading with: `MandateName` is a SwapVM instruction at opcode slot `0x22` that reads
+the ENSv2 registry during settlement. Revoking a subname does not merely stop a cooperating agent,
+it reverts the swap for every caller. That makes ENSv2 an enforcement primitive rather than a
+labelling one, which is not something the other ENS entries this project surveyed do.
 
 ---
 
@@ -170,21 +175,22 @@ forge script script/Demo.s.sol:Demo --rpc-url http://127.0.0.1:8545 --broadcast
 > key for. And then a hundred and one against a cap of a hundred: refused, before any token moves.
 > That revert data is the cap and the amount asked for, straight out of the VM.
 
-**1:50–2:30 — the kill switch** *(the ENS requirement)*
+**1:50–2:30 — the kill switch** *(the ENS requirement, and the strongest 40 seconds in the video)*
 
 ```bash
-node agent/ens.mjs --read agent
-node agent/batas-agent.mjs          # decides, and checks its name first
+node agent/killswitch.mjs --prove
 ```
 
 > The agent's authority is an ENSv2 subname. Expiring — and that expiry is the same timestamp
-> compiled into the program's deadline instruction. Soulbound, because transfer admin was withheld.
-> Revocable, because the grantor kept unregister. The agent reads it before it does anything, so
-> revoking the name stops it without touching the position or spending a cent.
+> compiled into the program's deadline. Soulbound, because transfer admin was withheld. Revocable,
+> because the grantor kept unregister. And it is not the agent that obeys it. Watch: quote the live
+> position, one token in, one point nine five out. Revoke the name. Quote the same position again —
+> refused, `MandateNameNotHeld`, from a caller that has never heard of ENS and would happily trade.
+> Re-grant it, and the position comes back. The name is an instruction in the program, so revoking
+> it stops every caller, not just the one that asks permission.
 
-*(If a revoke/grant cycle fits the time, run `--revoke agent`, then `node agent/batas-agent.mjs
---ship` refusing, then `--grant agent`. Two Sepolia transactions, roughly 30 seconds each — cut
-between them rather than waiting on camera.)*
+*(Two Sepolia transactions inside that run, roughly 30 seconds each — cut between them rather than
+waiting on camera. The three quotes are eth_calls and return instantly.)*
 
 **2:30–3:15 — the paid answer** *(the Hedera requirement)*
 
