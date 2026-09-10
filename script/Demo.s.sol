@@ -103,11 +103,24 @@ contract Demo is Script {
 
         vm.stopBroadcast();
 
-        // The refusal is checked read-only. Doing it inside the broadcast would make forge treat
-        // the whole script as failed, even though reverting is the behaviour being demonstrated.
+        // And the refusal, against the same live position, in the same run.
+        //
+        // This used to print a `cast call` with an ellipsis in the middle of it — an instruction to
+        // go and assemble an abi-encoded Order by hand, which is another way of saying the one
+        // behaviour this project exists for was the one thing the demo did not demonstrate. It is
+        // read-only and caught: outside the broadcast so no gas is spent, and inside a try/catch
+        // because reverting is the result being shown, not a failure of the script.
         console.log("");
-        console.log("to see the mandate refuse an oversized trade:");
-        console.log("  cast call %s ... 101e18   -> MandateAmountInExceeded", routerAddr);
+        uint256 overCap = uint256(MAX_AMOUNT_IN) + 1e18;
+        try router.quote(order, overCap, _takerData(me, me)) returns (uint256, uint256 out, bytes32) {
+            console.log("PROBLEM: %s in was quoted %s out, over a cap of %s", overCap, out, MAX_AMOUNT_IN);
+        } catch (bytes memory err) {
+            // The selector is PolicyEnvelope.MandateAmountInExceeded(uint256,uint256); the two
+            // words after it are the amount asked for and the cap that refused it.
+            console.log("refused %s in, over the mandate's cap of %s", overCap, MAX_AMOUNT_IN);
+            console.log("  revert data:");
+            console.logBytes(err);
+        }
     }
 
     function _order(address maker, address t0, address t1, bytes memory program)

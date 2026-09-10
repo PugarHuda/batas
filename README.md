@@ -429,7 +429,21 @@ transfers, no mocked settlement:
 constant product less the 0.3% fee, judged against the 1.9 floor and allowed through.
 
 An oversized trade against the same live position reverts with
-`MandateAmountInExceeded(101e18, 100e18)` before any token moves.
+`MandateAmountInExceeded(101e18, 100e18)` before any token moves — in the same run, right after the
+settled one, so a single command shows both the trade the mandate allows and the trade it refuses:
+
+```
+settled: in 10000000000000000000 out 19743160687941225977
+recipient received 19743160687941225977 of tokenB
+
+refused 101000000000000000000 in, over the mandate's cap of 100000000000000000000
+  revert data:
+  0xb9f1dc1d00000000000000000000000000000000000000000000000579a814e10a7400000000000000000000000000000000000000000000000000056bc75e2d63100000
+```
+
+`0xb9f1dc1d` is `MandateAmountInExceeded(uint256,uint256)`; the two words after it are the amount
+asked for and the cap that refused it. The refusal is a read-only call outside the broadcast, so it
+costs nothing and does not fail the script — reverting is the result being demonstrated.
 
 > Both transactions predate the current `BatasApp`. The one in the table above was deployed after
 > a fuzzer, handed the expiry to vary, found the two enforcement surfaces disagreeing on the expiry
