@@ -176,6 +176,11 @@ Three suites, run separately if you prefer:
 | Paid API | `npm run test:api` | Playwright against a local x402 endpoint, including what its 402 promises |
 | Deployment | `npm run test:prod` | The same assertions against the URL the on-chain identity advertises |
 
+The deployment suite runs daily in CI, and on a button, rather than on push: a push is what
+causes the deploy, so the two race and the suite would report the deployment behind a commit it
+has not been given time to become. Both times production actually fell behind, it was caught by
+somebody remembering to run this by hand.
+
 The API suite starts the service itself and asserts the payment requirement without spending
 anything, so it runs anywhere. Settling a real payment needs Hedera credentials; that path is
 exercised by `agent/inspect.mjs`.
@@ -505,7 +510,7 @@ Reading the granted name back off chain:
 
 ```
 name          agent
-expiry        2026-09-06T15:41:14.000Z
+expiry        2026-10-07T04:01:43.000Z
 holder        0x1100000        SET_RESOLVER | SET_SUBREGISTRY
 transferable  false
 ```
@@ -608,7 +613,7 @@ batas.enforcement  swapvm-opcode:0x21
 batas.x402.network hedera:testnet
 batas.x402.payTo   0.0.10388560
 batas.hcs.topic    0.0.10394165
-batas.ens.registry 0x…                 the kill switch, discoverable from the identity
+batas.ens.registry 0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B   the kill switch, discoverable from the identity
 ```
 
 An earlier registration, agent #10120, named a source URL that turned out not to exist; #10123

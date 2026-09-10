@@ -3,6 +3,10 @@ name: ci
 on:
   push:
   pull_request:
+  # The deployment check below needs a trigger that is not a push. See the `production` job.
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
 
 # Nothing here is a secret. A topic id and an account id are public by construction — the whole
 # point of the publication ledger is that a stranger can read it — and no key is needed to assert
@@ -54,3 +58,29 @@ jobs:
 
       # The paid HTTP surface, including what its 402 promises.
       - run: npm run test:api
+
+  # The same assertions, against the URL the on-chain identity advertises.
+  #
+  # This is the suite that has actually caught something twice — a deploy blocked by a daily quota,
+  # and a build behind on behaviour rather than on its description — and both times it was caught
+  # because somebody remembered to run it by hand. A drift check nobody runs is not a check.
+  #
+  # It cannot hang off `push`, though, and that is why it is a separate job rather than a step in
+  # the one above. A push is what *causes* the deploy; the two race, and the loser is this suite
+  # asserting that production has not yet become what the commit says. A daily run and a button
+  # ask the question at a moment when a stale answer means something.
+  production:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - run: npm ci
+
+      # No Foundry and no contract build: this job starts the local Express app only to compare its
+      # two description surfaces against the deployed ones, and reads nothing from a chain.
+      - run: npm run test:prod

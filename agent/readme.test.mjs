@@ -192,6 +192,31 @@ async function receiptOf(hash, attempts = 12) {
     );
 }
 
+test('the expiry the README quotes is the one the live mandate carries', async () => {
+    // The claim this document makes about the name is that it ends when the authority does. Two
+    // places quote that moment — the name read back off chain, and the decoded program the paid
+    // answer returns — and they had drifted a month apart, which makes the claim false in the one
+    // spot a reader would check it. Neither is a fixed example: both describe the position this
+    // repository points at, so the chain decides what they say rather than whichever run happened
+    // to be pasted in.
+    const { latestProgramOnChain, programFromStrategy } = await import('./inspect.mjs');
+    const { decodeProgram, readMandate } = await import('./swapvm.mjs');
+
+    const shipped = await latestProgramOnChain();
+    assert.ok(shipped, 'no mandate found on chain to check the README against');
+    const { expiry } = readMandate(decodeProgram(programFromStrategy(shipped.strategy)));
+    assert.ok(expiry, 'the live mandate carries no deadline');
+
+    const onChain = new Date(expiry * 1000).toISOString();
+    const quoted = unique(readme.match(/^ *expir(?:y|es) +(20\d\d-\S+Z)$/gm) ?? []).map((line) =>
+        line.trim().split(/\s+/).pop(),
+    );
+    assert.ok(quoted.length >= 2, `expected the README to quote the expiry; found ${quoted.length}`);
+    for (const shown of quoted) {
+        assert.equal(shown, onChain, 'the README quotes an expiry the live mandate does not carry');
+    }
+});
+
 test('every Sepolia transaction the README links to actually happened', async () => {
     // These are the receipts for the claims: the mandate shipped, the swap settled, the identity
     // minted. A link that resolves to nothing turns evidence back into assertion.
