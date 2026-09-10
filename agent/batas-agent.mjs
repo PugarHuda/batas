@@ -225,12 +225,24 @@ async function main() {
     // no end. How long is the maker's call, not ours — an agent that picks its own term is
     // choosing the one limit it is least entitled to. Two hours is the default the demo shares.
     const expiry = BigInt(Math.floor(Date.now() / 1000)) + MANDATE_HOURS * 3600n;
+    // The kill switch, compiled in rather than merely consulted.
+    //
+    // The check above is the agent choosing to obey; this is the settlement refusing without it.
+    // Until the name was an instruction, revoking it stopped this agent because this agent asks,
+    // and stopped nobody else — not a second copy of it, and not an ordinary taker arriving at a
+    // position that was still shipped. Naming the registry here binds every caller.
+    //
+    // Same registry and holder the agent just checked, so the authority it obeys and the authority
+    // the chain enforces cannot be two different things.
     const program = toProgram({
         maxAmountIn,
         minRateE18,
         expiry,
         feeBps: FEE_BPS,
         salt: BigInt(Math.floor(Date.now() / 1000)),
+        ...(ensRegistry
+            ? { nameRegistry: getAddress(ensRegistry), nameHolder: account.address, nameLabel: MANDATE_NAME }
+            : {}),
     });
     const order = buildOrder(account.address, program);
 

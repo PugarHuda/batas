@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import { PolicyEnvelope } from "./PolicyEnvelope.sol";
+import { MandateName } from "./MandateName.sol";
 import { Deadline, Salt } from "@1inch/swap-vm/src/instructions/Controls.sol";
 import { FeeFlatIn } from "@1inch/swap-vm/src/instructions/FeeFlat.sol";
 import { XYCSwap } from "@1inch/swap-vm/src/instructions/XYCSwap.sol";
@@ -42,6 +43,21 @@ struct Mandate {
     /// @dev Distinguishes otherwise identical mandates. Aqua permanently burns a strategy hash on
     ///   `dock()`, so renewing the same terms requires a fresh salt.
     uint64 salt;
+    /// @dev The kill switch, made binding.
+    ///
+    ///   An ENSv2 subname already expressed this agent's authority and the agent consulted it
+    ///   before acting — but nothing on chain did, so revocation stopped the agent that asks and
+    ///   nobody else. Naming a registry here puts the check into the settlement itself, where a
+    ///   burned or lapsed name reverts the swap for every caller.
+    ///
+    ///   Zero means no check, and that is a real choice rather than a default: a mandate whose only
+    ///   ends are its expiry and `Aqua.dock()` is a coherent grant, and one fewer external call on
+    ///   the settlement path.
+    address nameRegistry;
+    /// @dev The address that must still hold the name. Ignored when `nameRegistry` is zero.
+    address nameHolder;
+    /// @dev The label to ask the registry about, e.g. "agent". Ignored when `nameRegistry` is zero.
+    string nameLabel;
 }
 
 library MandateLib {
@@ -89,9 +105,19 @@ library MandateLib {
         // subtraction and the VM does something of its own; neither is an answer worth emitting.
         require(m.feeBps < BPS, MandateFeeExceedsBasis(m.feeBps));
 
+        // The name check sits after `Deadline` so a lapsed mandate fails on arithmetic before
+        // anything pays for three external calls, and before the curve so it fails before the
+        // expensive part. It is inside `PolicyEnvelope` like everything else, though nothing about
+        // it depends on the settled amounts — unlike a cap or a floor, there is no later
+        // instruction that could undo the answer.
+        bytes memory nameCheck = m.nameRegistry == address(0)
+            ? bytes("")
+            : MandateName.build(m.nameRegistry, m.nameHolder, m.nameLabel);
+
         return bytes.concat(
             PolicyEnvelope.build(m.maxAmountIn, m.minRateE18),
             Deadline.build(uint40(m.expiry)),
+            nameCheck,
             FeeFlatIn.build(m.feeBps),
             XYCSwap.build(),
             Salt.build(m.salt)

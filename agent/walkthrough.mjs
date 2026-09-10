@@ -45,6 +45,12 @@ async function main() {
     line('floor rate', m.minRateFormatted ?? '—');
     line('fee', m.feePercent === null ? '—' : `${m.feePercent}%`);
     line('expires', m.expiryISO ?? 'never');
+    line(
+        'kill switch',
+        m.killSwitch
+            ? `"${m.killSwitch.label}" in ${m.killSwitch.registry}, held by ${m.killSwitch.holder}`
+            : 'none — only the expiry and Aqua.dock() end this grant',
+    );
     for (const n of answer.notes) console.log(`   note         ${n}`);
 
     step(3, 'When those exact bytes became public — Hedera, free, not ours');
@@ -71,6 +77,16 @@ async function main() {
         line('authority', status.valid ? 'live' : (status.revoked ? 'revoked by the owner' : 'ended'));
         line('reason', status.reason);
         if (status.valid) line('remaining', `${Math.floor(status.secondsLeft / 3600)} hours`);
+        // The distinction worth drawing here, because it is the one the project got wrong for most
+        // of its life: this step used to describe a control the agent chose to obey. With the name
+        // compiled into the program it is a control the settlement obeys, and the difference is
+        // every caller who is not this agent.
+        line(
+            'enforced',
+            m.killSwitch
+                ? 'on chain — the settlement asks the registry, so revocation binds every caller'
+                : 'by the agent only — nothing on chain reads this name',
+        );
     }
 
     step(5, 'Who is behind it — ERC-8004');

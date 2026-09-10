@@ -106,7 +106,7 @@ function metadataEntries() {
         { metadataKey: 'batas.router', metadataValue: utf8(ROUTER) },
         { metadataKey: 'batas.app', metadataValue: utf8(APP) },
         { metadataKey: 'batas.aqua', metadataValue: utf8(AQUA) },
-        { metadataKey: 'batas.enforcement', metadataValue: utf8('swapvm-opcode:0x21') },
+        { metadataKey: 'batas.enforcement', metadataValue: utf8('swapvm-opcode:0x21,0x22') },
         { metadataKey: 'batas.x402.network', metadataValue: utf8('hedera:testnet') },
         { metadataKey: 'batas.x402.payTo', metadataValue: utf8(process.env.HEDERA_SERVICE_ID || '0.0.10388560') },
         { metadataKey: 'batas.hcs.topic', metadataValue: utf8(HCS_TOPIC) },

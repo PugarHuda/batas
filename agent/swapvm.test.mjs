@@ -244,6 +244,39 @@ test('a term short enough for its floor to still mean something draws nothing', 
     assert.deepEqual(explain(live({ seconds: 2 * 3600 })).notes, [], 'the default two-hour grant');
 });
 
+test('a mandate carrying a kill switch reports who may end it, and where', () => {
+    const registry = '0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B';
+    const holder = '0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E';
+    const program = toProgram({
+        maxAmountIn: 100n * 10n ** 18n,
+        minRateE18: 1_900_000_000_000_000_000n,
+        expiry: Math.floor(Date.now() / 1000) + 3600,
+        feeBps: 30_000,
+        salt: 1n,
+        nameRegistry: registry,
+        nameHolder: holder,
+        nameLabel: 'agent',
+    });
+
+    const { mandate, instructions } = explain(program);
+    assert.equal(instructions[2].name, 'MANDATE_NAME', 'it sits after the deadline, before the fee');
+    assert.deepEqual(mandate.killSwitch, { registry, holder, label: 'agent' });
+
+    // And a mandate without one says so plainly rather than by omission.
+    assert.equal(explain(live()).mandate.killSwitch, null);
+});
+
+test('a truncated kill switch is refused rather than half-read', () => {
+    // Same rule as the instruction on chain, and for the same reason: a short one reads its
+    // registry out of whatever bytes follow it, and a guard pointed at the wrong registry is a
+    // guard that passes.
+    const short = instruction(OP.MANDATE_NAME, '0x' + 'ab'.repeat(40));
+    assert.throws(() => explain(short + feeFlatIn(30_000).slice(2)), /at least 41 arg bytes/);
+
+    const lying = instruction(OP.MANDATE_NAME, '0x' + 'ab'.repeat(40) + 'c8');
+    assert.throws(() => explain(lying + feeFlatIn(30_000).slice(2)), /runs past its arguments/);
+});
+
 test('every mandate the encoder can build, the decoder reads back unchanged', () => {
     // Parity with Solidity is checked case by case against a fixed dump, which proves the two
     // encoders agree and says nothing about whether the *decoder* agrees with either. This closes

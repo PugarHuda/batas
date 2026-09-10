@@ -9,6 +9,7 @@ import { Opcode, OpcodeOps } from "@1inch/swap-vm/src/libs/OpcodeList.sol";
 import { AquaOpcodes } from "@1inch/swap-vm/src/opcodes/AquaOpcodes.sol";
 
 import { PolicyEnvelope } from "./PolicyEnvelope.sol";
+import { MandateName } from "./MandateName.sol";
 
 /// @notice SwapVM's Aqua instruction set plus PolicyEnvelope.
 /// @dev Extends `AquaOpcodes`, the set built for Aqua-backed strategies, rather than the full
@@ -22,13 +23,15 @@ import { PolicyEnvelope } from "./PolicyEnvelope.sol";
 ///
 ///   Not `OpcodesDebug` either: that layer overrides `_runOpcode` without re-declaring it
 ///   `virtual`, so it is terminal. `OpcodeList.sol` reserves `_Ix` slots per family bank for
-///   third parties; `_21` sits in the 0x20-0x3f "conditions and access guards" bank, beside
-///   `Deadline` and the taker gates.
+///   third parties; `_21` and `_22` sit in the 0x20-0x3f "conditions and access guards" bank,
+///   beside `Deadline` and the taker gates, which is the right bank for both of them: one bounds
+///   what a settlement may do, the other bounds who may still cause one.
 contract BatasOpcodes is AquaOpcodes {
     using OpcodeOps for Opcode;
 
     function _runOpcode(Context memory ctx, uint256 opcode, bytes calldata args) internal override {
         if (opcode == PolicyEnvelope.opcode.asU8()) PolicyEnvelope.exec(ctx, args);
+        else if (opcode == MandateName.opcode.asU8()) MandateName.exec(ctx, args);
         else super._runOpcode(ctx, opcode, args);
     }
 }

@@ -171,6 +171,75 @@ program order, yet it executes inside it: at 0.3% the rate lands near 1.974 and 
 while at 5% the same mandate refuses the trade. A guard that merely ran first would have passed
 before the fee ever touched the amounts.
 
+### 4. And the maker can end it, on chain
+
+The three terms bound what a settlement may do. `MandateName`, at opcode slot `0x22`, bounds
+*whether there is one at all*: it asks an ENSv2 registry whether a name is still held by the
+address the mandate names, and reverts the swap if it is not.
+
+This closes a gap this document described before it filled. An ENSv2 subname expressed the agent's
+authority from the first day — expiring, revocable, soulbound — and the agent consulted it before
+acting. Nothing on chain did. So revoking the name stopped *this* agent, because this agent asks,
+and stopped nobody else: not a second copy of it with the check removed, and not an ordinary taker
+arriving at a position that was still shipped. The name was a control over the operator, and the
+maker's only controls over the money were the expiry and `Aqua.dock()`.
+
+Now the settlement itself asks. `agent/killswitch.mjs --prove` demonstrates it against the live
+position, with two Sepolia transactions and three `eth_call`s that cost nothing:
+
+```
+$ node agent/killswitch.mjs --prove
+
+kill switch  registry 0x945800bd6cdd60521b64a12d7b3f12fc90916a6b
+             holder   0x39d2bae5eaeda9283535ddc98f1991c81ed5cd7e
+             name     "agent"
+
+quote 1 A, name held      -> 1952840679837944719 B
+
+revoking "agent" …
+quote 1 A, name revoked   -> refused: MandateNameNotHeld — the name is not held by the address the mandate names
+
+re-granting "agent" …
+quote 1 A, name restored  -> 1952840679837944719 B
+
+the name gates the settlement, not merely the agent.
+```
+
+The caller making those quotes has never heard of ENS and would happily trade. That is the point:
+the maker gets a kill switch that costs one transaction and needs no cooperation from the thing it
+stops.
+
+Four details are load-bearing, and three of them are lessons this project had already paid for once.
+
+**Ownership is checked before expiry, and the order is the whole point.** `unregister` does not
+zero a name's expiry — it sets it to the moment of revocation — so a name the owner pulled and one
+that ran out are indistinguishable by timestamp. The first version checked the expiry first and
+reported every revocation as `MandateNameLapsed`, which is the same wrong answer this project
+already fixed off chain: the operator of a stopped agent told it had run out of time when its
+authority had in fact been taken away. Burning clears the owner and lapsing does not, so asking who
+holds it first separates them.
+
+**The token id comes from the registry, never from the label.** It is the labelhash with its low 32
+bits cleared, and those hold a version counter the registry bumps on re-registration. Deriving it
+would ask about a token that does not exist — and the zero address that comes back reads as
+*revoked* rather than as a wrong question. It is also why the re-grant in that transcript works at
+all: the name has a new id afterwards, and `findTokenId` finds it.
+
+**The argument length is checked.** `InstructionArgs` performs no bounds validation, so a truncated
+`MandateName` reads its registry address out of whatever follows it in calldata. A misparsed fee
+produces a wrong price and somebody notices; a guard pointed at a contract that is not a registry
+is a guard that passes.
+
+**The expiry rule is strictly greater than, and deliberately not the rule the mandate's own
+deadline uses.** SwapVM's `Deadline` is `block.timestamp <= deadline`, so a mandate is live through
+its final second; a name is expired *at* its expiry, and `classifyName` off chain says so too. Each
+surface matches the system it mirrors rather than matching the other one.
+
+Naming no registry is a real choice rather than a default. Such a mandate is still a coherent grant
+— it ends at its expiry, and the maker can still dock the position — and it is one fewer external
+call on the settlement path. `explain()` reports which kind you are looking at as a fact rather
+than as a warning.
+
 ## What already exists, and what does not
 
 This is a crowded problem and an empty position. Both halves are worth stating plainly.
@@ -223,13 +292,15 @@ it holds the registration it names.
 | Mandate terms, and why the hash is the strategy hash | [`src/Mandate.sol`](src/Mandate.sol) |
 | Aqua application; limits checked before `pull()` | [`src/BatasApp.sol`](src/BatasApp.sol) |
 | Wrapping SwapVM instruction, opcode slot `0x21` | [`src/PolicyEnvelope.sol`](src/PolicyEnvelope.sol) |
+| The kill switch as an instruction, slot `0x22` | [`src/MandateName.sol`](src/MandateName.sol) |
 | Router carrying the extended instruction set | [`src/BatasRouter.sol`](src/BatasRouter.sol) |
 | Aqua-layer tests | [`test/BatasApp.t.sol`](test/BatasApp.t.sol) |
 | VM-layer tests | [`test/PolicyEnvelope.t.sol`](test/PolicyEnvelope.t.sol) |
 
-Nothing in `node_modules/@1inch/**` is edited. `BatasOpcodes` claims one of the `_Ix` slots
-`OpcodeList.sol` reserves per family bank for third parties — `_21`, in the 0x20-0x3f conditions
-and access guards bank, beside `Deadline` and the taker gates. The router is a redeployment, which
+Nothing in `node_modules/@1inch/**` is edited. `BatasOpcodes` claims two of the `_Ix` slots
+`OpcodeList.sol` reserves per family bank for third parties — `_21` and `_22`, in the 0x20-0x3f
+conditions and access guards bank, beside `Deadline` and the taker gates, which is the right bank
+for both: one bounds what a settlement may do, the other bounds who may still cause one. The router is a redeployment, which
 the 1inch track permits.
 
 Two things about which base class to extend, both learned the hard way:
@@ -455,8 +526,8 @@ than taken from this repo on trust.
 | Contract | Address |
 |---|---|
 | Aqua (canonical, not ours) | [`0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`](https://sepolia.etherscan.io/address/0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a) |
-| `BatasRouter` (SwapVM + PolicyEnvelope) | [`0x8e9BF70758AC73824135C05e70cbdf512713950E`](https://sepolia.etherscan.io/address/0x8e9BF70758AC73824135C05e70cbdf512713950E) |
-| `BatasApp` | [`0x25E518b4138928da04DD65f0eD595b0924c3decE`](https://sepolia.etherscan.io/address/0x25E518b4138928da04DD65f0eD595b0924c3decE) |
+| `BatasRouter` (SwapVM + PolicyEnvelope) | [`0x1cFA88652B9e1ccCd7cc132c6344099C2ad10FC2`](https://sepolia.etherscan.io/address/0x1cFA88652B9e1ccCd7cc132c6344099C2ad10FC2) |
+| `BatasApp` | [`0xdF8120EbA65408832fC35BD1f1fd92fC1d892e91`](https://sepolia.etherscan.io/address/0xdF8120EbA65408832fC35BD1f1fd92fC1d892e91) |
 | Demo token A | [`0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B`](https://sepolia.etherscan.io/address/0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B) |
 | Demo token B | [`0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81`](https://sepolia.etherscan.io/address/0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81) |
 | ERC-8004 identity registry (canonical) | [`0x8004A818BFB912233c491871b3d84c89A494BD9e`](https://sepolia.etherscan.io/address/0x8004A818BFB912233c491871b3d84c89A494BD9e) |
@@ -503,8 +574,8 @@ transfers, no mocked settlement:
 
 | Step | Transaction |
 |---|---|
-| Ship liquidity under the mandate | [`0xf7269cb3…`](https://sepolia.etherscan.io/tx/0xf7269cb31c202733b5ba9342e3b7f1317c5de182abc2f50fb1f7a17cad5984f2) |
-| Swap settled inside the mandate | [`0x0aa39dcf…`](https://sepolia.etherscan.io/tx/0x0aa39dcfd55bd7df3936e6976e3922d5dfba8220dc3b5befb0c20c7533f3dba1) |
+| Ship liquidity under the mandate | [`0x3e2174e5…`](https://sepolia.etherscan.io/tx/0x3e2174e5a460e2def8ba48004361140e969b3176d8738d3c218c0e81653db780) |
+| Swap settled inside the mandate | [`0xb5bec3dc…`](https://sepolia.etherscan.io/tx/0xb5bec3dce9a9077ca84dc540e77eb6a1d442c634c8bf86c923603851430dd5f4) |
 
 10 tokenA in, **19.743160687941225977 tokenB** out to
 [`0x8474d483…`](https://sepolia.etherscan.io/address/0x8474d483Cc4374B8a16fE2D019717b23f0a5BD83) —
@@ -559,7 +630,7 @@ decision
   floor  1.92143732923348277 B per A  (2.00% under spot)
   cap    101 A                        (10.00% of reserve)
 
-program  0x2120...0753050000208000000006a9d5ef4 (51 bytes)
+program  0x2120...056167656e747003007530500002080000000 (106 bytes)
 
 encoding check
   local  0x4d113cd9c03a5ab7aebea6191fa903adf379e648c9c21911f956c09a24d9aeda
@@ -577,7 +648,7 @@ opcode, length prefix or trait bit were wrong, the two hashes would differ and i
 The chain agrees rather than being taken on trust.
 
 Mandate granted by that run:
-[`0x380e5cca…`](https://sepolia.etherscan.io/tx/0x380e5ccaf22e81cdd51e28635fa8c4dd0c98ff4409cfaedd599707b18b579656).
+[`0xc86e804a…`](https://sepolia.etherscan.io/tx/0xc86e804a3690d6fc409f7b79f7833b58fbc1021ea7f94fdfd2470390400285ea).
 
 And the point of the whole design: the agent picks these numbers, but it cannot widen them once
 granted. `PolicyEnvelope` enforces whatever it proposed, inside the VM, for as long as the mandate
@@ -613,7 +684,7 @@ Reading the granted name back off chain:
 
 ```
 name          agent
-expiry        2026-10-07T04:01:43.000Z
+expiry        2026-10-10T14:20:56.000Z
 holder        0x1100000        SET_RESOLVER | SET_SUBREGISTRY
 transferable  false
 ```
@@ -709,8 +780,8 @@ metadata entries keep the on-chain facts queryable without fetching the URI at a
 
 ```
 batas.chain        eip155:11155111
-batas.router       0x8e9BF70758AC73824135C05e70cbdf512713950E
-batas.app          0x25E518b4138928da04DD65f0eD595b0924c3decE
+batas.router       0x1cFA88652B9e1ccCd7cc132c6344099C2ad10FC2
+batas.app          0xdF8120EbA65408832fC35BD1f1fd92fC1d892e91
 batas.aqua         0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a
 batas.enforcement  swapvm-opcode:0x21
 batas.x402.network hedera:testnet
@@ -787,19 +858,22 @@ the last line is why this is dated:
 guarded by PolicyEnvelope: true
   @ 0 POLICY_ENVELOPE
   @34 DEADLINE
-  @41 FEE_FLAT_IN
-  @46 XYC_SWAP
-  @48 SALT
+  @41 MANDATE_NAME
+  @89 FEE_FLAT_IN
+  @94 XYC_SWAP
+  @96 SALT
 enforced mandate
   max input   17.573127545903015167
   floor rate  1.92143732923348277
   fee         0.3%
   curve       constant product (x*y=k)
-  expires     2026-10-07T04:01:43.000Z
+  expires     2026-10-10T14:20:56.000Z
+  kill switch "agent" in 0x945800bd6cdd60521b64a12d7b3f12fc90916a6b
+              held by 0x39d2bae5eaeda9283535ddc98f1991c81ed5cd7e
 publication
-  published   2026-09-07T04:02:07.036Z  (HCS consensus, topic 0.0.10394165 #4)
+  published   2026-09-10T15:21:07.442Z  (HCS consensus, topic 0.0.10394165 #6)
   granted by  0x39d2bae5eaeda9283535ddc98f1991c81ed5cd7e
-  verify      https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/4
+  verify      https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/6
 operator
   agent #10123  Batas
   held by     0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E
@@ -985,20 +1059,20 @@ someone to look at, and thirty days is long enough for them to part company. `ex
 so whenever a mandate has more than seven days left, because the caller paying for an answer is
 exactly the party that needs to know which of the two they are being sold.
 
-**Revoking the name stops the agent, not the position.** The three controls have three different
-reaches, and only one of them is instant and total:
+**Revocation binds every caller now — but only for a mandate that names a registry.** This
+paragraph used to say the opposite, and the fix is [`MandateName`](#4-and-the-maker-can-end-it-on-chain).
+The four controls and their reaches:
 
 | Control | Stops | Enforced by |
 |---|---|---|
-| ENSv2 subname | the agent, which checks it before acting | the agent's own cooperation |
+| ENSv2 subname, mandate names a registry | every caller, at once | both surfaces, on chain |
+| ENSv2 subname, mandate names none | the agent, which checks it before acting | the agent's own cooperation |
 | `expiry` | every caller, at a time fixed when the grant was made | both surfaces, on chain |
-| `Aqua.dock()` | every caller, immediately | Aqua, by removing the allowance |
+| `Aqua.dock()` | every caller, immediately, and returns the allowance | Aqua |
 
-Nothing in `BatasApp` or `PolicyEnvelope` reads the ENS registry. A revoked name stops the agent in
-this repository because that agent asks; a different program holding the same key would not be
-stopped by it, and neither would an ordinary taker trading against a position that is still shipped.
-Naming that plainly is the point — the name is a control over the *operator*, and the maker's
-control over the *money* is the term and the dock.
+A mandate that names no registry is still a coherent grant, and the row above it is still true of
+one: the name is then a control over the *operator*, and the maker's controls over the *money* are
+the term and the dock. What changed is that it is now a choice rather than the only option.
 
 **The mandate names its agent; it does not gate on it.** `Mandate.agent` is part of
 `abi.encode(m)` and therefore part of the strategy hash, so the same terms granted to a different
@@ -1071,8 +1145,8 @@ payload is being built, before anything is signed or sent, so an unfunded key re
 can move even if the assertion is wrong, and CI needs no secret to run it.
 
 ```
-forge test          37 passing
-npm run test:js    132 passing
+forge test          44 passing
+npm run test:js    138 passing
 npm run test:api    18 passing
 npm run test:prod    5 passing
 ```

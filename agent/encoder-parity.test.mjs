@@ -37,7 +37,7 @@ function solidityCases() {
 
     const cases = [];
     for (const line of out.split('\n')) {
-        const m = line.trim().match(/^CASE (\S+) (\d+) (\d+) (\d+) (\d+) (\d+) (0x[0-9a-fA-F]*)$/);
+        const m = line.trim().match(/^CASE (\S+) (\d+) (\d+) (\d+) (\d+) (\d+) (0x[0-9a-fA-F]{40}) (0x[0-9a-fA-F]{40}) (\S+) (0x[0-9a-fA-F]*)$/);
         if (!m) continue;
         cases.push({
             label: m[1],
@@ -46,7 +46,10 @@ function solidityCases() {
             expiry: BigInt(m[4]),
             feeBps: Number(m[5]),
             salt: BigInt(m[6]),
-            program: m[7].toLowerCase(),
+            nameRegistry: m[7],
+            nameHolder: m[8],
+            nameLabel: m[9] === '-' ? '' : m[9],
+            program: m[10].toLowerCase(),
         });
     }
     return cases;
@@ -55,7 +58,7 @@ function solidityCases() {
 const cases = solidityCases();
 
 test('the Solidity dumper produced cases to compare against', () => {
-    assert.ok(cases.length >= 4, `expected at least 4 cases, parsed ${cases.length}`);
+    assert.ok(cases.length >= 6, `expected at least 6 cases, parsed ${cases.length}`);
 });
 
 for (const c of cases) {
@@ -66,6 +69,9 @@ for (const c of cases) {
             expiry: c.expiry,
             feeBps: c.feeBps,
             salt: c.salt,
+            nameRegistry: c.nameRegistry,
+            nameHolder: c.nameHolder,
+            nameLabel: c.nameLabel,
         }).toLowerCase();
 
         assert.equal(
@@ -75,6 +81,21 @@ for (const c of cases) {
         );
     });
 }
+
+test('the kill switch is among the cases, and survives the round trip', () => {
+    // A variable-length field is where two encoders drift most easily: they have to agree about the
+    // length byte as well as the bytes it counts. Without a case carrying one, parity would be
+    // proved only for the fixed-width half of the format.
+    const named = cases.filter((c) => c.nameLabel !== '');
+    assert.ok(named.length >= 2, `expected cases carrying a mandate name; found ${named.length}`);
+    for (const c of named) {
+        assert.ok(c.program.includes('22'), `"${c.label}" should carry a MandateName instruction`);
+        assert.ok(
+            c.program.includes(Buffer.from(c.nameLabel, 'utf8').toString('hex')),
+            `"${c.label}" should carry the label bytes themselves`,
+        );
+    }
+});
 
 test('every compiled mandate carries an expiry', () => {
     // The bug this file exists for: a program without Deadline is a grant that never ends.

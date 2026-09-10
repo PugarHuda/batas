@@ -16,6 +16,7 @@ export const OP = {
     EXTRUCTION: 0x04,
     DEADLINE: 0x20,
     POLICY_ENVELOPE: 0x21,
+    MANDATE_NAME: 0x22,
     ONLY_TAKER_BALANCE_NONZERO: 0x23,
     ONLY_TAKER_BALANCE_GTE: 0x24,
     ONLY_TAKER_SUPPLY_SHARE_GTE: 0x25,
@@ -67,6 +68,23 @@ export const deadline = (unixTs) => instruction(OP.DEADLINE, pad(toHex(unixTs), 
 export const feeFlatIn = (feeBps) => instruction(OP.FEE_FLAT_IN, pad(toHex(feeBps), { size: 3 }));
 export const xycSwap = () => instruction(OP.XYC_SWAP);
 export const salt = (value) => instruction(OP.SALT, pad(toHex(value), { size: 8 }));
+/**
+ * The kill switch, as bytes: [registry][holder][label length][label].
+ *
+ * Mirrors `MandateName.build` in Solidity. One byte carries the length, so a label past 255 cannot
+ * be expressed and is refused rather than truncated — a program carrying half a label asks about a
+ * different name, and a different name is a different grant.
+ */
+export const mandateName = (registry, holder, label) => {
+    const bytes = new TextEncoder().encode(label);
+    if (bytes.length > 255) throw new Error(`label is ${bytes.length} bytes; one length byte holds 255`);
+    return instruction(OP.MANDATE_NAME, concat([
+        pad(registry, { size: 20 }),
+        pad(holder, { size: 20 }),
+        toHex(bytes.length, { size: 1 }),
+        `0x${Buffer.from(bytes).toString('hex')}`,
+    ]));
+};
 
 /**
  * Compile a mandate into the program that enforces it.
@@ -81,7 +99,7 @@ export const salt = (value) => instruction(OP.SALT, pad(toHex(value), { size: 8 
  * after it, Deadline for the expiry term, then the fee ahead of the curve so the swap prices the
  * amount actually being exchanged, then Salt so identical terms can be shipped again.
  */
-export const toProgram = ({ maxAmountIn, minRateE18, expiry, feeBps, salt: saltValue }) => {
+export const toProgram = ({ maxAmountIn, minRateE18, expiry, feeBps, salt: saltValue, nameRegistry, nameHolder, nameLabel }) => {
     // The same two refusals MandateLib.toProgram makes, for the same reason: a term the program
     // cannot carry must not be quietly turned into a different one. Without these, viem would
     // still refuse the oversized expiry — but as a padding error about byte widths, which sends a
@@ -95,6 +113,11 @@ export const toProgram = ({ maxAmountIn, minRateE18, expiry, feeBps, salt: saltV
     return concat([
         policyEnvelope(maxAmountIn, minRateE18),
         deadline(expiry),
+        // Same position as MandateLib puts it: after the deadline, so a lapsed mandate fails on
+        // arithmetic before anything pays for three external calls, and before the curve.
+        ...(nameRegistry && BigInt(nameRegistry) !== 0n
+            ? [mandateName(nameRegistry, nameHolder, nameLabel ?? '')]
+            : []),
         feeFlatIn(feeBps),
         xycSwap(),
         salt(saltValue),
@@ -228,7 +251,7 @@ export function decodeProgram(program) {
  * null rather than as a default, because "no cap" and "a cap of zero" are very different claims.
  */
 export function readMandate(instructions) {
-    const terms = { maxAmountIn: null, minRateE18: null, expiry: null, feeBps: null, curve: null, salt: null };
+    const terms = { maxAmountIn: null, minRateE18: null, expiry: null, feeBps: null, curve: null, salt: null, name: null };
 
     for (const ins of instructions) {
         switch (ins.opcode) {
@@ -243,6 +266,21 @@ export function readMandate(instructions) {
             case OP.FEE_FLAT_IN:
                 terms.feeBps = Number(hexToBig(ins.args));
                 break;
+            case OP.MANDATE_NAME: {
+                // Refused rather than half-read, exactly as the instruction itself does. A short
+                // one on chain reads its registry out of the next instruction's bytes; a short one
+                // here would report a registry nobody named.
+                const raw = ins.args;
+                if (raw.length < 82) throw new Error('MandateName must carry at least 41 arg bytes');
+                const len = parseInt(raw.slice(80, 82), 16);
+                if (raw.length < 82 + len * 2) throw new Error('MandateName label runs past its arguments');
+                terms.name = {
+                    registry: `0x${raw.slice(0, 40)}`,
+                    holder: `0x${raw.slice(40, 80)}`,
+                    label: Buffer.from(raw.slice(82, 82 + len * 2), 'hex').toString('utf8'),
+                };
+                break;
+            }
             case OP.SALT:
                 terms.salt = hexToBig(ins.args).toString();
                 break;
@@ -355,6 +393,14 @@ export function explain(program) {
             feePercent: t.feeBps === null ? null : (t.feeBps / Number(BPS)) * 100,
             curve: t.curve,
             salt: t.salt,
+            // Reported as a fact rather than remarked on.
+            //
+            // The notes above are for terms that are present and do not limit, and a reader could
+            // argue a mandate with no on-chain kill switch belongs there. It does not: naming no
+            // registry is a documented choice, not an oversight — such a grant still ends at its
+            // expiry and the maker can still dock the position — and a note that fires on every
+            // mandate teaches a reader to skip the notes.
+            killSwitch: t.name,
         },
         notes,
     };

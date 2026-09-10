@@ -15,6 +15,42 @@ import { BatasApp } from "../src/BatasApp.sol";
 import { BatasRouter } from "../src/BatasRouter.sol";
 import { IBatasCallback } from "../src/IBatasCallback.sol";
 import { Mandate, MandateLib } from "../src/Mandate.sol";
+import { MandateName } from "../src/MandateName.sol";
+
+/// @notice The three questions `MandateName` asks an ENSv2 registry, and nothing else.
+/// @dev Modelled on the real one's behaviour rather than on a convenient one: `unregister` sets the
+///   expiry to the moment of revocation instead of zeroing it, and `ownerOf` answers a burned name
+///   with the zero address rather than reverting. Both of those have already misled this project
+///   once — a mock that was tidier than the chain would hide the same bug twice.
+contract MandateRegistryMock {
+    mapping(bytes32 => uint64) private _expiry;
+    mapping(bytes32 => uint256) private _id;
+    mapping(uint256 => address) private _owner;
+
+    function grant(string memory label, address owner, uint64 expiry) external {
+        bytes32 k = keccak256(bytes(label));
+        // Low 32 bits cleared, exactly as the real registry does, and a version counter in them
+        // that re-registration bumps — which is what makes deriving the id from the label alone
+        // wrong, and asking the registry right.
+        _id[k] = (uint256(k) & ~uint256(0xffffffff)) | ((_id[k] & 0xffffffff) + 1);
+        _expiry[k] = expiry;
+        _owner[_id[k]] = owner;
+    }
+
+    /// @dev Revocation sets the expiry to the moment it happened rather than zeroing it, and burns
+    ///   the owner to the zero address rather than making `ownerOf` revert. Both are what the real
+    ///   registry does and both have already misled this project once. Lapsing, by contrast, leaves
+    ///   the owner exactly where it was — which is the only signal that separates the two.
+    function revoke(string memory label, uint64 at) external {
+        bytes32 k = keccak256(bytes(label));
+        _expiry[k] = at;
+        _owner[_id[k]] = address(0);
+    }
+
+    function findExpiry(string calldata label) external view returns (uint64) { return _expiry[keccak256(bytes(label))]; }
+    function findTokenId(string calldata label) external view returns (uint256) { return _id[keccak256(bytes(label))]; }
+    function ownerOf(uint256 tokenId) external view returns (address) { return _owner[tokenId]; }
+}
 
 /// @notice Proves the two enforcement surfaces are one system.
 /// @dev Batas checks a mandate in two places: inside `BatasApp`, which is an Aqua application, and
@@ -83,7 +119,10 @@ contract MandateAgreementTest is Test, IBatasCallback {
             minRateE18: minRateE18,
             expiry: expiry,
             feeBps: feeBps,
-            salt: 1
+            salt: 1,
+            nameRegistry: address(0),
+            nameHolder: address(0),
+            nameLabel: ""
         });
     }
 
@@ -330,6 +369,102 @@ contract MandateAgreementTest is Test, IBatasCallback {
 
         m.feeBps = uint24(MandateLib.BPS - 1);
         assertGt(this.compile(m).length, 0);
+    }
+
+    // --- the kill switch, made binding -------------------------------------------------------
+    //
+    // The ENSv2 subname expressed the agent's authority from the start, and the agent consulted it
+    // before acting. Nothing on chain did, so revoking the name stopped the agent that asks and
+    // nobody else: a second copy of it, or an ordinary taker arriving at a position still shipped,
+    // was never stopped by the name at all. `MandateName` puts the question into the settlement,
+    // and these tests hold both surfaces to the same answer.
+
+    MandateRegistryMock internal names;
+
+    function _named(string memory label, address holder) internal returns (Mandate memory m) {
+        if (address(names) == address(0)) names = new MandateRegistryMock();
+        m = _mandate(500e18, 1e18);
+        m.nameRegistry = address(names);
+        m.nameHolder = holder;
+        m.nameLabel = label;
+    }
+
+    /// @notice A name that is held and unexpired settles, on both surfaces.
+    function test_BothSurfacesSettleWhileTheNameHolds() public {
+        Mandate memory m = _named("agent", agent);
+        names.grant("agent", agent, uint64(block.timestamp + 1 days));
+        ISwapVM.Order memory order = _shipBoth(m);
+
+        uint256 fromApp = app.quote(m, 10e18);
+        (, uint256 fromVm,) = router.quote(order, 10e18, _takerData());
+        assertEq(fromApp, fromVm, "a live name must not change what a trade is worth");
+        assertGt(fromApp, 0);
+    }
+
+    /// @notice Revoke the name and every caller is stopped, not merely the agent that asks.
+    /// @dev This is the whole point of the instruction. The taker here is this contract, which has
+    ///   never heard of the name and would happily trade; the registry says the grant is gone and
+    ///   the settlement refuses anyway.
+    function test_RevokingTheNameStopsBothSurfaces() public {
+        Mandate memory m = _named("agent", agent);
+        names.grant("agent", agent, uint64(block.timestamp + 1 days));
+        ISwapVM.Order memory order = _shipBoth(m);
+
+        assertGt(app.quote(m, 10e18), 0, "the position must work before it is stopped");
+
+        names.revoke("agent", uint64(block.timestamp));
+
+        // Reported as a withdrawal, not as a lapse. `unregister` sets the expiry to the moment of
+        // revocation rather than zeroing it, so checking the expiry first would call every
+        // revocation a name that ran out — the same wrong answer this project fixed off chain, and
+        // the reason `check` asks who holds it before it asks until when.
+        vm.expectPartialRevert(MandateName.MandateNameNotHeld.selector);
+        app.quote(m, 10e18);
+        bytes memory takerData = _takerData();
+        vm.expectPartialRevert(MandateName.MandateNameNotHeld.selector);
+        router.quote(order, 10e18, takerData);
+    }
+
+    /// @notice A name that simply ran out stops it too, and by the registry's own rule.
+    /// @dev Strictly greater than, which is deliberately *not* the rule the mandate's own deadline
+    ///   uses. SwapVM's `Deadline` is `<=`, so a mandate is live through its final second; a name
+    ///   is expired at its expiry, and `classifyName` off chain agrees. Each surface matches the
+    ///   system it mirrors rather than matching the other one.
+    function test_ALapsedNameStopsBothSurfaces() public {
+        Mandate memory m = _named("agent", agent);
+        names.grant("agent", agent, uint64(block.timestamp + 1 hours));
+        ISwapVM.Order memory order = _shipBoth(m);
+
+        vm.warp(block.timestamp + 1 hours);
+        // And a name that simply ran out says so, rather than borrowing the other one's word.
+        vm.expectPartialRevert(MandateName.MandateNameLapsed.selector);
+        app.quote(m, 10e18);
+        bytes memory takerData = _takerData();
+        vm.expectPartialRevert(MandateName.MandateNameLapsed.selector);
+        router.quote(order, 10e18, takerData);
+    }
+
+    /// @notice And a name held by somebody else is not this agent's authority.
+    function test_ANameHeldByAnotherAddressStopsBothSurfaces() public {
+        Mandate memory m = _named("agent", agent);
+        names.grant("agent", makeAddr("someone else"), uint64(block.timestamp + 1 days));
+        ISwapVM.Order memory order = _shipBoth(m);
+
+        vm.expectRevert();
+        app.quote(m, 10e18);
+        bytes memory takerData = _takerData();
+        vm.expectRevert();
+        router.quote(order, 10e18, takerData);
+    }
+
+    /// @notice A mandate that names no registry is unchanged, and that is a choice, not a default.
+    function test_WithoutARegistryNothingIsAsked() public {
+        Mandate memory m = _mandate(500e18, 1e18);
+        assertEq(m.nameRegistry, address(0));
+        ISwapVM.Order memory order = _shipBoth(m);
+        assertGt(app.quote(m, 10e18), 0);
+        (, uint256 fromVm,) = router.quote(order, 10e18, _takerData());
+        assertGt(fromVm, 0);
     }
 
     /// @notice A mandate whose floor is unreachable must be refused by both, never by one.

@@ -7,6 +7,7 @@ import { IAqua } from "@1inch/aqua/src/interfaces/IAqua.sol";
 import { AquaApp } from "@1inch/aqua/src/AquaApp.sol";
 
 import { Mandate, MandateLib } from "./Mandate.sol";
+import { MandateName } from "./MandateName.sol";
 import { IBatasCallback } from "./IBatasCallback.sol";
 
 /// @title BatasApp
@@ -106,5 +107,13 @@ contract BatasApp is AquaApp {
         require(
             amountOut * _E18 >= amountIn * m.minRateE18, MandateRateTooLow(amountOut, amountIn, m.minRateE18)
         );
+
+        // The kill switch, on this surface too, and through the same library the VM instruction
+        // calls. Two implementations of "is this name still held" would be two answers to one
+        // question, which is the failure every test in MandateAgreement exists to prevent. Last,
+        // because it is the only check here that costs external calls.
+        if (m.nameRegistry != address(0)) {
+            MandateName.check(m.nameRegistry, m.nameHolder, m.nameLabel);
+        }
     }
 }

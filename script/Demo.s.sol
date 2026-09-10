@@ -22,7 +22,7 @@ contract Demo is Script {
 
     /// @dev Defaults point at the Sepolia deployment so the walkthrough runs out of the box, but
     ///   anyone who deploys their own set can point at it without editing this file.
-    address internal constant DEFAULT_ROUTER = 0x8e9BF70758AC73824135C05e70cbdf512713950E;
+    address internal constant DEFAULT_ROUTER = 0x1cFA88652B9e1ccCd7cc132c6344099C2ad10FC2;
     address internal constant DEFAULT_TOKEN_A = 0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B;
     address internal constant DEFAULT_TOKEN_B = 0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81;
 
@@ -65,7 +65,10 @@ contract Demo is Script {
             minRateE18: MIN_RATE,
             expiry: uint64(block.timestamp + vm.envOr("BATAS_MANDATE_HOURS", DEFAULT_HOURS) * 1 hours),
             feeBps: FEE_BPS,
-            salt: uint64(block.timestamp)
+            salt: uint64(block.timestamp),
+            nameRegistry: address(0),
+            nameHolder: address(0),
+            nameLabel: ""
         });
         bytes memory program = MandateLib.toProgram(mandate);
         ISwapVM.Order memory order = _order(me, t0, t1, program);

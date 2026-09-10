@@ -143,3 +143,22 @@ test('no npm script is named in a way the host will run on deploy', async () => 
     }
     assert.equal(pkg.scripts['build:contracts'], 'forge build --force', 'the contracts build must stay forced');
 });
+
+test('the demo script and the agent point at the same deployment', async () => {
+    // They did not, and nothing noticed. `agent/deployment.mjs` was moved to a freshly deployed
+    // router while `script/Demo.s.sol` kept a hard-coded default pointing at the old one, so a demo
+    // run shipped a position the agent then could not find — "no position shipped to this router
+    // yet", from a script that had just shipped one.
+    //
+    // The address lives in two languages and there is no single place to put it that both can read,
+    // so the honest fix is to check rather than to pretend. Grepping a Solidity constant is crude;
+    // it is also exactly as strong as the thing it is protecting against.
+    const demo = await readFile(new URL('../script/Demo.s.sol', import.meta.url), 'utf8');
+    const found = demo.match(/DEFAULT_ROUTER = (0x[0-9a-fA-F]{40})/);
+    assert.ok(found, 'Demo.s.sol no longer declares a DEFAULT_ROUTER');
+    assert.equal(
+        found[1].toLowerCase(),
+        ROUTER.toLowerCase(),
+        'Demo.s.sol ships to a different router than agent/deployment.mjs reads from',
+    );
+});

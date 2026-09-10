@@ -15,6 +15,7 @@ import { Deadline } from "@1inch/swap-vm/src/instructions/Controls.sol";
 
 import { BatasRouter } from "../src/BatasRouter.sol";
 import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
+import { MandateName } from "../src/MandateName.sol";
 
 /// @dev Aqua-backed mode: the maker ships liquidity to the router and the encoded order is the
 ///   Aqua strategy, so no signature is involved at all. Balances come from Aqua rather than from
@@ -211,6 +212,41 @@ contract PolicyEnvelopeTest is Test {
         } catch {
             emit log("terms rewritten to remove the limits     -> a position with no reserves");
         }
+    }
+
+    /// @notice A truncated name check is refused rather than half-read, for the same reason.
+    /// @dev `InstructionArgs` performs no bounds validation, so a `MandateName` that declares fewer
+    ///   bytes than it needs reads its registry address out of whatever follows it in calldata. A
+    ///   misparsed fee produces a wrong price and somebody notices; a guard pointed at the wrong
+    ///   registry produces a guard that passes, and asking a contract that is not a registry is how
+    ///   a kill switch stops killing anything.
+    function test_RevertWhenNameArgsAreTruncated() public {
+        // [opcode 0x22][len 40] — one byte short of the registry, holder and length byte it needs.
+        bytes memory short = bytes.concat(
+            bytes1(0x22), bytes1(0x28), bytes20(address(0xBEEF)), bytes20(address(0xCAFE)),
+            FeeFlatIn.build(0.003e7),
+            XYCSwap.build()
+        );
+        ISwapVM.Order memory order = _order(short);
+        _ship(order);
+        bytes memory takerData = _takerData();
+        vm.expectPartialRevert(MandateName.MandateNameArgsTruncated.selector);
+        swapVM.swap(order, 10e18, takerData);
+    }
+
+    /// @notice And one whose label runs off the end of its own arguments.
+    function test_RevertWhenNameLabelRunsPastItsArgs() public {
+        // A full header, a length byte claiming 200 label bytes, and none of them present.
+        bytes memory lying = bytes.concat(
+            bytes1(0x22), bytes1(0x29), bytes20(address(0xBEEF)), bytes20(address(0xCAFE)), bytes1(uint8(200)),
+            FeeFlatIn.build(0.003e7),
+            XYCSwap.build()
+        );
+        ISwapVM.Order memory order = _order(lying);
+        _ship(order);
+        bytes memory takerData = _takerData();
+        vm.expectPartialRevert(MandateName.MandateNameArgsTruncated.selector);
+        swapVM.swap(order, 10e18, takerData);
     }
 
     /// @notice What the guard costs, measured rather than asserted to be small.

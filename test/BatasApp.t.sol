@@ -69,7 +69,10 @@ contract BatasAppTest is Test, IBatasCallback {
             minRateE18: 1.5e18,
             expiry: uint64(block.timestamp + 2 hours),
             feeBps: 0.003e7,
-            salt: 0
+            salt: 0,
+            nameRegistry: address(0),
+            nameHolder: address(0),
+            nameLabel: ""
         });
     }
 
