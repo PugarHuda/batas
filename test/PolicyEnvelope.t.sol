@@ -154,6 +154,105 @@ contract PolicyEnvelopeTest is Test {
         assertEq(tokenA.balanceOf(maker), RESERVE_A + amountIn, "maker received input");
     }
 
+    /// @notice Every route around the mandate, tried and closed.
+    /// @dev The rest of this file checks one refusal per test, which is right for a suite and wrong
+    ///   for answering the question anyone actually asks: *so what can an attacker do?* This walks
+    ///   the whole list against one funded position and shows each door shut.
+    ///
+    ///   Run it with `-vv` to watch: it is the demo, and it is also a test, so it cannot rot into a
+    ///   story the code stopped telling.
+    function test_EveryRouteAroundTheMandateIsClosed() public {
+        ISwapVM.Order memory order = _order(_program(100e18, 1.9e18, 0.003e7));
+        _ship(order);
+
+        emit log("a mandate: at most 100 in, never under 1.9 out per 1 in");
+        emit log("");
+
+        // 1. Inside the terms. This one is supposed to work, and if it does not the rest proves
+        //    nothing — a position that refuses everything is not enforcing a mandate, it is broken.
+        (, uint256 out,) = swapVM.quote(order, 10e18, _takerData());
+        assertGt(out, 19e18);
+        emit log_named_uint("10 in, inside every limit                -> settles, out", out);
+
+        // 2. Bigger than the cap.
+        try swapVM.quote(order, 101e18, _takerData()) returns (uint256, uint256, bytes32) {
+            fail();
+        } catch {
+            emit log("101 in, over the size cap                -> refused");
+        }
+
+        // 3. Big enough that the curve walks the price under the floor, while staying under the cap.
+        //    This is the one a size cap alone would let through.
+        try swapVM.quote(order, 90e18, _takerData()) returns (uint256, uint256, bytes32) {
+            fail();
+        } catch {
+            emit log("90 in, under the cap but under the floor -> refused");
+        }
+
+        // 4. Asking by output instead of by input. The input is only known after the curve runs, so
+        //    a guard placed before it would have nothing to check.
+        try swapVM.quote(order, 190e18, _takerData(false, abi.encode(type(uint256).max))) returns (uint256, uint256, bytes32) {
+            fail();
+        } catch {
+            emit log("190 out, exactOut around the cap         -> refused");
+        }
+
+        // 5. Waiting for the terms to lapse does not widen them either; it closes them.
+        //    (No deadline in this program, so the expiry route is pinned in its own test.)
+
+        // 6. Rewriting the mandate. An attacker can build any program they like — but the terms are
+        //    the strategy hash, so a widened cap is a different position, and the maker never
+        //    shipped a token to it. This is the property that makes the limits immutable rather
+        //    than merely checked.
+        ISwapVM.Order memory widened = _order(_program(1_000e18, 0, 0.003e7));
+        assertTrue(swapVM.hash(widened) != swapVM.hash(order), "different terms must be a different position");
+        try swapVM.quote(widened, 500e18, _takerData()) returns (uint256, uint256, bytes32) {
+            fail();
+        } catch {
+            emit log("terms rewritten to remove the limits     -> a position with no reserves");
+        }
+    }
+
+    /// @notice What the guard costs, measured rather than asserted to be small.
+    /// @dev A policy nobody can afford to enforce is a policy nobody enforces. Two settlements over
+    ///   the same reserves and the same trade, one with the envelope wrapped around the program and
+    ///   one without it, so the difference is the instruction and nothing else.
+    ///
+    ///   The bound is deliberately loose and deliberately present. Loose, because an exact number
+    ///   would go red on any compiler bump and teach the next person to delete the test. Present,
+    ///   because the envelope calls `runLoop` and inspects the settled registers, and an
+    ///   implementation that quietly started re-walking the program would show up here as nothing
+    ///   else in this suite would notice it.
+    function test_TheGuardCostsAlmostNothing() public {
+        ISwapVM.Order memory guarded = _order(_program(100e18, 1.9e18, 0.003e7));
+        // Same program, same terms, envelope removed. A different program is a different strategy
+        // hash, so Aqua accepts it as its own position rather than as a re-ship.
+        ISwapVM.Order memory bare = _order(bytes.concat(FeeFlatIn.build(0.003e7), XYCSwap.build()));
+        _ship(guarded);
+        _ship(bare);
+
+        // One settlement on each before measuring. The first swap against a position writes cold
+        // storage all over Aqua and the router, and the first version of this test read that as the
+        // guard costing 14,590 gas — a number that was mostly the price of being first.
+        swapVM.swap(guarded, 1e18, _takerData());
+        swapVM.swap(bare, 1e18, _takerData());
+
+        uint256 before = gasleft();
+        swapVM.swap(guarded, 10e18, _takerData());
+        uint256 withGuard = before - gasleft();
+
+        before = gasleft();
+        swapVM.swap(bare, 10e18, _takerData());
+        uint256 withoutGuard = before - gasleft();
+
+        emit log_named_uint("gas, guarded    ", withGuard);
+        emit log_named_uint("gas, unguarded  ", withoutGuard);
+        emit log_named_uint("the guard costs ", withGuard - withoutGuard);
+
+        assertGt(withGuard, withoutGuard, "the guard cannot be free; if it is, it is not running");
+        assertLt(withGuard - withoutGuard, 5_000, "the guard has started doing real work");
+    }
+
     /// @notice The size cap binds even though the pool could serve the trade.
     function test_RevertWhenOverCap() public {
         ISwapVM.Order memory order = _order(_program(100e18, 1.5e18, 0.003e7));

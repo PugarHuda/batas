@@ -238,6 +238,18 @@ export async function inspect(body) {
         }
     }
 
+    // And whether the operator may still act at all.
+    //
+    // Free on its own, and included here anyway: what the payment buys is not any single one of
+    // these reads, it is all of them assembled against the same position in one answer. A caller
+    // told the terms and the identity but left to discover for themselves that the name behind it
+    // was revoked an hour ago has been sold three quarters of a verdict.
+    try {
+        answer.authority = await authorityAnswer({ grantedUntil: answer.mandate?.expiry ?? undefined });
+    } catch (e) {
+        answer.authority = { checked: false, error: String(e.shortMessage || e.message || e) };
+    }
+
     return statusAnd(200, answer);
 }
 

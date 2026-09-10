@@ -244,6 +244,41 @@ test('a term short enough for its floor to still mean something draws nothing', 
     assert.deepEqual(explain(live({ seconds: 2 * 3600 })).notes, [], 'the default two-hour grant');
 });
 
+test('every mandate the encoder can build, the decoder reads back unchanged', () => {
+    // Parity with Solidity is checked case by case against a fixed dump, which proves the two
+    // encoders agree and says nothing about whether the *decoder* agrees with either. This closes
+    // the loop on arbitrary terms: compile, walk the bytes back, and the numbers must survive.
+    //
+    // Seeded, so a failure is a bug report rather than an anecdote. Change the seed and you are
+    // running a different test; print it and you can run the same one again.
+    let seed = 0x9e3779b9;
+    const rand = () => {
+        seed ^= seed << 13; seed >>>= 0;
+        seed ^= seed >> 17;
+        seed ^= seed << 5; seed >>>= 0;
+        return seed / 0x100000000;
+    };
+    const pick = (max) => BigInt(Math.floor(rand() * Number(max)));
+
+    for (let i = 0; i < 500; i++) {
+        const terms = {
+            maxAmountIn: pick(10n ** 24n),
+            minRateE18: pick(10n ** 22n),
+            expiry: Math.floor(rand() * MAX_ENCODABLE_EXPIRY),
+            feeBps: Math.floor(rand() * (Number(BPS) - 1)),
+            salt: pick(2n ** 60n),
+        };
+        const back = readMandate(decodeProgram(toProgram(terms)));
+        const shown = JSON.stringify({ ...terms, maxAmountIn: String(terms.maxAmountIn), minRateE18: String(terms.minRateE18), salt: String(terms.salt) });
+        assert.equal(back.maxAmountIn, terms.maxAmountIn, `cap survived? ${shown}`);
+        assert.equal(back.minRateE18, terms.minRateE18, `floor survived? ${shown}`);
+        assert.equal(back.expiry, terms.expiry, `expiry survived? ${shown}`);
+        assert.equal(back.feeBps, terms.feeBps, `fee survived? ${shown}`);
+        assert.equal(back.salt, terms.salt.toString(), `salt survived? ${shown}`);
+        assert.equal(back.curve, 'constant product (x*y=k)', `curve survived? ${shown}`);
+    }
+});
+
 test('the encoder refuses terms the program cannot carry', () => {
     // The same two refusals MandateLib.toProgram makes. A mandate is compiled on both sides of the
     // fence and the two must decline the same inputs, or the agent can ship what the contracts

@@ -158,6 +158,14 @@ Two properties follow that a plain sequential guard cannot offer:
 - **Nothing can undo the check.** Later instructions execute *inside* the wrapper. A fee appended
   behind the curve cannot push the amounts back out of bounds once the guard has already passed.
 
+And it is close to free. `test_TheGuardCostsAlmostNothing` settles the same trade twice over
+identical reserves, once with the envelope wrapped around the program and once without it, and the
+difference is **933 gas** — about 0.8% of a settlement. Both positions are warmed first, because
+the first version of that test read the guard as costing 14,590, which was mostly the price of
+being the first swap against a fresh position rather than the price of the guard. A policy nobody
+can afford to enforce is a policy nobody enforces, so the number is measured rather than asserted
+to be small.
+
 `test_FeeBehindTheGuardStillCounted` pins exactly this. `FeeFlatIn` sits after the envelope in
 program order, yet it executes inside it: at 0.3% the rate lands near 1.974 and passes a 1.9 floor,
 while at 5% the same mandate refuses the trade. A guard that merely ran first would have passed
@@ -931,6 +939,34 @@ the MCP tool both call it; the spend cap and the cold-start retry live in one pl
 injected rather than assumed, because MCP speaks JSON-RPC over stdout and the narration the CLI
 prints would corrupt the stream.
 
+## So what can an attacker actually do
+
+Every other test in this repository checks one refusal, which is right for a suite and wrong for
+answering the question anyone actually asks. `test_EveryRouteAroundTheMandateIsClosed` walks the
+whole list against one funded position:
+
+```
+$ forge test --match-test test_EveryRouteAroundTheMandateIsClosed -vv
+
+a mandate: at most 100 in, never under 1.9 out per 1 in
+
+10 in, inside every limit                -> settles, out: 19743160687941225977
+101 in, over the size cap                -> refused
+90 in, under the cap but under the floor -> refused
+190 out, exactOut around the cap         -> refused
+terms rewritten to remove the limits     -> a position with no reserves
+```
+
+The third line is the one worth pausing on: 90 is inside the cap, and a size limit alone would let
+it through. It is the floor that refuses it, because moving 90 through a 1,000-unit reserve walks
+the price under 1.9. Caps bound one trade; floors bound what the trade is worth.
+
+The last line is the property that makes the limits immutable rather than merely checked. An
+attacker can compile any program they like — but the terms *are* the strategy hash, so a mandate
+with the limits removed is a different position, and the maker never shipped a token to it.
+
+It is a test rather than a script, so it cannot rot into a story the code stopped telling.
+
 ## What a mandate does not bound
 
 Three limits of this design, stated here because a mandate that is trusted for more than it
@@ -1035,8 +1071,8 @@ payload is being built, before anything is signed or sent, so an unfunded key re
 can move even if the assertion is wrong, and CI needs no secret to run it.
 
 ```
-forge test          35 passing
-npm run test:js    131 passing
+forge test          37 passing
+npm run test:js    132 passing
 npm run test:api    18 passing
 npm run test:prod    5 passing
 ```
