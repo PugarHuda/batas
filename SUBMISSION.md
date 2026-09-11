@@ -95,7 +95,8 @@ The form allows up to three. These are the three the project is actually built o
 | Requirement | Where it is met |
 |---|---|
 | Live x402-gated service on Hedera via Blocky402 | https://batas-one.vercel.app/v1/mandate/explain, facilitator `api.testnet.blocky402.com` |
-| A platform consuming it, ≥1 real paid request | `npm run walkthrough -- --paid`; settled `0.0.7162784@1789043844.765402053` |
+| A platform consuming it, ≥1 real paid request | `agent/counterparty.mjs` — a second agent that discovers the service through `/.well-known/x402`, asks the three free questions, and pays only when a real doubt remains. Settled `0.0.7162784@1789095743.757413333` |
+| *Bonus:* multi-agent | two agents on opposite sides of one position: one grants the mandate, the other decides whether to trust it and buys the evidence |
 | Public repo with README | yes |
 | Demo video ≤5 min | the 2–4 min video below satisfies both this and ETHGlobal's limit |
 | *Bonus:* pay-per-call metering | the endpoint charges per call, not per subscription |
@@ -134,7 +135,8 @@ labelling one, which is not something the other ENS entries this project surveye
 ## The video
 
 2–4 minutes, enforced. 720p minimum, spoken narration by a human, no text-to-speech, not filmed on
-a phone, no artificial speed-ups. Target **3:30**.
+a phone, no artificial speed-ups. Target **3:45**. Six beats, and the middle four are each a single
+command.
 
 **Before recording**
 
@@ -144,9 +146,9 @@ anvil --fork-url $SEPOLIA_RPC_URL &      # the demo runs against a fork; no gas,
 curl -s https://batas-one.vercel.app/ >/dev/null   # warm the serverless cold start
 ```
 
-Have two terminals open, font large enough to read at 720p.
+Two terminals, font large enough to read at 720p.
 
-**0:00–0:25 — the problem**
+**0:00–0:20 — the problem**
 
 On screen: the `Aqua.pull()` snippet in the README.
 
@@ -155,16 +157,28 @@ On screen: the `Aqua.pull()` snippet in the README.
 > whichever app you ship to can take your tokens. That is the whole security model — you trust the
 > app. Now hand that app to an autonomous agent.
 
-**0:25–0:55 — where the stop lives**
+**0:20–0:45 — where the stop lives**
 
 On screen: `src/PolicyEnvelope.sol`, the `exec` function.
 
 > Batas makes the mandate the strategy itself. Aqua hashes the strategy bytes, so the terms are the
 > position's identity, not a label on it. And this is a new SwapVM instruction that wraps the whole
 > program: it runs everything else inside itself and checks the amounts after they settle. Placed
-> first, nothing can escape it — a fee appended behind the curve still executes inside the guard.
+> first, nothing can escape it.
 
-**0:55–1:50 — on chain, in one run** *(the 1inch requirement)*
+**0:45–1:05 — what that is worth**
+
+```bash
+forge test --match-test test_WhatTheMandateIsWorth -vv
+```
+
+> The same attacker, the same reserves, twice. Under a mandate: two trades, average rate one point
+> six six, eighty-three percent of the position still there. With no mandate: sixty-four trades,
+> average rate nought point two seven — a seventh of where the pool opened — and it is gutted. Every
+> one of those was an ordinary constant-product swap. Nothing in the application layer was there to
+> stop them.
+
+**1:05–1:50 — on chain, in one run** *(the 1inch requirement)*
 
 ```bash
 forge script script/Demo.s.sol:Demo --rpc-url http://127.0.0.1:8545 --broadcast
@@ -172,45 +186,46 @@ forge script script/Demo.s.sol:Demo --rpc-url http://127.0.0.1:8545 --broadcast
 
 > One command ships the mandate, settles a swap inside it, and then asks for a trade over the cap.
 > Ten tokens in, nineteen point seven out — a real ERC-20 transfer to an address nobody holds the
-> key for. And then a hundred and one against a cap of a hundred: refused, before any token moves.
-> That revert data is the cap and the amount asked for, straight out of the VM.
+> key for. Then a hundred and one against a cap of a hundred: refused, before any token moves. That
+> revert data is the cap and the amount asked for, straight out of the VM.
 
-**1:50–2:30 — the kill switch** *(the ENS requirement, and the strongest 40 seconds in the video)*
+**1:50–2:35 — the kill switch** *(the ENS requirement, and the strongest 45 seconds here)*
 
 ```bash
 node agent/killswitch.mjs --prove
 ```
 
-> The agent's authority is an ENSv2 subname. Expiring — and that expiry is the same timestamp
+> The agent's authority is an ENSv2 subname — expiring, and that expiry is the same timestamp
 > compiled into the program's deadline. Soulbound, because transfer admin was withheld. Revocable,
 > because the grantor kept unregister. And it is not the agent that obeys it. Watch: quote the live
 > position, one token in, one point nine five out. Revoke the name. Quote the same position again —
 > refused, `MandateNameNotHeld`, from a caller that has never heard of ENS and would happily trade.
 > Re-grant it, and the position comes back. The name is an instruction in the program, so revoking
-> it stops every caller, not just the one that asks permission.
+> it stops every caller, not only the one that asks permission.
 
 *(Two Sepolia transactions inside that run, roughly 30 seconds each — cut between them rather than
 waiting on camera. The three quotes are eth_calls and return instantly.)*
 
-**2:30–3:15 — the paid answer** *(the Hedera requirement)*
+**2:35–3:20 — the other agent pays** *(the Hedera requirement)*
 
 ```bash
-npm run walkthrough -- --paid
+node agent/counterparty.mjs --paranoid
 ```
 
-> Five steps that cost nothing and route through nothing of ours: the position off Sepolia, what
-> the bytes permit, when they were published to Hedera Consensus Service, whether the name still
-> holds, who the ERC-8004 identity belongs to. Then one step that pays. Point one milli-HBAR over
-> x402, settled through Blocky402 — no key, no account, no subscription. What it buys is the part
-> a stranger cannot compute alone: provenance, and whether the identity operating this position is
-> held by the address that granted it.
+> This is a different agent, with its own money and its own rules, arriving at a position it did not
+> create. It finds the service through the host's own x402 discovery manifest — nothing is
+> hard-coded. Then three free questions: what do the bytes permit, when did they become public on
+> Hedera Consensus Service, does the name still hold. A position it does not like costs it nothing
+> to refuse. Here everything checks out, so it settles a tenth of a cent over x402 for the one thing
+> left — who is operating this, and whether their ERC-8004 identity is held by the address that
+> granted the mandate. It is. It trades.
 
-**3:15–3:30 — close**
+**3:20–3:45 — close**
 
-> Three limits, checked in the two places that gate the money, published where anyone can read them
-> without asking us. The agent picks the numbers. It cannot widen them once granted.
-
----
+> Three limits, checked in the two places that gate the money, publishable where anyone can read
+> them without asking us, and endable by a name the settlement itself obeys. The agent picks the
+> numbers. It cannot widen them once granted, and the maker can take the authority back in one
+> transaction.
 
 ## Still to do
 
