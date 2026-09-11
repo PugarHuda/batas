@@ -97,6 +97,21 @@ async function main() {
         line('held by', agent.owner);
         const check = vouchesFor(agent, owner);
         line('vouches', `${check.vouched ? 'yes' : 'no'} — ${check.reason}`);
+
+        // The registry the project used to skip. Identity answers who; this answers whether anyone
+        // has traded against them and said so — and the contract refuses to let the agent say it.
+        try {
+            const { readReputation } = await import('./reputation.mjs');
+            const rep = await readReputation(agentId);
+            line(
+                'reputation',
+                rep.count === 0
+                    ? 'no client feedback yet (and the agent itself is barred from leaving any)'
+                    : `${rep.count} client(s), ${rep.summaryValue}bps above the floor on average`,
+            );
+        } catch (e) {
+            line('reputation', `could not read: ${String(e.shortMessage ?? e.message ?? e)}`);
+        }
     }
 
     if (!process.argv.includes('--paid')) {

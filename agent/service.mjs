@@ -22,7 +22,7 @@ import 'dotenv/config';
 import { explain } from './swapvm.mjs';
 import { resolveAgent, vouchesFor, parseAgentId } from './erc8004.mjs';
 import { lookupMandate } from './hcs.mjs';
-import { decodeAnswer, publicationAnswer, authorityAnswer } from './free.mjs';
+import { decodeAnswer, publicationAnswer, authorityAnswer, reputationAnswer } from './free.mjs';
 import { page } from './ui.mjs';
 import { HCS_TOPIC } from './deployment.mjs';
 
@@ -108,6 +108,7 @@ app.get('/', (req, res) => {
             'POST /v1/mandate/decode': 'what a program permits — arithmetic on bytes you already hold',
             'POST /v1/mandate/publication': 'when those exact bytes became public, from a mirror node that is not ours',
             'GET /v1/agent/authority': 'whether the ENSv2 mandate name still holds, and if not, lapsed or revoked',
+            'GET /v1/agent/reputation': 'what clients have said, from ERC-8004; the agent itself is barred from saying it',
         },
     });
 });
@@ -175,6 +176,7 @@ const freely = (handler) => async (req, res) => {
 
 app.post('/v1/mandate/decode', freely((req) => decodeAnswer(req.body?.program)));
 app.post('/v1/mandate/publication', freely((req) => publicationAnswer(req.body?.program)));
+app.get('/v1/agent/reputation', freely((req) => reputationAnswer({ agentId: req.query?.agentId })));
 app.get('/v1/agent/authority', freely((req) => authorityAnswer({
     label: req.query?.label,
     grantedUntil: req.query?.grantedUntil === undefined ? undefined : Number(req.query.grantedUntil),
@@ -296,6 +298,15 @@ export async function inspect(body) {
         answer.authority = { checked: false, error: String(e.shortMessage || e.message || e) };
     }
 
+    // And what anyone who has actually traded here says about it.
+    if (answer.operator?.checked) {
+        try {
+            answer.reputation = await reputationAnswer({ agentId: answer.operator.agentId });
+        } catch (e) {
+            answer.reputation = { checked: false, error: String(e.shortMessage || e.message || e) };
+        }
+    }
+
     return statusAnd(200, answer);
 }
 
@@ -317,6 +328,7 @@ app.use((req, res) => {
             'POST /v1/mandate/decode',
             'POST /v1/mandate/publication',
             'GET /v1/agent/authority',
+            'GET /v1/agent/reputation',
         ],
         paid: ['POST /v1/mandate/explain'],
     });

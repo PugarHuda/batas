@@ -188,3 +188,79 @@ test('a live mandate with no deadline at all is replaced with one that has', asy
         assert.match(d.reason, /carries no deadline/);
     }
 });
+
+// --- where the floor comes from ----------------------------------------------
+
+test('with no history the budget sits at its floor and says why', async () => {
+    const { volatilityBudget } = await import('./swapvm.mjs');
+    for (const rates of [undefined, [], [2n * 10n ** 18n]]) {
+        const b = volatilityBudget(rates);
+        assert.equal(b.bps, 100n);
+        assert.match(b.reason, /not enough settled trades/);
+    }
+});
+
+test('the budget is the widest gap between settlements, not the average one', async () => {
+    // A budget set to the typical move is a budget that fails on the atypical one, and with a
+    // handful of samples there is no percentile worth taking.
+    const { volatilityBudget } = await import('./swapvm.mjs');
+    const e18 = 10n ** 18n;
+    const b = volatilityBudget([2n * e18, 1990n * e18 / 1000n, 1900n * e18 / 1000n]);
+    assert.equal(b.samples, 3);
+    // 1.99 -> 1.90 is 452bps; 2.00 -> 1.99 is 50. The wider one wins.
+    assert.equal(b.observedBps, 452n);
+    assert.equal(b.bps, 452n);
+});
+
+test('a quiet position does not get a floor tighter than the minimum', async () => {
+    const { volatilityBudget } = await import('./swapvm.mjs');
+    const e18 = 10n ** 18n;
+    const b = volatilityBudget([2n * e18, 2n * e18, 2n * e18]);
+    assert.equal(b.observedBps, 0n);
+    assert.equal(b.bps, 100n, 'a position that has not moved yet is not a position that cannot');
+    assert.match(b.reason, /holding the 100bps floor/);
+});
+
+test('and a violent one does not get a floor so wide it protects nothing', async () => {
+    const { volatilityBudget } = await import('./swapvm.mjs');
+    const e18 = 10n ** 18n;
+    const b = volatilityBudget([2n * e18, 1n * e18]);
+    assert.equal(b.observedBps, 5000n);
+    assert.equal(b.bps, 1000n);
+    assert.match(b.reason, /past the 1000bps ceiling/);
+});
+
+test('the direction of the move does not matter, only the size', async () => {
+    // A floor protects against the price falling, and a position whose price has jumped around by
+    // 3% in both directions is one where 3% is the movement to survive either way.
+    const { volatilityBudget } = await import('./swapvm.mjs');
+    const e18 = 10n ** 18n;
+    const down = volatilityBudget([2n * e18, 194n * e18 / 100n]);
+    const up = volatilityBudget([194n * e18 / 100n, 2n * e18]);
+    assert.equal(down.observedBps, 300n);
+    assert.equal(up.observedBps, 309n, 'the same absolute move is a larger fraction of the smaller price');
+    assert.ok(down.bps > 100n && up.bps > 100n);
+});
+
+test('a zero or negative rate is dropped rather than dividing by it', async () => {
+    const { volatilityBudget } = await import('./swapvm.mjs');
+    const e18 = 10n ** 18n;
+    const b = volatilityBudget([0n, 2n * e18, 194n * e18 / 100n]);
+    assert.equal(b.samples, 2, 'the zero should be gone');
+    assert.equal(b.observedBps, 300n);
+});
+
+test('the budget a measured position gets is one decideMandate can actually use', async () => {
+    // The two halves have to compose: a budget below the fee produces a cap of zero, which is safe
+    // but useless, and this is where that would show up.
+    const { volatilityBudget, decideMandate } = await import('./swapvm.mjs');
+    const e18 = 10n ** 18n;
+    const budget = volatilityBudget([2n * e18, 194n * e18 / 100n]);
+    const { maxAmountIn, minRateE18 } = decideMandate({
+        reserveA: 1000n * e18,
+        reserveB: 2000n * e18,
+        slippageBps: budget.bps,
+    });
+    assert.ok(maxAmountIn > 0n, 'a measured budget must still leave a tradeable cap');
+    assert.ok(minRateE18 > 0n);
+});

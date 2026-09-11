@@ -34,6 +34,18 @@ export const MANDATE_NAME = env('BATAS_MANDATE_NAME', 'agent');
 /** Where mandates are published, and the ERC-8004 identity that publishes them. */
 export const HCS_TOPIC = env('BATAS_HCS_TOPIC', '0.0.10394165');
 export const AGENT_ID = env('BATAS_AGENT_ID', '10123');
+/**
+ * ERC-8004's reputation registry, paired with the identity registry above.
+ *
+ * Checked rather than copied, and the check mattered: the addresses that circulate for these
+ * registries include one beginning `0x8004B663056e9e57`, which this project's README already warns
+ * about by name. The live one begins `0x8004B663056A597D` — the same twelve characters, then a
+ * different address. `getIdentityRegistry()` on it answers with IDENTITY_REGISTRY above, which is
+ * what actually establishes they are the same deployment.
+ */
+export const REPUTATION_REGISTRY = getAddress(
+    env('BATAS_REPUTATION_REGISTRY', '0x8004B663056A597Dffe9eCcC1965A193B7388713'),
+);
 
 /**
  * The two token addresses in the order Aqua stores them.

@@ -140,6 +140,50 @@ export const toProgram = ({ maxAmountIn, minRateE18, expiry, feeBps, salt: saltV
  * bounds damage is how far one trade can walk the price, and that is a ratio to the reserve.
  * A fixed cap means something different at every depth.
  */
+/**
+ * How far this position's price has actually moved, in basis points.
+ *
+ * The floor was 2% because somebody typed 2%. That number decides what the mandate refuses, and a
+ * constant nothing derives it from is the weakest part of an otherwise measured design — a floor
+ * too tight refuses every real trade, and one too loose protects nothing.
+ *
+ * Be precise about what this measures, because the obvious reading is wrong. It is **not** market
+ * volatility, and these rates are not mid-prices: each one is what a settled trade actually got,
+ * which already includes the slippage that trade's own size caused. What it measures is the
+ * realised gap between consecutive settlements at this position — how far the price has moved
+ * between one trade and the next, in practice, including the moving done by the trades themselves.
+ *
+ * That happens to be the right quantity for this job. The floor has to survive the price walking
+ * as it has actually walked here; a budget derived from anything smoother would be a floor that
+ * binds in theory and breaks on the first ordinary day.
+ *
+ * The largest gap rather than an average, because a budget set to the typical move is a budget
+ * that fails on the atypical one. With a handful of samples there is no percentile worth taking.
+ */
+export function volatilityBudget(rates, { minBps = 100n, maxBps = 1000n } = {}) {
+    const clean = (rates ?? []).map((r) => BigInt(r)).filter((r) => r > 0n);
+    if (clean.length < 2) {
+        return { bps: minBps, samples: clean.length, reason: 'not enough settled trades to measure; using the floor' };
+    }
+
+    let worst = 0n;
+    for (let i = 1; i < clean.length; i++) {
+        const prev = clean[i - 1];
+        const now = clean[i];
+        const gap = now > prev ? now - prev : prev - now;
+        const bps = (gap * 10_000n) / prev;
+        if (bps > worst) worst = bps;
+    }
+
+    if (worst < minBps) {
+        return { bps: minBps, samples: clean.length, observedBps: worst, reason: `moved ${worst}bps at most; holding the ${minBps}bps floor` };
+    }
+    if (worst > maxBps) {
+        return { bps: maxBps, samples: clean.length, observedBps: worst, reason: `moved ${worst}bps, past the ${maxBps}bps ceiling` };
+    }
+    return { bps: worst, samples: clean.length, observedBps: worst, reason: `widest gap between settled trades was ${worst}bps` };
+}
+
 export function decideMandate({ reserveA, reserveB, slippageBps = 200n, capBps = 1000n, feeBps = 30_000n }) {
     if (reserveA <= 0n || reserveB <= 0n) throw new Error('a position with an empty side has no spot price');
     if (slippageBps >= 10_000n) throw new Error('a slippage budget of 100% is not a floor');

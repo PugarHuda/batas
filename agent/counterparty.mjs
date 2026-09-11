@@ -26,6 +26,7 @@ import { sepolia } from 'viem/chains';
 
 import { payForExplanation, latestProgramOnChain } from './inspect.mjs';
 import { ROUTER, TOKEN_A, TOKEN_B } from './deployment.mjs';
+import { feedbackFromTrade, giveFeedback, readReputation } from './reputation.mjs';
 
 const ORIGIN = process.env.BATAS_SERVICE_URL?.replace(/\/v1\/.*$/, '') || 'https://batas-one.vercel.app';
 
@@ -192,7 +193,7 @@ async function main() {
         console.log('  the terms are sound, the grant has been standing, and the name still holds.');
         console.log('\n  not paying: nothing is left that the operator\'s identity would change.');
         console.log('  run with --paranoid to buy the full answer anyway.');
-        await act();
+        await act({ floorRateE18: m.minRateE18, feedbackURI: pub.mirror });
         return;
     }
 
@@ -217,7 +218,7 @@ async function main() {
     console.log('');
     if (operator?.check?.vouched) {
         console.log('  the identity operating this position is held by the address that granted it.');
-        await act();
+        await act({ floorRateE18: m.minRateE18, feedbackURI: pub.mirror, agentId: operator?.agentId });
     } else {
         console.log('  the identity does not vouch for the maker. declining, and the tenth of a cent');
         console.log('  that established it was the cheapest part of this decision.');
@@ -236,7 +237,7 @@ async function main() {
  * with the maker's key is the maker, and a demonstration of two agents that shares one wallet is a
  * demonstration of one. Without `BATAS_COUNTERPARTY_KEY` it advises and says so.
  */
-async function act() {
+async function act({ floorRateE18, feedbackURI, agentId } = {}) {
     if (!process.argv.includes('--trade')) {
         console.log('  it would trade. run with --trade to let it.');
         return;
@@ -294,6 +295,48 @@ async function act() {
     say('received', `${formatUnits(after - before, 18)} B`);
     say('status', `${receipt.status}  https://sepolia.etherscan.io/tx/${hash}`);
     console.log('\n  the mandate priced that trade, and would have refused a different one.');
+
+    await review({ account, received: after - before, amountIn, floorRateE18, feedbackURI, agentId });
+}
+
+/**
+ * Say so on chain, in ERC-8004's reputation registry.
+ *
+ * The registry refuses feedback from the agent's own owner or operators, which is the property that
+ * makes any of it worth reading — and the reason this could not exist until the counterparty had a
+ * wallet of its own. A maker praising their own agent is not a reputation system.
+ *
+ * What gets written is not a rating. It is how far above its advertised floor the trade actually
+ * settled, in basis points, with the Hedera publication record as the URI: two numbers both parties
+ * hold and a pointer to the evidence, so a reader can redo the arithmetic instead of trusting it.
+ */
+async function review({ account, received, amountIn, floorRateE18, feedbackURI, agentId }) {
+    if (!floorRateE18) {
+        console.log('  no floor to score the trade against; leaving no feedback.');
+        return;
+    }
+    const settledRateE18 = (received * 10n ** 18n) / amountIn;
+    const score = feedbackFromTrade({ settledRateE18, floorRateE18 });
+
+    console.log(`\n  leaving feedback: ${score.bps}bps above the floor, tagged ${score.tag2}`);
+    try {
+        const written = await giveFeedback({
+            ...(agentId ? { agentId } : {}),
+            value: score.value,
+            valueDecimals: score.valueDecimals,
+            tag1: score.tag1,
+            tag2: score.tag2,
+            endpoint: ORIGIN,
+            feedbackURI: feedbackURI ?? '',
+        });
+        say('feedback', `${written.status}  https://sepolia.etherscan.io/tx/${written.hash}`);
+        const now = await readReputation(agentId);
+        say('reputation', `${now.count} client(s), summary ${now.summaryValue}`);
+    } catch (e) {
+        // The trade happened. Failing to review it is a smaller thing than pretending the trade
+        // did not settle, so it is reported and the run stands.
+        console.log(`  could not leave feedback: ${String(e.shortMessage ?? e.message ?? e)}`);
+    }
 }
 
 if (import.meta.filename === process.argv[1]) {

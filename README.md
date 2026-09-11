@@ -673,9 +673,31 @@ encoding check
   agree
 ```
 
-Every number is read from the chain. The spot price is derived from the reserves Aqua reports, the
-floor is one slippage budget under it, and the cap is a slice of the reserve — which is what
-actually bounds how far one trade can walk the price.
+Every number is read from the chain, including the slippage budget — which used to be 2% because
+somebody typed 2%.
+
+That number decides what the mandate refuses: too tight refuses every real trade, too loose
+protects nothing. `volatilityBudget` reads the position's settled trades out of the router's
+`Swapped` logs and takes the **widest gap between consecutive settlements**, clamped to 100-1000bps.
+
+Be precise about what that measures, because the obvious reading is wrong. These are not
+mid-prices: each rate is what a trade actually got, which already includes the slippage its own
+size caused. What it measures is how far the price has moved between one settlement and the next
+*at this position*, in practice, including the moving done by the trades themselves — which happens
+to be exactly the quantity a floor has to survive. The widest gap rather than the average, because
+a budget set to the typical move fails on the atypical one, and with a handful of samples there is
+no percentile worth taking. A position with no history gets the 100bps floor, and the report says
+which it got:
+
+```
+decision
+  budget 108bps from 2 settled trade(s) - widest gap between settled trades was 108bps
+  floor  1.935646207168143268 B per A  (1.08% under spot)
+  cap    7.995884134408887803 A  (0.79% of reserve, the largest trade that still clears the floor)
+```
+
+The floor is one budget under the spot the reserves imply, and the cap is derived from the floor -
+which is what actually bounds how far one trade can walk the price.
 
 The **encoding check** is the part worth pausing on. The agent assembles the instruction stream
 itself, byte by byte, then asks the deployed router to hash the resulting order. If a single
@@ -846,6 +868,58 @@ mandates   https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/mess
 The third one matters most. A reader who trusts neither this repository nor the paid endpoint can
 still check any grant this agent made, on a mirror node that is public, unauthenticated, and not
 ours. Identity leads to ledger; ledger holds the terms.
+
+### And what anyone who traded here says about it
+
+The identity registry answers *who is operating this position*. It cannot answer whether anyone has
+traded against them and been treated well, and this project used one third of a standard whose
+other two thirds are the part about trust.
+
+ERC-8004's **reputation registry** is at
+[`0x8004B663056A597D…`](https://sepolia.etherscan.io/address/0x8004B663056A597Dffe9eCcC1965A193B7388713),
+and `getIdentityRegistry()` on it answers with the identity registry above — which is what actually
+establishes the two are one deployment rather than two that happen to share a prefix. That check
+was not ceremony: the addresses circulating for these include one beginning `0x8004B663056e9e57`,
+which this document already warns about by name. The live one begins `0x8004B663056A597D`. Twelve
+identical characters, then a different address.
+
+```bash
+npm run reputation 10123
+node agent/counterparty.mjs --paranoid --trade    # trade, then say so on chain
+```
+
+The registry refuses feedback from the agent's own owner or operators:
+
+```solidity
+require(!isAuthorizedOrOwner(msg.sender, agentId), "Self-feedback not allowed");
+```
+
+which is the property that makes any of it worth reading, and the reason this only became possible
+once the counterparty had a wallet of its own. A maker praising their own agent is not a reputation
+system, and the contract says so.
+
+What gets written is not a rating. A star count about an autonomous market maker means nothing and
+can be checked by nobody. The counterparty records **how far above its advertised floor the trade
+actually settled**, in basis points, with the Hedera publication record as the feedback URI: two
+numbers both parties hold and a pointer to the evidence, so a reader redoes the arithmetic instead
+of trusting it.
+
+```
+  traded        1 A in
+  received      1.948987088535167759 B
+  leaving feedback: 143bps above the floor, tagged floor-honoured
+  feedback      success  0xc713d938…
+  reputation    1 client(s), summary 143
+```
+
+A trade settled exactly on the floor scores zero — the mandate was honoured and nothing was given
+away beyond it — and a negative score is representable on purpose. The contracts refuse a breach,
+so a negative reading is not a complaint about service; it is a claim that the enforcement failed,
+and a registry that could only carry good news would be worth nothing.
+
+The **validation registry** is deliberately absent. The canonical repository lists none for Sepolia
+— it is "still under active update and discussion with the TEE community" — and naming an address
+for it would be inventing a deployment.
 
 > Two addresses circulate for these registries. The ones in most write-ups —
 > `0x8004A169…` and `0x8004BAa1…` — hold code on **mainnet only** and are empty on Sepolia. The
@@ -1095,6 +1169,7 @@ have given away the decode, the publication lookup and the authority check since
 | `POST /v1/mandate/decode` | what a program permits | `read_mandate` |
 | `POST /v1/mandate/publication` | when those exact bytes became public | `check_publication` |
 | `GET /v1/agent/authority` | whether the ENSv2 name still holds, and if not, lapsed or revoked | `check_agent_authority` |
+| `GET /v1/agent/reputation` | what clients have said, from ERC-8004 | — |
 
 All six of those call `agent/free.mjs` rather than each implementing the question. Two encoders for
 one format is how this project once shipped mandates with no expiry, and two answers to one
@@ -1309,7 +1384,7 @@ can move even if the assertion is wrong, and CI needs no secret to run it.
 
 ```
 forge test          45 passing
-npm run test:js    171 passing
+npm run test:js    184 passing
 npm run test:api    19 passing
 npm run test:prod    5 passing
 ```

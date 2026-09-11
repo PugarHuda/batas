@@ -241,6 +241,7 @@ test('the description lists what is free and what is paid', async ({ request }) 
         'POST /v1/mandate/decode',
         'POST /v1/mandate/publication',
         'GET /v1/agent/authority',
+        'GET /v1/agent/reputation',
     ]);
     expect(body.endpoint).toBe('POST /v1/mandate/explain');
 });

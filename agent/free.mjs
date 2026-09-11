@@ -18,7 +18,8 @@ import { explain, decodeProgram, readMandate } from './swapvm.mjs';
 import { lookupMandate } from './hcs.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { latestProgramOnChain, programFromStrategy } from './inspect.mjs';
-import { OWNER, ENS_REGISTRY, MANDATE_NAME, HCS_TOPIC } from './deployment.mjs';
+import { readReputation } from './reputation.mjs';
+import { OWNER, ENS_REGISTRY, MANDATE_NAME, HCS_TOPIC, AGENT_ID } from './deployment.mjs';
 
 const HEX = /^0x[0-9a-fA-F]*$/;
 
@@ -100,4 +101,15 @@ export async function authorityAnswer({ label, grantedUntil } = {}) {
         grantedUntil: until,
     });
     return { label: name, registry: getAddress(ENS_REGISTRY), ...status };
+}
+
+/**
+ * What clients have said about the agent, from ERC-8004's reputation registry.
+ *
+ * Free like the other three, and for the same reason: a caller can read the registry themselves.
+ * What it adds to the paid answer is that it arrives joined to everything else about the position
+ * rather than as a separate errand.
+ */
+export async function reputationAnswer({ agentId } = {}) {
+    return readReputation(agentId || AGENT_ID);
 }

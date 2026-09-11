@@ -18,7 +18,7 @@ import {
     keccak256, concat, formatUnits, getAddress,
 } from 'viem';
 
-import { toProgram, decideMandate, decodeProgram, readMandate } from './swapvm.mjs';
+import { toProgram, decideMandate, decodeProgram, readMandate, volatilityBudget } from './swapvm.mjs';
 import { programFromStrategy } from './inspect.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { publishMandate } from './hcs.mjs';
@@ -182,6 +182,40 @@ async function tick({ watching = false, mayShip = true } = {}) {
     console.log(`  hash   ${strategyHash}`);
     console.log(`  block  ${latest.blockNumber}`);
 
+    // What this position's price has actually done, for the floor to be derived from rather than
+    // typed. `Swapped` indexes nothing either, so it is fetched and sifted here the same way.
+    const swappedEvent = {
+        type: 'event', name: 'Swapped',
+        inputs: [
+            { name: 'orderHash', type: 'bytes32' },
+            { name: 'maker', type: 'address' },
+            { name: 'taker', type: 'address' },
+            { name: 'tokenIn', type: 'address' },
+            { name: 'tokenOut', type: 'address' },
+            { name: 'amountIn', type: 'uint256' },
+            { name: 'amountOut', type: 'uint256' },
+        ],
+    };
+    const settledRates = [];
+    try {
+        const since = head > MAX_LOOKBACK ? head - MAX_LOOKBACK : 0n;
+        for (let to = head; to > since; ) {
+            const from = to > WINDOW ? to - WINDOW : 0n;
+            const batch = await pub.getLogs({ address: ROUTER, event: swappedEvent, fromBlock: from, toBlock: to });
+            for (const l of batch) {
+                if (l.args.maker?.toLowerCase() !== account.address.toLowerCase()) continue;
+                if (!l.args.amountIn || l.args.amountIn === 0n) continue;
+                settledRates.push({ block: l.blockNumber, rate: (l.args.amountOut * E18) / l.args.amountIn });
+            }
+            to = from - 1n;
+            if (from === 0n) break;
+        }
+    } catch {
+        // History is an input to a better number, not a precondition for acting. A node that will
+        // not serve the range leaves the budget at its floor rather than stopping the agent.
+    }
+    settledRates.sort((a, b) => (a.block < b.block ? -1 : 1));
+
     const [reserveA, reserveB] = await pub.readContract({
         address: AQUA, abi: AQUA_ABI, functionName: 'safeBalances',
         args: [account.address, ROUTER, strategyHash, TOKEN_A, TOKEN_B],
@@ -230,7 +264,8 @@ async function tick({ watching = false, mayShip = true } = {}) {
 
     // The floor sits one slippage budget under spot; the cap is a slice of the reserve, which is
     // what actually bounds how far a single trade can walk the price.
-    const SLIPPAGE_BPS = 200n; // 2%
+    const budget = volatilityBudget(settledRates.map((r) => r.rate));
+    const SLIPPAGE_BPS = budget.bps;
     // A ceiling, not the cap. The real limit comes out of the slippage budget: on a constant
     // product curve a floor and a size cap are the same constraint stated twice, so the cap is
     // derived rather than guessed beside it.
@@ -242,6 +277,7 @@ async function tick({ watching = false, mayShip = true } = {}) {
     });
 
     console.log('\ndecision');
+    console.log(`  budget ${SLIPPAGE_BPS}bps from ${budget.samples} settled trade(s) — ${budget.reason}`);
     console.log(`  floor  ${formatUnits(minRateE18, 18)} B per A  (${pct(SLIPPAGE_BPS, 10000n)}% under spot)`);
     console.log(
         `  cap    ${formatUnits(maxAmountIn, 18)} A  (${pct((maxAmountIn * 10_000n) / reserveA, 10_000n)}% of reserve,`
