@@ -100,7 +100,7 @@ The form allows up to three. These are the three the project is actually built o
 | Public repo with README | yes |
 | Demo video ≤5 min | the 2–4 min video below satisfies both this and ETHGlobal's limit |
 | *Bonus:* pay-per-call metering | the endpoint charges per call, not per subscription |
-| *Bonus:* ERC-8004 agent identity | agent #10123, and the paid answer says whether it vouches |
+| *Bonus:* ERC-8004 agent identity | agent #10123 in the identity registry, **and** client feedback in the reputation registry — `143bps above the floor`, written by the counterparty, which the contract will not let the agent write about itself |
 | *Bonus:* HCS audit trail | topic `0.0.10394165`, publicly readable with no account |
 
 Not claimed: HTS tokens (payment is in HBAR on purpose — an HTS token must be associated with an
@@ -218,7 +218,9 @@ node agent/counterparty.mjs --paranoid
 > Hedera Consensus Service, does the name still hold. A position it does not like costs it nothing
 > to refuse. Here everything checks out, so it settles a tenth of a cent over x402 for the one thing
 > left — who is operating this, and whether their ERC-8004 identity is held by the address that
-> granted the mandate. It is. It trades.
+> granted the mandate. It is. It trades — one token in, one point nine five out — and then writes
+> what it saw into ERC-8004's reputation registry: a hundred and forty-three basis points above the
+> floor the mandate advertised. The registry will not let the agent say that about itself.
 
 **3:20–3:45 — close**
 
