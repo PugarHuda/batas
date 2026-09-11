@@ -6,6 +6,8 @@
 //
 //   node agent/batas-agent.mjs            observe and decide, no transaction
 //   node agent/batas-agent.mjs --ship     also ship the mandate it decided on
+//   node agent/batas-agent.mjs --watch    keep running it: re-check authority, renew near expiry
+//   node agent/batas-agent.mjs --watch --ship --interval 60 --max-ships 2
 //
 // The agent chooses within bounds it cannot widen: the floor price it proposes is derived from the
 // spot it observed, and whatever it proposes is enforced by PolicyEnvelope inside the VM. That is
@@ -100,8 +102,30 @@ const encodeOrder = (order) =>
 
 const pct = (n, d) => (d === 0n ? '0' : (Number((n * 10000n) / d) / 100).toFixed(2));
 
-async function main() {
-    const shipIt = process.argv.includes('--ship');
+/**
+ * Should this mandate be replaced yet?
+ *
+ * Pure, exported and deliberately narrow. The agent renews on *time* and on nothing else: a
+ * mandate approaching its deadline is about to stop authorising anything, and re-granting is the
+ * only way the position keeps working. It does not renew because the price moved, and that is a
+ * decision rather than an omission — re-shipping burns a strategy hash and writes new terms, so an
+ * agent that did it whenever spot drifted would be rewriting its own limits as a matter of routine,
+ * which is the one thing this project exists to prevent it doing.
+ */
+export function renewalDecision({ expiry, now = Math.floor(Date.now() / 1000), renewBeforeSeconds = 3600 }) {
+    if (expiry === null || expiry === undefined) {
+        return { act: true, reason: 'the live mandate carries no deadline; granting one that does' };
+    }
+    const left = Number(expiry) - now;
+    if (left <= 0) return { act: true, reason: `the mandate expired ${-left}s ago` };
+    if (left <= renewBeforeSeconds) {
+        return { act: true, reason: `${left}s left, inside the ${renewBeforeSeconds}s renewal window` };
+    }
+    return { act: false, reason: `${Math.floor(left / 3600)}h left; nothing to do` };
+}
+
+async function tick({ watching = false, mayShip = true } = {}) {
+    const shipIt = process.argv.includes('--ship') && mayShip;
     const key = process.env.SEPOLIA_PRIVATE_KEY;
     if (!key) throw new Error('SEPOLIA_PRIVATE_KEY missing; copy .env.example to .env');
 
@@ -169,6 +193,7 @@ async function main() {
     // ends the agent's authority without touching the position or spending anything on chain. An
     // agent that does not consult it turns that control into decoration, so the check runs before
     // the transaction rather than after.
+    let liveExpiry = null;
     const ensRegistry = ENS_REGISTRY;
     if (ensRegistry) {
         const label = MANDATE_NAME;
@@ -179,13 +204,17 @@ async function main() {
         try {
             grantedUntil = readMandate(decodeProgram(programFromStrategy(latest.args.strategy))).expiry ?? undefined;
         } catch { /* an undecodable strategy is not a reason to skip the authority check */ }
+        liveExpiry = grantedUntil ?? null;
         const status = await mandateNameStatus(pub, getAddress(ensRegistry), label, account.address, { grantedUntil });
         console.log('');
         console.log(`mandate name "${label}": ${status.reason}`);
         if (!status.valid) {
             console.error('refusing to act without a valid mandate name');
-            process.exitCode = 1;
-            return;
+            // In a watch the loop keeps running: the owner may hand the authority back, and an
+            // agent that exited on revocation would have to be restarted by the person who just
+            // demonstrated they can stop it remotely. Outside a watch it is a failed run.
+            if (!watching) process.exitCode = 1;
+            return { shipped: false, stopped: 'authority', reason: status.reason };
         }
         console.log(`  ${Math.floor(status.secondsLeft / 60)} minutes of authority left`);
     } else {
@@ -260,9 +289,20 @@ async function main() {
     console.log(`  chain  ${chainHash}`);
     console.log(`  ${agrees ? 'agree' : 'DISAGREE, refusing to ship'}`);
     if (!agrees) process.exitCode = 1;
-    if (!agrees || !shipIt) {
-        if (agrees && !shipIt) console.log('\nrun again with --ship to grant this mandate');
-        return;
+    if (!agrees) return { shipped: false, stopped: 'encoding' };
+
+    // In a watch, wanting to ship is not the same as it being time to.
+    const due = renewalDecision({ expiry: liveExpiry, renewBeforeSeconds: RENEW_BEFORE });
+    if (watching) {
+        console.log(`\nrenewal  ${due.reason}`);
+        if (!due.act) return { shipped: false, reason: due.reason };
+    }
+
+    if (!shipIt) {
+        console.log(mayShip
+            ? '\nrun again with --ship to grant this mandate'
+            : '\nship budget for this watch is spent; observing only');
+        return { shipped: false, reason: 'not shipping' };
     }
 
     // 5. Act.
@@ -304,8 +344,59 @@ async function main() {
         // The mandate is granted either way; say the publication failed rather than implying the
         // record exists.
         console.error(`\nHCS publication failed: ${String(e.message || e)}`);
-        process.exitCode = 1;
+        if (!watching) process.exitCode = 1;
     }
+
+    return { shipped: true };
+}
+
+const argValue = (flag, fallback) => {
+    const i = process.argv.indexOf(flag);
+    return i === -1 ? fallback : process.argv[i + 1];
+};
+
+const RENEW_BEFORE = Number(process.env.BATAS_RENEW_BEFORE_SECONDS || argValue('--renew-before', 3600));
+
+/**
+ * The part that makes "an agent runs your position" true rather than aspirational.
+ *
+ * Until this existed the agent was a command: it observed, decided, shipped and exited, and the
+ * word autonomous was carrying a claim one invocation cannot support. A position is run over time —
+ * the mandate approaches its deadline, the owner takes the name back and later hands it over again
+ * — and none of that was anything this program could see.
+ *
+ * Three guards, because a loop that sends transactions needs them. It ships only inside the renewal
+ * window, never more than `--max-ships` times in one run, and the interval has a floor: an agent
+ * polling two chains every second is not attentive, it is a denial of service with good intentions.
+ */
+async function watch() {
+    const interval = Math.max(30, Number(argValue('--interval', 300)));
+    const budget = Number(argValue('--max-ships', 3));
+    const willShip = process.argv.includes('--ship');
+    console.log(`watching every ${interval}s; renewing inside ${RENEW_BEFORE}s of expiry`);
+    console.log(willShip ? `ship budget ${budget}` : 'observing only; add --ship to let it act');
+
+    let shipped = 0;
+    for (let round = 1; ; round++) {
+        console.log(`\n${'='.repeat(68)}\n${new Date().toISOString()}  round ${round}\n${'='.repeat(68)}`);
+        try {
+            const result = await tick({ watching: true, mayShip: shipped < budget });
+            if (result?.shipped) {
+                shipped += 1;
+                console.log(`\nships used ${shipped}/${budget}`);
+            }
+        } catch (e) {
+            // A failed round is a bad minute, not a reason to stop running the position. The next
+            // one re-reads everything from the chain, so nothing carries over from this one.
+            console.error(`round ${round} failed: ${String(e.shortMessage || e.message || e)}`);
+        }
+        await new Promise((r) => setTimeout(r, interval * 1000));
+    }
+}
+
+async function main() {
+    if (process.argv.includes('--watch')) return watch();
+    await tick();
 }
 
 // Only run when invoked directly. Importing this file — a test does, and so could any other

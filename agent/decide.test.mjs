@@ -143,3 +143,48 @@ test('whatever cap comes back always clears its own floor', () => {
         }
     }
 });
+
+// --- when to renew, which is the only thing the watch acts on ------------------
+
+test('a mandate with time left is left alone', async () => {
+    const { renewalDecision } = await import('./batas-agent.mjs');
+    const now = 1_789_000_000;
+    const d = renewalDecision({ expiry: now + 10 * 3600, now, renewBeforeSeconds: 3600 });
+    assert.equal(d.act, false);
+    assert.match(d.reason, /10h left/);
+});
+
+test('a mandate inside the renewal window is renewed, and says by how much', async () => {
+    const { renewalDecision } = await import('./batas-agent.mjs');
+    const now = 1_789_000_000;
+    const d = renewalDecision({ expiry: now + 600, now, renewBeforeSeconds: 3600 });
+    assert.equal(d.act, true);
+    assert.match(d.reason, /600s left/);
+});
+
+test('the window is a boundary, not a range', async () => {
+    const { renewalDecision } = await import('./batas-agent.mjs');
+    const now = 1_789_000_000;
+    assert.equal(renewalDecision({ expiry: now + 3600, now, renewBeforeSeconds: 3600 }).act, true);
+    assert.equal(renewalDecision({ expiry: now + 3601, now, renewBeforeSeconds: 3600 }).act, false);
+});
+
+test('an expired mandate is renewed and reported as expired, not as nearly expired', async () => {
+    const { renewalDecision } = await import('./batas-agent.mjs');
+    const now = 1_789_000_000;
+    const d = renewalDecision({ expiry: now - 120, now, renewBeforeSeconds: 3600 });
+    assert.equal(d.act, true);
+    assert.match(d.reason, /expired 120s ago/);
+});
+
+test('a live mandate with no deadline at all is replaced with one that has', async () => {
+    // The shape the project has already been bitten by: a program that decodes cleanly, grants
+    // authority, and never ends. A watch that read "no expiry" as "not due yet" would keep it
+    // alive forever, which is the opposite of what the field is for.
+    const { renewalDecision } = await import('./batas-agent.mjs');
+    for (const expiry of [null, undefined]) {
+        const d = renewalDecision({ expiry, now: 1_789_000_000 });
+        assert.equal(d.act, true, `expiry ${expiry} must be acted on`);
+        assert.match(d.reason, /carries no deadline/);
+    }
+});

@@ -3,6 +3,7 @@
 //   node agent/counterparty.mjs                 decide about the live position
 //   node agent/counterparty.mjs --program 0x…   decide about a program you were handed
 //   node agent/counterparty.mjs --paranoid      insist on knowing the operator, and pay for it
+//   node agent/counterparty.mjs --trade         and act on the verdict: actually take the trade
 //
 // Everything else in this repository is the maker's side: an agent that runs a position under terms
 // it cannot exceed. This is the counterparty — a different agent, with its own money and its own
@@ -19,8 +20,12 @@
 // from the host's own `/.well-known/x402` manifest, the way an indexer or a stranger's agent would.
 
 import 'dotenv/config';
+import { createPublicClient, createWalletClient, http, formatUnits, decodeAbiParameters, parseAbiParameters, getAddress } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { sepolia } from 'viem/chains';
 
-import { payForExplanation } from './inspect.mjs';
+import { payForExplanation, latestProgramOnChain } from './inspect.mjs';
+import { ROUTER, TOKEN_A, TOKEN_B } from './deployment.mjs';
 
 const ORIGIN = process.env.BATAS_SERVICE_URL?.replace(/\/v1\/.*$/, '') || 'https://batas-one.vercel.app';
 
@@ -69,6 +74,31 @@ export function doubtsAbout({ decoded, publication, authority }, policy = POLICY
     }
     return doubts;
 }
+
+const SWAP_ABI = [
+    {
+        name: 'swap', type: 'function', stateMutability: 'payable',
+        inputs: [
+            { name: 'order', type: 'tuple', components: [
+                { name: 'maker', type: 'address' }, { name: 'traits', type: 'uint256' }, { name: 'data', type: 'bytes' },
+            ] },
+            { name: 'amount', type: 'uint256' },
+            { name: 'takerData', type: 'bytes' },
+        ],
+        outputs: [{ type: 'uint256' }, { type: 'uint256' }, { type: 'bytes32' }],
+    },
+];
+const ERC20_ABI = [
+    { name: 'approve', type: 'function', stateMutability: 'nonpayable', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [{ type: 'bool' }] },
+    { name: 'balanceOf', type: 'function', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'uint256' }] },
+    { name: 'mint', type: 'function', stateMutability: 'nonpayable', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [] },
+];
+
+// The plainest taker data there is: exactIn, no threshold, recipient equal to the taker, no hooks.
+// `TakerTraitsLib.build` lays that out as ten zero slice indexes followed by the flag word, and
+// 0x00e1 is exactIn | firstTransferFromTaker | transferFromAndAquaPush | aToB. Hand-packed only
+// because it is degenerate; anything with a slice in it belongs in the Solidity builder.
+const TAKER_DATA = `0x${'00'.repeat(20)}00e1`;
 
 const say = (label, value) => console.log(`  ${label.padEnd(14)}${value}`);
 const head = (n, title) => console.log(`\n${n}. ${title}\n${'─'.repeat(60)}`);
@@ -162,6 +192,7 @@ async function main() {
         console.log('  the terms are sound, the grant has been standing, and the name still holds.');
         console.log('\n  not paying: nothing is left that the operator\'s identity would change.');
         console.log('  run with --paranoid to buy the full answer anyway.');
+        await act();
         return;
     }
 
@@ -186,12 +217,83 @@ async function main() {
     console.log('');
     if (operator?.check?.vouched) {
         console.log('  the identity operating this position is held by the address that granted it.');
-        console.log('  trading against it.');
+        await act();
     } else {
         console.log('  the identity does not vouch for the maker. declining, and the tenth of a cent');
         console.log('  that established it was the cheapest part of this decision.');
         process.exitCode = 1;
     }
+}
+
+/**
+ * Act on the verdict, or say plainly that it is not going to.
+ *
+ * This used to print "trading against it." and exit, which was a stub wearing the words of a
+ * decision. Everything before it was real — the discovery, the three reads, a settled payment — and
+ * then the agent that had just decided to trade did not trade.
+ *
+ * It needs its own key, and that is the point rather than an inconvenience: a counterparty signing
+ * with the maker's key is the maker, and a demonstration of two agents that shares one wallet is a
+ * demonstration of one. Without `BATAS_COUNTERPARTY_KEY` it advises and says so.
+ */
+async function act() {
+    if (!process.argv.includes('--trade')) {
+        console.log('  it would trade. run with --trade to let it.');
+        return;
+    }
+    const key = process.env.BATAS_COUNTERPARTY_KEY;
+    if (!key) {
+        console.log('  advising only: set BATAS_COUNTERPARTY_KEY to let this agent act on its verdict.');
+        console.log("  a counterparty signing with the maker's key would be the maker.");
+        return;
+    }
+
+    const account = privateKeyToAccount(key);
+    const transport = http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com');
+    const pub = createPublicClient({ chain: sepolia, transport });
+    const wallet = createWalletClient({ account, chain: sepolia, transport });
+
+    const shipped = await latestProgramOnChain();
+    if (!shipped) throw new Error('the position went away between deciding and acting');
+    const [order] = decodeAbiParameters(
+        parseAbiParameters('(address maker, uint256 traits, bytes data)'),
+        shipped.strategy,
+    );
+
+    const amountIn = 10n ** 18n;
+    console.log(`\n  acting as ${account.address}`);
+
+    // No minting. The first version tried, and `TokenMock.mint` is owner-only — it reverted with
+    // `OwnableUnauthorizedAccount`, which was the contract making the right point: these are the
+    // maker's tokens, and a counterparty that could conjure the input side would not be a
+    // counterparty. It arrives with its own inventory or it does not trade.
+    const held = await pub.readContract({ address: TOKEN_A, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
+    if (held < amountIn) {
+        console.log(`  holds     ${formatUnits(held, 18)} A, needs ${formatUnits(amountIn, 18)}`);
+        console.log('  not trading: a counterparty brings its own side of the trade.');
+        console.log('  for the demo, have the maker send this address some tokenA first.');
+        return;
+    }
+    say('holds', `${formatUnits(held, 18)} A`);
+
+    // The router, not Aqua: `useTransferFromAndAquaPush` means the router pulls the input from the
+    // taker and pushes it to Aqua itself.
+    const approve = await wallet.writeContract({ address: TOKEN_A, abi: ERC20_ABI, functionName: 'approve', args: [getAddress(ROUTER), amountIn * 10n] });
+    await pub.waitForTransactionReceipt({ hash: approve });
+
+    const before = await pub.readContract({ address: TOKEN_B, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
+    const { request } = await pub.simulateContract({
+        account, address: getAddress(ROUTER), abi: SWAP_ABI, functionName: 'swap',
+        args: [order, amountIn, TAKER_DATA],
+    });
+    const hash = await wallet.writeContract(request);
+    const receipt = await pub.waitForTransactionReceipt({ hash });
+    const after = await pub.readContract({ address: TOKEN_B, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
+
+    say('traded', `${formatUnits(amountIn, 18)} A in`);
+    say('received', `${formatUnits(after - before, 18)} B`);
+    say('status', `${receipt.status}  https://sepolia.etherscan.io/tx/${hash}`);
+    console.log('\n  the mandate priced that trade, and would have refused a different one.');
 }
 
 if (import.meta.filename === process.argv[1]) {

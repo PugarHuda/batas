@@ -624,7 +624,35 @@ Sepolia, decides what mandate to grant, encodes the SwapVM program itself, and s
 ```bash
 node agent/batas-agent.mjs          # observe and decide, no transaction
 node agent/batas-agent.mjs --ship   # also grant the mandate it decided on
+node agent/batas-agent.mjs --watch  # keep running it, rather than running once
 ```
+
+`--watch` is what makes *an agent runs your position* true rather than aspirational. Until it
+existed this was a command: it observed, decided, shipped and exited, and the word autonomous was
+carrying a claim one invocation cannot support. A position is run over time — the mandate
+approaches its deadline, the owner takes the name back and later hands it over again — and none of
+that was anything the program could see.
+
+```
+watching every 300s; renewing inside 3600s of expiry
+observing only; add --ship to let it act
+...
+renewal  706h left; nothing to do
+```
+
+It renews on **time and nothing else**. Not because the price moved — that is a decision rather
+than an omission, since re-shipping burns a strategy hash and writes new terms, so an agent that
+re-granted whenever spot drifted would be rewriting its own limits as a matter of routine, which is
+the one thing this project exists to prevent it doing. `renewalDecision` is pure and pinned by
+test, including that a live mandate carrying *no* deadline is replaced rather than read as "not due
+yet".
+
+Three guards, because a loop that sends transactions needs them: it ships only inside the renewal
+window, never more than `--max-ships` times in one run, and the interval has a floor of 30 seconds
+— an agent polling two chains every second is not attentive, it is a denial of service with good
+intentions. A revoked name stops it acting without stopping the loop, because an agent that exited
+on revocation would have to be restarted by the person who just demonstrated they can stop it
+remotely.
 
 A real run against the deployed position:
 
@@ -1014,6 +1042,22 @@ free evidence is good and a real doubt remains does it spend anything:
   trading against it.
 ```
 
+And it acts on the verdict rather than announcing one. With `--trade` and its own key it takes the
+trade it just decided was worth taking — live on Sepolia, from
+[`0x1437aF57…`](https://sepolia.etherscan.io/address/0x1437aF5722D5Dfe6BAEda25f3A7A39aeCA374614),
+one tokenA in for **1.952840679837944719 tokenB** out:
+[`0xaf84a929…`](https://sepolia.etherscan.io/tx/0xaf84a929680c9f3d585a8807b3bec57cfa46722c33e814649967c99d6ecdfeb2).
+
+Its own key, and that is the point rather than an inconvenience: a counterparty signing with the
+maker's key is the maker, and a demonstration of two agents that shares one wallet is a
+demonstration of one. Without `BATAS_COUNTERPARTY_KEY` it reaches the verdict and says it is
+advising only.
+
+It does not mint its input either. The first version tried, and `TokenMock.mint` is owner-only — it
+reverted with `OwnableUnauthorizedAccount`, which was the contract making the right point. Those are
+the maker's tokens, and a counterparty that could conjure the input side of a trade would not be a
+counterparty. It arrives with its own inventory or it does not trade.
+
 The rules are the counterparty's, not this project's — `POLICY` is six lines at the top of the
 file, and a counterparty that does not insist on a kill switch is making a different bet and gets a
 different answer rather than an argument. `doubtsAbout` is pure and separate from the three fetches
@@ -1265,7 +1309,7 @@ can move even if the assertion is wrong, and CI needs no secret to run it.
 
 ```
 forge test          45 passing
-npm run test:js    166 passing
+npm run test:js    171 passing
 npm run test:api    19 passing
 npm run test:prod    5 passing
 ```
