@@ -20,10 +20,13 @@ import { AQUA, ROUTER, OWNER, AGENT_ID } from './deployment.mjs';
 const SERVICE = process.env.BATAS_SERVICE_URL || 'http://localhost:4021';
 
 /** Pull the newest program this owner shipped to the router, straight out of Aqua's event log. */
-export async function latestProgramOnChain() {
+export async function latestProgramOnChain({ client } = {}) {
     const owner = OWNER;
 
-    const pub = createPublicClient({
+    // Injectable for the same reason `resolveAgent` is: the interesting branch here is the one
+    // where the scan gives up, and reaching it against a real chain would mean waiting for sixty
+    // thousand empty blocks to go by.
+    const pub = client ?? createPublicClient({
         chain: sepolia,
         transport: http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
     });
@@ -41,7 +44,13 @@ export async function latestProgramOnChain() {
     };
 
     const head = await pub.getBlockNumber();
-    for (let to = head, scanned = 0n; scanned < 60_000n && to > 0n; ) {
+    const WINDOW = 60_000n;
+    let exhausted = false;
+    for (let to = head, scanned = 0n; to > 0n; ) {
+        if (scanned >= WINDOW) {
+            exhausted = true;
+            break;
+        }
         const from = to > 9_000n ? to - 9_000n : 0n;
         const batch = await pub.getLogs({ address: AQUA, event: shipped, fromBlock: from, toBlock: to });
         const mine = batch.filter(
@@ -55,6 +64,27 @@ export async function latestProgramOnChain() {
         }
         scanned += to - from;
         to = from - 1n;
+    }
+
+    // Nothing found — and which "nothing" this is matters.
+    //
+    // `Shipped` indexes none of its parameters, so a node cannot filter it and this walks the logs
+    // by hand. The walk is bounded, and until now hitting that bound returned the same `null` as
+    // searching the entire chain: every caller then said "no mandate has been shipped yet", which
+    // is a claim about the maker made out of a decision we took about how long to look.
+    //
+    // The whole chain having been searched is a finding. Sixty thousand blocks having gone by is
+    // not, so it is raised rather than returned — a caller that cannot tell them apart should be
+    // stopped rather than quietly handed the wrong one.
+    if (exhausted) {
+        const err = new Error(
+            `no position found in the last ${WINDOW} blocks from ${head}; this is where the scan `
+            + 'stopped, not where the chain does. Pass the program explicitly, or widen the window.',
+        );
+        err.scanExhausted = true;
+        err.headBlock = head;
+        err.windowBlocks = Number(WINDOW);
+        throw err;
     }
     return null;
 }

@@ -1265,7 +1265,7 @@ can move even if the assertion is wrong, and CI needs no secret to run it.
 
 ```
 forge test          45 passing
-npm run test:js    148 passing
+npm run test:js    166 passing
 npm run test:api    19 passing
 npm run test:prod    5 passing
 ```
@@ -1286,7 +1286,7 @@ npm run coverage                      # everything off chain
 
 Coverage is a question generator here, not a score. On the contracts it reported 100% of lines and
 16% of branches, which is mostly Foundry mis-attributing under `via-ir` — but asking *which reverts
-any test actually asserted* found three that none did. Off chain it sits at 74% of lines, and what
+any test actually asserted* found three that none did. Off chain it sits at 73% of lines, and what
 remains uncovered is almost entirely the paths that spend money or write to a chain: publishing to
 HCS, settling an x402 payment, granting and revoking names. Those are exercised by hand and
 recorded in this document rather than on every run, because a suite that costs HBAR to run is a

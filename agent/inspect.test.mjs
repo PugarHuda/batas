@@ -97,3 +97,34 @@ test('the strategy it returns hashes to the mandate hash it returns', async () =
     const found = await latestProgramOnChain();
     assert.equal(keccak256(found.strategy).toLowerCase(), found.strategyHash.toLowerCase());
 });
+
+test('a scan that gave up raises, rather than reporting that nothing was shipped', async () => {
+    // The distinction the whole file turns on, in its last unguarded place. `Shipped` indexes
+    // nothing, so this walks logs by hand with a bounded window — and hitting that bound used to
+    // return the same null as having searched the entire chain. Every caller then said "no mandate
+    // has been shipped yet", which is a claim about the maker assembled out of a decision we took
+    // about how long to look.
+    const { latestProgramOnChain } = await import('./inspect.mjs');
+    const nothingAnywhere = {
+        getBlockNumber: async () => 5_000_000n,
+        getLogs: async () => [],
+    };
+    await assert.rejects(
+        () => latestProgramOnChain({ client: nothingAnywhere }),
+        (e) => {
+            assert.equal(e.scanExhausted, true);
+            assert.equal(e.windowBlocks, 60000);
+            assert.match(e.message, /where the scan stopped, not where the chain does/);
+            return true;
+        },
+    );
+});
+
+test('and a chain short enough to search entirely answers null, which is a finding', async () => {
+    const { latestProgramOnChain } = await import('./inspect.mjs');
+    const shortChain = {
+        getBlockNumber: async () => 500n,
+        getLogs: async () => [],
+    };
+    assert.equal(await latestProgramOnChain({ client: shortChain }), null);
+});

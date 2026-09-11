@@ -14,6 +14,8 @@
 // No CDN, no build step, no framework. The page is a string this module returns, which is also why
 // it survives being bundled by Vercel: there is no file to find at runtime.
 
+import { asBrowserSource } from './ui-render.mjs';
+
 export function page({ origin, price, payTo, topic, facilitator, network }) {
     return `<!doctype html>
 <html lang="en">
@@ -213,12 +215,7 @@ npm run walkthrough -- --paid</pre>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-// Only an https URL becomes a link. A scheme is a capability, and one arriving in a response body
-// is not the place to hand out javascript: — even when this response is written by our own code.
-const link = (href, label) => (String(href ?? '').startsWith('https://')
-    ? '<p style="margin:.8rem 0 0"><a href="' + esc(href) + '">' + esc(label) + '</a></p>'
-    : '');
+${asBrowserSource()}
 
 async function post(path, body) {
     const res = await fetch(path, {
@@ -229,37 +226,6 @@ async function post(path, body) {
     const json = await res.json().catch(() => ({ error: 'the service answered something that was not JSON' }));
     if (!res.ok) throw new Error(json.error || ('HTTP ' + res.status));
     return json;
-}
-
-function renderMandate(a) {
-    const m = a.mandate || {};
-    const guarded = a.guarded
-        ? '<span class="tag yes">guarded</span>'
-        : '<span class="tag no">not guarded</span>';
-    // Everything the service sends back is escaped before it reaches innerHTML, including the
-    // fields that are numbers today. They are derived from bytes a visitor pasted into the box, and
-    // "this one happens to be formatUnits output" is a property of the current decoder rather than
-    // of the boundary — the escape belongs at the boundary.
-    const rows = [
-        ['guard', guarded + ' <span class="muted">PolicyEnvelope outermost, so later instructions run inside it</span>'],
-        ['max input', m.maxAmountInFormatted == null
-            ? '<span class="no">no cap — one trade may take the whole reserve</span>' : esc(m.maxAmountInFormatted)],
-        ['floor rate', m.minRateFormatted == null
-            ? '<span class="no">no floor — any rate the curve produces</span>' : esc(m.minRateFormatted)],
-        ['fee', m.feePercent == null ? '—' : esc(m.feePercent) + '%'],
-        ['curve', m.curve == null ? '—' : esc(m.curve)],
-        ['expires', m.expiryISO == null
-            ? '<span class="no">never — only revocation ends this</span>' : esc(m.expiryISO)],
-        ['instructions', esc(a.instructionCount)],
-    ];
-    let html = '<dl>' + rows.map(([k, v]) => '<dt>' + k + '</dt><dd class="mono">' + v + '</dd>').join('') + '</dl>';
-    if (a.instructions && a.instructions.length) {
-        html += '<pre style="margin-top:1rem">' + a.instructions
-            .map((i) => String(i.offset).padStart(3, ' ') + '  ' + esc(i.name))
-            .join('\\n') + '</pre>';
-    }
-    for (const n of a.notes || []) html += '<p class="note">' + esc(n) + '</p>';
-    return html;
 }
 
 async function decode(program) {

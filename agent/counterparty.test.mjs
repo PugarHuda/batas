@@ -62,6 +62,23 @@ test('an unpublished program is a doubt even when every term is sound', () => {
     assert.match(doubtsAbout(p).join(' '), /no publication record/);
 });
 
+test('an unfinished lookup is a different doubt from an absent record', () => {
+    // The two look alike and mean opposite things. "We walked the whole topic and these bytes are
+    // not on it" is a finding about the mandate. "We stopped after ten pages" is a finding about
+    // us, and a counterparty that treats the second as the first is acting on evidence nobody
+    // gathered.
+    const absent = sound();
+    absent.publication = { published: false, searched: 'complete', reason: 'these bytes have not been published to this topic' };
+    assert.match(doubtsAbout(absent).join(' '), /no publication record/);
+
+    const unknown = sound();
+    unknown.publication = { published: null, searched: 'incomplete', reason: 'stopped after 10 pages of this topic with more to read' };
+    const [doubt] = doubtsAbout(unknown);
+    assert.match(doubt, /unanswered/);
+    assert.match(doubt, /stopped after 10 pages/, 'the reason has to travel, or the caller cannot judge it');
+    assert.doesNotMatch(doubt, /no publication record/);
+});
+
 test('a revoked name is a doubt, and the reason travels with it', () => {
     const p = sound();
     p.authority = { valid: false, revoked: true, reason: 'mandate name "agent" was revoked at 2026-09-11T02:55:10.000Z' };

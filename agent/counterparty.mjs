@@ -56,7 +56,12 @@ export function doubtsAbout({ decoded, publication, authority }, policy = POLICY
     if (policy.requireKillSwitch && !m.killSwitch) {
         doubts.push('no on-chain kill switch: only the expiry and the maker docking can end this');
     }
-    if (!publication?.published) {
+    if (publication?.published === null || publication?.searched === 'incomplete') {
+        // Not the same doubt as "no record". The mirror walk ran out of pages, so the honest thing
+        // to say is that the question is open — a counterparty told "unpublished" by a lookup that
+        // gave up has been handed a finding that was never made.
+        doubts.push(`the publication question is unanswered: ${publication.reason ?? 'the lookup did not finish'}`);
+    } else if (!publication?.published) {
         doubts.push('these exact bytes have no publication record: they could have been written a minute ago');
     }
     if (!authority?.valid) {

@@ -216,7 +216,14 @@ export async function lookupRevocations(topicId, label, { fetchImpl = fetch, max
         }
         next = body.links?.next ?? null;
     }
-    return { topic: String(id), revocations: found };
+    // Same rule as above: an unfinished walk is not a finding. A caller told "no revocations" by a
+    // loop that ran out of pages has been told the comfortable half of "I do not know".
+    return {
+        topic: String(id),
+        revocations: found,
+        searched: next ? 'incomplete' : 'complete',
+        ...(next ? { reason: `stopped after ${maxPages} pages with more to read` } : {}),
+    };
 }
 
 /**
@@ -236,7 +243,9 @@ export async function lookupMandate(topicId, program, { fetchImpl = fetch, maxPa
 
     // Ascending, so the first content match is also the earliest.
     let next = `/topics/${id}/messages?limit=100&order=asc`;
+    let pagesWalked = 0;
     for (let page = 0; page < maxPages && next; page++) {
+        pagesWalked = page + 1;
         const res = await fetchImpl(next.startsWith('http') ? next : MIRROR + next.replace(/^\/api\/v1/, ''));
         if (!res.ok) throw new Error(`mirror node ${res.status}`);
         const body = await res.json();
@@ -258,7 +267,25 @@ export async function lookupMandate(topicId, program, { fetchImpl = fetch, maxPa
         }
         next = body.links?.next ?? null;
     }
-    // Nothing matched. Before saying so, find out whether the topic is even real.
+    // Nothing matched — but "nothing matched" is only an answer if the walk actually finished.
+    //
+    // The loop stops at `maxPages`, and until now a topic longer than that produced exactly the
+    // same negative as an empty one: `published: false`, no record, nothing to distinguish them.
+    // That is the mistake this function already fixed once at the other end, where a topic that
+    // never existed and a topic with no matching message arrived looking identical. Running out of
+    // pages is us giving up, and giving up is not a fact about the mandate.
+    if (next) {
+        return {
+            topic: String(id),
+            published: null,
+            searched: 'incomplete',
+            pagesWalked,
+            reason: `stopped after ${pagesWalked} pages of this topic with more to read;`
+                + ' this is not a statement about whether these bytes were published',
+        };
+    }
+
+    // Before saying so, find out whether the topic is even real.
     //
     // The messages endpoint answers 200 with an empty list for a topic id that has never existed,
     // so "nobody published this" and "we asked a topic that is not there" arrive looking identical
@@ -270,6 +297,7 @@ export async function lookupMandate(topicId, program, { fetchImpl = fetch, maxPa
             topic: String(id),
             published: false,
             topicExists: false,
+            searched: 'complete',
             reason: `topic ${id} does not exist on this network; nothing was actually checked`,
         };
     }
@@ -277,6 +305,8 @@ export async function lookupMandate(topicId, program, { fetchImpl = fetch, maxPa
         topic: String(id),
         published: false,
         topicExists: true,
+        searched: 'complete',
+        pagesWalked,
         reason: 'these bytes have not been published to this topic',
     };
 }

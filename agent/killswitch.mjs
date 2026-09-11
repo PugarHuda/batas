@@ -38,8 +38,15 @@ const QUOTE_ABI = [{
     outputs: [{ type: 'uint256' }, { type: 'uint256' }, { type: 'bytes32' }],
 }];
 
-/** The refusals this position can produce, by selector, so a revert reads as a reason. */
-const ERRORS = {
+/**
+ * The refusals this position can produce, by selector, so a revert reads as a reason.
+ *
+ * Exported and checked against the compiled artifacts rather than trusted. A table of four-byte
+ * strings typed by hand is exactly the thing that goes stale silently: rename an error in Solidity
+ * and this keeps printing the old name for a selector nothing produces any more, or prints a bare
+ * hex string for the one it does.
+ */
+export const ERRORS = {
     '0xca98bdd0': 'MandateNameNotHeld — the name is not held by the address the mandate names',
     '0x88ccbe8f': 'MandateNameLapsed — the name has run out',
     '0x916a879b': 'MandateNameArgsTruncated',
@@ -149,12 +156,28 @@ async function main() {
     // The re-grant bumps the registry's version counter, so the name has a new token id. Asking the
     // registry for it rather than deriving it from the label is what makes this line work at all.
     console.log('');
-    if (before.ok && !during.ok && after.ok) {
-        console.log('the name gates the settlement, not merely the agent.');
-    } else {
-        console.log('unexpected: the position did not behave as a gated one.');
-        process.exitCode = 1;
+    const held = verdict({ before, during, after });
+    console.log(held.gated ? 'the name gates the settlement, not merely the agent.' : `unexpected: ${held.reason}`);
+    if (!held.gated) process.exitCode = 1;
+}
+
+/**
+ * Did the three quotes actually demonstrate the claim?
+ *
+ * Separate and pure because "the middle one failed" is not the claim. A position that refuses
+ * everything would also produce a failing middle quote, and so would one that broke between the
+ * first call and the second. The claim is the shape: worked, refused, worked again — and the two
+ * working quotes agreeing on the price is what says the position came back rather than merely
+ * stopped erroring.
+ */
+export function verdict({ before, during, after }) {
+    if (!before?.ok) return { gated: false, reason: 'the position was already refusing before the name was touched' };
+    if (during?.ok) return { gated: false, reason: 'revoking the name did not stop the settlement' };
+    if (!after?.ok) return { gated: false, reason: 'the position did not come back after the name was re-granted' };
+    if (String(before.amountOut) !== String(after.amountOut)) {
+        return { gated: false, reason: 'the position came back at a different price than it left at' };
     }
+    return { gated: true, reason: 'refused only while the name was gone, and returned unchanged' };
 }
 
 if (import.meta.filename === process.argv[1]) {

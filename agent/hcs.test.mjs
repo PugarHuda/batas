@@ -171,3 +171,30 @@ test('a revocation refuses to be built without the two things that identify it',
     assert.throws(() => revocationMessage({ registry: '0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B' }), /label/);
     assert.throws(() => revocationMessage({ label: 'agent', registry: 'not-an-address' }), /registry/);
 });
+
+test('running out of pages is reported as not knowing, not as not published', async () => {
+    const { lookupMandate } = await import('./hcs.mjs');
+    // A mirror that always offers another page: the walk can never finish, which is exactly the
+    // shape of a topic longer than maxPages.
+    const endless = async (url) => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ messages: [], links: { next: '/topics/0.0.1/messages?page=next' } }),
+    });
+    const res = await lookupMandate('0.0.1', '0x2120', { fetchImpl: endless, maxPages: 3 });
+    assert.equal(res.published, null, 'an unfinished walk must not answer false');
+    assert.equal(res.searched, 'incomplete');
+    assert.equal(res.pagesWalked, 3);
+    assert.match(res.reason, /not a statement about whether these bytes were published/);
+});
+
+test('a finished walk that found nothing does say so', async () => {
+    const { lookupMandate } = await import('./hcs.mjs');
+    const empty = async (url) => (String(url).includes('/messages')
+        ? { ok: true, status: 200, json: async () => ({ messages: [], links: {} }) }
+        : { ok: true, status: 200, json: async () => ({}) });
+    const res = await lookupMandate('0.0.1', '0x2120', { fetchImpl: empty, maxPages: 3 });
+    assert.equal(res.published, false);
+    assert.equal(res.searched, 'complete');
+    assert.equal(res.topicExists, true);
+});

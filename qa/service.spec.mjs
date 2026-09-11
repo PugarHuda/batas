@@ -246,18 +246,20 @@ test('the description lists what is free and what is paid', async ({ request }) 
 });
 
 test('the free routes have a brake, and it says how to wait', async ({ request }) => {
-    // Set low for the suite so this costs a moment rather than a minute. The point being pinned is
-    // that a limit exists, answers JSON like everything else, and tells the caller when to come
-    // back — not the particular number.
-    const limit = 12; // matches playwright.config.mjs's webServer env
-    const responses = [];
-    for (let i = 0; i < limit + 3; i++) {
-        responses.push(await request.post('/v1/mandate/decode', { data: { program: LIVE_PROGRAM } }));
+    // Counted up to a bound rather than to a number, on purpose. `reuseExistingServer` means this
+    // may be talking to a server somebody started by hand with the production limit rather than the
+    // low one `playwright.config.mjs` sets, and a test that hard-codes the low number fails
+    // mysteriously in that case. What is being pinned is that a limit exists, answers JSON like
+    // everything else, and says when to come back — not where it sits.
+    const CEILING = 80;
+    let first = null;
+    let sent = 0;
+    while (sent < CEILING && !first) {
+        const res = await request.post('/v1/mandate/decode', { data: { program: LIVE_PROGRAM } });
+        sent += 1;
+        if (res.status() === 429) first = res;
     }
-    const refused = responses.filter((r) => r.status() === 429);
-    expect(refused.length, `expected some of ${responses.length} requests to be refused`).toBeGreaterThan(0);
-
-    const [first] = refused;
+    expect(first, `no request was refused in ${sent} attempts; is the brake wired up?`).not.toBeNull();
     expect(first.headers()['content-type']).toContain('application/json');
     expect(first.headers()['retry-after']).toBeTruthy();
     const body = await first.json();
