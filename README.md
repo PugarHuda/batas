@@ -255,6 +255,13 @@ can bound **how much leaves** and nothing else, because a token contract has no 
 back. `minRateE18` is not expressible there. Enforcement inside the settlement venue sees both
 legs, which is why Batas can bound the price a position accepts rather than only its size.
 
+[`docs/spend-mandate-reply.md`](docs/spend-mandate-reply.md) is that argument written out for the
+thread, with the measurement behind it and two places where the draft's layer is clearly the better
+one. It is drafted rather than posted: it goes out under a person's name, so that is their call.
+[`UPSTREAM.md`](UPSTREAM.md) holds two findings on the same terms — one for swap-vm about what
+changes when an instruction's job is to refuse rather than to price, and one for Foundry about
+`forge build` and `forge test` writing different bytecode for the same contract.
+
 **Enforcement elsewhere is advisory.** [ENShell](https://ethglobal.com/showcase/enshell-6t95y)
 (ETHGlobal Cannes 2026, top ten) routes agent intents through Chainlink CRE to an LLM that scores
 them 0–100,000 and answers approve/escalate/block. Wallet infrastructure — Turnkey, Openfort —
