@@ -958,6 +958,63 @@ before it can be received; HBAR does not. That is one less step between a caller
 which is the entire point of paying per request. The client also caps itself at 0.01 HBAR per call
 through x402 spend controls — the same idea the contracts enforce, one layer up.
 
+## The other agent
+
+Everything above is the maker's side: an agent that runs a position under terms it cannot exceed.
+`agent/counterparty.mjs` is the other one — a different agent, with its own money and its own rules,
+arriving at a position it did not create and deciding whether to trade against it.
+
+It exists because *sold per call over x402* is a claim about a transaction between two machines, and
+until now only one of those machines was in this repository. A CLI a person runs to buy an answer
+demonstrates the payment. It does not demonstrate the **decision**, and the decision is the part
+worth showing.
+
+```bash
+npm run counterparty                 # decide about the live position
+node agent/counterparty.mjs --program 0x…    # decide about a program you were handed
+node agent/counterparty.mjs --paranoid       # insist on knowing the operator, and pay for it
+```
+
+Nothing about the service is hard-coded into it. The endpoint, the price and the network come from
+the host's own `/.well-known/x402` manifest, the way an indexer or a stranger's agent would find
+them. Then it asks the three free questions and forms an opinion:
+
+```
+5. The decision
+────────────────────────────────────────────────────────────
+  walking away, having spent nothing:
+    · no deadline: this authority never ends on its own
+    · no on-chain kill switch: only the expiry and the maker docking can end this
+    · these exact bytes have no publication record: they could have been written a minute ago
+
+  Three of the four questions are free, which is what makes this possible.
+  A position worth declining should cost nothing to decline.
+```
+
+That is the shape the payment is for. **An agent should be able to refuse for free.** Only when the
+free evidence is good and a real doubt remains does it spend anything:
+
+```
+  every free check passed.
+  but the grant is only 41s old, and who is behind it now matters.
+
+  paying 0.001 HBAR for the operator's identity and whether it vouches …
+  settled  0.0.7162784@1789095743.757413333
+  agent         #10123  Batas
+  vouches       true — the identity is held by the address that granted the mandate
+
+  the identity operating this position is held by the address that granted it.
+  trading against it.
+```
+
+The rules are the counterparty's, not this project's — `POLICY` is six lines at the top of the
+file, and a counterparty that does not insist on a kill switch is making a different bet and gets a
+different answer rather than an argument. `doubtsAbout` is pure and separate from the three fetches
+that feed it, because it is the only part anyone would want to argue with, and logic reachable only
+by calling two chains is logic nobody runs. `agent/counterparty.test.mjs` pins each refusal by
+name, including that an empty answer raises every doubt rather than reading as a clean bill of
+health.
+
 ## And by a person
 
 Everything above is a machine surface, and the suite holds every route to answering JSON because
@@ -1169,7 +1226,7 @@ can move even if the assertion is wrong, and CI needs no secret to run it.
 
 ```
 forge test          44 passing
-npm run test:js    138 passing
+npm run test:js    148 passing
 npm run test:api    18 passing
 npm run test:prod    5 passing
 ```
