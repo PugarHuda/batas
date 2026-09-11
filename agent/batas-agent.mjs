@@ -56,6 +56,15 @@ const AQUA_ABI = [
         outputs: [{ type: 'uint256' }, { type: 'uint256' }],
     },
     {
+        name: 'dock', type: 'function', stateMutability: 'nonpayable',
+        inputs: [
+            { name: 'app', type: 'address' },
+            { name: 'strategyHash', type: 'bytes32' },
+            { name: 'tokens', type: 'address[]' },
+        ],
+        outputs: [],
+    },
+    {
         name: 'ship', type: 'function', stateMutability: 'nonpayable',
         inputs: [
             { name: 'app', type: 'address' }, { name: 'strategy', type: 'bytes' },
@@ -381,6 +390,33 @@ async function tick({ watching = false, mayShip = true } = {}) {
         // record exists.
         console.error(`\nHCS publication failed: ${String(e.message || e)}`);
         if (!watching) process.exitCode = 1;
+    }
+
+    // And close the one it replaced.
+    //
+    // A gap the watch loop created rather than found. Renewing ships a fresh position and used to
+    // leave the previous one standing with its Aqua allowance intact, so an agent left running for
+    // a week would accumulate live positions — each inside its own cap, and none of them bounded by
+    // the others. The cap bounds a trade, the floor bounds a sequence, and nothing bounded the
+    // number of sequences.
+    //
+    // Docking is the maker's call and only the maker can make it: `Aqua.dock` keys on `msg.sender`.
+    // It zeroes the allowance for that strategy hash, so the replaced mandate stops being anything
+    // anyone can trade against. Done after the new one is shipped, in that order, so a failure here
+    // leaves two live positions rather than none.
+    try {
+        const { request } = await pub.simulateContract({
+            account, address: AQUA, abi: AQUA_ABI, functionName: 'dock',
+            args: [ROUTER, strategyHash, TOKENS],
+        });
+        const dockHash = await wallet.writeContract(request);
+        const dockReceipt = await pub.waitForTransactionReceipt({ hash: dockHash });
+        console.log(`\ndocked the position it replaced`);
+        console.log(`  hash   ${strategyHash}`);
+        console.log(`  tx     ${dockHash}  ${dockReceipt.status}`);
+    } catch (e) {
+        console.error(`\ncould not dock the previous position: ${String(e.shortMessage || e.message || e)}`);
+        console.error('  two live positions now; dock the old one by hand before the next renewal');
     }
 
     return { shipped: true };

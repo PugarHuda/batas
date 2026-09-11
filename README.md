@@ -647,6 +647,18 @@ the one thing this project exists to prevent it doing. `renewalDecision` is pure
 test, including that a live mandate carrying *no* deadline is replaced rather than read as "not due
 yet".
 
+**Renewing closes what it replaces**, and that is a gap the watch loop created rather than found.
+Shipping a fresh position used to leave the previous one standing with its Aqua allowance intact,
+so an agent left running for a week would accumulate live positions — each inside its own cap, and
+none of them bounded by the others. The cap bounds a trade, the floor bounds a sequence, and
+nothing bounded the number of sequences.
+
+`Aqua.dock` keys on `msg.sender`, so only the maker can do it, and the agent does it immediately
+after the new mandate is shipped — in that order, because a failure there should leave two live
+positions rather than none. Docking is not emptying: `safeBalances` on a docked strategy *reverts*
+rather than answering zero, so the replaced mandate stops being something anyone can trade against
+at all.
+
 Three guards, because a loop that sends transactions needs them: it ships only inside the renewal
 window, never more than `--max-ships` times in one run, and the interval has a floor of 30 seconds
 — an agent polling two chains every second is not attentive, it is a denial of service with good
@@ -1139,6 +1151,23 @@ that feed it, because it is the only part anyone would want to argue with, and l
 by calling two chains is logic nobody runs. `agent/counterparty.test.mjs` pins each refusal by
 name, including that an empty answer raises every doubt rather than reading as a clean bill of
 health.
+
+## What the service does not keep
+
+Nothing. There is no database behind the paid endpoint, no record of who bought what, and that is a
+position rather than an omission.
+
+The argument for keeping one is a receipt trail. But the receipt already exists somewhere better:
+the x402 settlement is a Hedera transaction, public and permanent, and the client is handed its id
+in the `PAYMENT-RESPONSE` header. And the answer itself is reproducible — three of its four parts
+are free routes anyone can call, and the fourth is one read of a public registry. A payer who loses
+the response can rebuild it from public data without our permission, which is a stronger guarantee
+than a row in a table we control.
+
+What a store would actually add is a dependency: something to provision, something to back up,
+something that can be wrong about what it sold. For a service whose entire pitch is that its answers
+route through nothing of ours, that is the wrong trade. If it ever needs to remember something, the
+thing to reach for is the topic it already publishes to.
 
 ## And by a person
 
