@@ -15,7 +15,7 @@ import { createPublicClient, http, decodeAbiParameters, parseAbiParameters } fro
 import { sepolia } from 'viem/chains';
 import 'dotenv/config';
 
-import { AQUA, ROUTER, OWNER, AGENT_ID } from './deployment.mjs';
+import { AQUA, ROUTER, OWNER, AGENT_ID, SEPOLIA_RPC } from './deployment.mjs';
 
 const SERVICE = process.env.BATAS_SERVICE_URL || 'http://localhost:4021';
 
@@ -28,7 +28,7 @@ export async function latestProgramOnChain({ client } = {}) {
     // thousand empty blocks to go by.
     const pub = client ?? createPublicClient({
         chain: sepolia,
-        transport: http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
+        transport: http(SEPOLIA_RPC),
     });
 
     // Aqua's Shipped event indexes nothing, so filtering happens here rather than at the node.

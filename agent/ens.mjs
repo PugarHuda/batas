@@ -24,7 +24,7 @@ import 'dotenv/config';
 
 import { decodeProgram, readMandate } from './swapvm.mjs';
 import { programFromStrategy } from './inspect.mjs';
-import { AQUA, ROUTER } from './deployment.mjs';
+import { AQUA, ROUTER, SEPOLIA_RPC } from './deployment.mjs';
 
 // ENSv2 beta on Sepolia. Checked for code before use; these moved once already during the beta.
 const VERIFIABLE_FACTORY = getAddress('0x10Dc6333cDfe1FCEF624c6E0A8221b91804cD7ef');
@@ -91,7 +91,7 @@ const AQUA_SHIPPED = {
 
 const clients = () => {
     const account = privateKeyToAccount(process.env.SEPOLIA_PRIVATE_KEY);
-    const transport = http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com');
+    const transport = http(SEPOLIA_RPC);
     return {
         account,
         pub: createPublicClient({ chain: sepolia, transport }),

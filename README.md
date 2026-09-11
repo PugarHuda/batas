@@ -1413,7 +1413,7 @@ can move even if the assertion is wrong, and CI needs no secret to run it.
 
 ```
 forge test          45 passing
-npm run test:js    184 passing
+npm run test:js    185 passing
 npm run test:api    19 passing
 npm run test:prod    5 passing
 ```
@@ -1446,6 +1446,18 @@ node answers `200` with an empty list for a topic id that never existed, so *"no
 this"* and *"we asked a topic that is not there"* arrived looking identical — the second means the
 service is misconfigured, not that the mandate is unvouched. The topic endpoint does return `404`,
 so one extra request in the negative case separates them.
+
+Every Sepolia read defaults to `rpc.sepolia.ethpandaops.io`, in `agent/deployment.mjs` and nowhere
+else. It used to be `ethereum-sepolia-rpc.publicnode.com`, repeated as an inline default in twelve
+files, and it cost real time: publicnode fronts a pool whose backends do not all hold the same
+receipts, which is what turned this suite red with *linked from the README but is not on Sepolia* —
+a false statement about the chain assembled out of one endpoint's gaps. Measured over five calls
+before switching: ethpandaops 5/5 up at 532ms and 8/8 receipts, tenderly 5/5 at 701ms, publicnode
+4/5 at 1680ms and 7/8. A fork through publicnode also made the on-chain demo take 71 seconds and
+then fail; through ethpandaops it takes 16.
+
+The retry in `readme.test.mjs` stays regardless. A better endpoint makes a wrong answer rarer, and
+the reason that test asks twice is that rare is not never.
 
 The live checks in there are live on purpose. The ERC-8004 tests read the real registry on Sepolia
 and the publication tests read the real mirror node, because an identity check tested against a

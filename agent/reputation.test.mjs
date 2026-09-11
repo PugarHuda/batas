@@ -55,7 +55,8 @@ test('an agent nobody has reviewed reads as zero rather than as a failed call', 
         },
     };
     const r = await readReputation('10123', { client: noClients });
-    assert.equal(r.count, 0);
+    assert.equal(r.feedbackCount, 0);
+    assert.equal(r.clientCount, 0);
     assert.deepEqual(r.clients, []);
     assert.equal(r.summaryValue, '0');
 });
@@ -67,7 +68,22 @@ test('and one with clients reports what they said', async () => {
             : [1n, 143n, 0]),
     };
     const r = await readReputation('10123', { client: withClients });
-    assert.equal(r.count, 1);
+    assert.equal(r.feedbackCount, 1);
     assert.equal(r.summaryValue, '143');
     assert.equal(r.clients.length, 1);
+});
+
+test('one client leaving two reviews is not two clients', async () => {
+    // The mislabel that prompted the split: `getSummary` counts entries and `getClients` counts
+    // addresses, and the first version reported the first as the second. An agent reviewed ten
+    // times by one counterparty and one reviewed once by ten are not the same reputation, and a
+    // single field cannot say which.
+    const oneChattyClient = {
+        readContract: async ({ functionName }) => (functionName === 'getClients'
+            ? ['0x1437aF5722D5Dfe6BAEda25f3A7A39aeCA374614']
+            : [2n, 133n, 0]),
+    };
+    const r = await readReputation('10123', { client: oneChattyClient });
+    assert.equal(r.feedbackCount, 2, 'two entries');
+    assert.equal(r.clientCount, 1, 'from one address');
 });

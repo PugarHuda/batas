@@ -25,7 +25,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 
 import { payForExplanation, latestProgramOnChain } from './inspect.mjs';
-import { ROUTER, TOKEN_A, TOKEN_B } from './deployment.mjs';
+import { ROUTER, TOKEN_A, TOKEN_B, SEPOLIA_RPC } from './deployment.mjs';
 import { feedbackFromTrade, giveFeedback, readReputation } from './reputation.mjs';
 
 const ORIGIN = process.env.BATAS_SERVICE_URL?.replace(/\/v1\/.*$/, '') || 'https://batas-one.vercel.app';
@@ -250,7 +250,7 @@ async function act({ floorRateE18, feedbackURI, agentId } = {}) {
     }
 
     const account = privateKeyToAccount(key);
-    const transport = http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com');
+    const transport = http(SEPOLIA_RPC);
     const pub = createPublicClient({ chain: sepolia, transport });
     const wallet = createWalletClient({ account, chain: sepolia, transport });
 
@@ -331,7 +331,8 @@ async function review({ account, received, amountIn, floorRateE18, feedbackURI, 
         });
         say('feedback', `${written.status}  https://sepolia.etherscan.io/tx/${written.hash}`);
         const now = await readReputation(agentId);
-        say('reputation', `${now.count} client(s), summary ${now.summaryValue}`);
+        say('reputation', `${now.feedbackCount} feedback from ${now.clientCount} client(s), `
+            + `${now.summaryValue}bps above the floor on average`);
     } catch (e) {
         // The trade happened. Failing to review it is a smaller thing than pretending the trade
         // did not settle, so it is reported and the run stands.

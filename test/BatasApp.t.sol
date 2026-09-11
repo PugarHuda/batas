@@ -334,6 +334,23 @@ contract BatasAppTest is Test, IBatasCallback {
     ///   the mandate refuses as soon as the next trade would breach the floor. What follows checks
     ///   both halves: every settled trade clears the floor on its own, and the cumulative rate
     ///   across all of them does too.
+    /// @dev Wei is unreadable at a glance, and this table is the one thing here written to be read
+    ///   rather than asserted on. Three places is enough to tell 1.662 from 0.270, which is the
+    ///   entire point of printing it.
+    function _fixed(uint256 value, uint8 decimals, uint8 places) internal pure returns (string memory) {
+        uint256 unit = 10 ** decimals;
+        uint256 whole = value / unit;
+        uint256 frac = (value % unit) / (10 ** (decimals - places));
+
+        bytes memory padded = bytes(vm.toString(frac));
+        bytes memory out = new bytes(places);
+        for (uint256 i = 0; i < places; i++) out[i] = "0";
+        for (uint256 i = 0; i < padded.length && i < places; i++) {
+            out[places - padded.length + i] = padded[i];
+        }
+        return string.concat(vm.toString(whole), ".", string(out));
+    }
+
     /// @notice The same reserves, worked by the same attacker, with and without the mandate.
     /// @dev Every other test here answers "does the limit bind". This one answers the question a
     ///   maker actually asks — *what does the mandate save me* — by running the identical sequence
@@ -400,9 +417,9 @@ contract BatasAppTest is Test, IBatasCallback {
             string.concat(
                 vm.toString(guardedTrades),
                 "        ",
-                vm.toString((guardedOutTotal * 1e18) / guardedInTotal),
-                "    ",
-                vm.toString(guardedReserveLeft)
+                _fixed((guardedOutTotal * 1e18) / guardedInTotal, 18, 3),
+                "          ",
+                _fixed(guardedReserveLeft, 18, 2)
             )
         );
         emit log_named_string(
@@ -410,9 +427,9 @@ contract BatasAppTest is Test, IBatasCallback {
             string.concat(
                 vm.toString(bareTrades),
                 "       ",
-                vm.toString((bareOutTotal * 1e18) / bareInTotal),
-                "     ",
-                vm.toString(bareReserveLeft)
+                _fixed((bareOutTotal * 1e18) / bareInTotal, 18, 3),
+                "          ",
+                _fixed(bareReserveLeft, 18, 2)
             )
         );
 

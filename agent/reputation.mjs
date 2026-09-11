@@ -24,7 +24,7 @@ import { createPublicClient, createWalletClient, http, getAddress, keccak256, to
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 
-import { REPUTATION_REGISTRY, AGENT_ID } from './deployment.mjs';
+import { REPUTATION_REGISTRY, AGENT_ID, SEPOLIA_RPC } from './deployment.mjs';
 
 export const REGISTRY_ABI = [
     {
@@ -68,7 +68,7 @@ export const REGISTRY_ABI = [
 
 const publicClient = () => createPublicClient({
     chain: sepolia,
-    transport: http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
+    transport: http(SEPOLIA_RPC),
 });
 
 /**
@@ -114,7 +114,7 @@ export async function giveFeedback({
 }) {
     if (!key) throw new Error('feedback needs a key that is not the agent\'s; set BATAS_COUNTERPARTY_KEY');
     const account = privateKeyToAccount(key);
-    const transport = http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com');
+    const transport = http(SEPOLIA_RPC);
     const pub = createPublicClient({ chain: sepolia, transport });
     const wallet = createWalletClient({ account, chain: sepolia, transport });
 
@@ -147,18 +147,23 @@ export async function readReputation(agentId = AGENT_ID, { tag1 = '', tag2 = '',
     if (clients.length === 0) {
         return {
             registry: address, agentId: String(agentId), clients: [],
-            count: 0, summaryValue: '0', summaryValueDecimals: 0,
+            feedbackCount: 0, clientCount: 0, summaryValue: '0', summaryValueDecimals: 0,
         };
     }
 
     const [count, summaryValue, summaryValueDecimals] = await pub.readContract({
         address, abi: REGISTRY_ABI, functionName: 'getSummary', args: [BigInt(agentId), clients, tag1, tag2],
     });
+    // Two different numbers, and calling both of them `count` is how the first version printed
+    // "2 client(s)" for one address that had left feedback twice. `getSummary` counts entries;
+    // `getClients` counts addresses. An agent reviewed ten times by one counterparty and one
+    // reviewed once by ten are not the same reputation, and a single field cannot say which.
     return {
         registry: address,
         agentId: String(agentId),
         clients: [...clients],
-        count: Number(count),
+        feedbackCount: Number(count),
+        clientCount: clients.length,
         summaryValue: summaryValue.toString(),
         summaryValueDecimals: Number(summaryValueDecimals),
     };
@@ -171,14 +176,14 @@ async function main() {
 
     const r = await readReputation(agentId);
     console.log(`agent #${r.agentId} in ${r.registry}`);
-    console.log(`  clients  ${r.count}`);
-    if (r.count === 0) {
+    console.log(`  feedback ${r.feedbackCount} from ${r.clientCount} client(s)`);
+    if (r.feedbackCount === 0) {
         console.log('  nobody has traded against this agent and said so yet.');
         console.log('  the registry refuses feedback from the agent itself, so this can only be filled');
         console.log('  by somebody else — run agent/counterparty.mjs --trade with its own key.');
         return;
     }
-    console.log(`  summary  ${r.summaryValue} (${r.summaryValueDecimals} decimals)`);
+    console.log(`  summary  ${r.summaryValue}bps above the floor (${r.summaryValueDecimals} decimals)`);
     for (const c of r.clients) console.log(`    ${c}`);
 }
 

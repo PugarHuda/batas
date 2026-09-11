@@ -22,7 +22,7 @@ import { toProgram, decideMandate, decodeProgram, readMandate, volatilityBudget 
 import { programFromStrategy } from './inspect.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { publishMandate } from './hcs.mjs';
-import { AQUA, ROUTER, TOKENS, ENS_REGISTRY, MANDATE_NAME } from './deployment.mjs';
+import { AQUA, ROUTER, TOKENS, ENS_REGISTRY, MANDATE_NAME, SEPOLIA_RPC } from './deployment.mjs';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import 'dotenv/config';
@@ -139,7 +139,7 @@ async function tick({ watching = false, mayShip = true } = {}) {
     if (!key) throw new Error('SEPOLIA_PRIVATE_KEY missing; copy .env.example to .env');
 
     const account = privateKeyToAccount(key);
-    const transport = http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com');
+    const transport = http(SEPOLIA_RPC);
     const pub = createPublicClient({ chain: sepolia, transport });
     const wallet = createWalletClient({ account, chain: sepolia, transport });
 

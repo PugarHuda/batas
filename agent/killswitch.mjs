@@ -22,7 +22,7 @@ import { dirname, join } from 'node:path';
 
 import { latestProgramOnChain } from './inspect.mjs';
 import { decodeProgram, readMandate } from './swapvm.mjs';
-import { ROUTER, MANDATE_NAME } from './deployment.mjs';
+import { ROUTER, MANDATE_NAME, SEPOLIA_RPC } from './deployment.mjs';
 
 const QUOTE_ABI = [{
     name: 'quote',
@@ -57,7 +57,7 @@ export const ERRORS = {
 
 const client = createPublicClient({
     chain: sepolia,
-    transport: http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
+    transport: http(SEPOLIA_RPC),
 });
 
 /** The live order, whole — not just its program, because quoting needs the traits and the data. */

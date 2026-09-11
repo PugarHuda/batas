@@ -21,7 +21,7 @@ import { lookupMandate } from './hcs.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { resolveAgent, vouchesFor } from './erc8004.mjs';
 import { latestProgramOnChain, programFromStrategy, payForExplanation } from './inspect.mjs';
-import { OWNER, ENS_REGISTRY, MANDATE_NAME, AGENT_ID, HCS_TOPIC } from './deployment.mjs';
+import { OWNER, ENS_REGISTRY, MANDATE_NAME, AGENT_ID, HCS_TOPIC, SEPOLIA_RPC } from './deployment.mjs';
 
 const step = (n, title) => console.log(`\n${n}. ${title}\n${'─'.repeat(60)}`);
 const line = (k, v) => console.log(`   ${k.padEnd(12)} ${v}`);
@@ -68,7 +68,7 @@ async function main() {
     {
         const client = createPublicClient({
             chain: sepolia,
-            transport: http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
+            transport: http(SEPOLIA_RPC),
         });
         const status = await mandateNameStatus(
             client, registry, MANDATE_NAME, owner,
@@ -105,9 +105,10 @@ async function main() {
             const rep = await readReputation(agentId);
             line(
                 'reputation',
-                rep.count === 0
+                rep.feedbackCount === 0
                     ? 'no client feedback yet (and the agent itself is barred from leaving any)'
-                    : `${rep.count} client(s), ${rep.summaryValue}bps above the floor on average`,
+                    : `${rep.feedbackCount} from ${rep.clientCount} client(s), `
+                        + `${rep.summaryValue}bps above the floor on average`,
             );
         } catch (e) {
             line('reputation', `could not read: ${String(e.shortMessage ?? e.message ?? e)}`);

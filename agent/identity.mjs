@@ -18,7 +18,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import 'dotenv/config';
 
-import { AQUA, ROUTER, APP, IDENTITY_REGISTRY, HCS_TOPIC, ENS_REGISTRY } from './deployment.mjs';
+import { AQUA, ROUTER, APP, IDENTITY_REGISTRY, HCS_TOPIC, ENS_REGISTRY, SEPOLIA_RPC } from './deployment.mjs';
 
 const REGISTRY_ABI = [
     {
@@ -124,7 +124,7 @@ async function main() {
     if (!key) throw new Error('SEPOLIA_PRIVATE_KEY missing; copy .env.example to .env');
 
     const account = privateKeyToAccount(key);
-    const transport = http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com');
+    const transport = http(SEPOLIA_RPC);
     const pub = createPublicClient({ chain: sepolia, transport });
 
     const readIdx = process.argv.indexOf('--read');

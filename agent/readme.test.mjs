@@ -14,6 +14,7 @@ import { readFile } from 'node:fs/promises';
 
 import { createPublicClient, http } from 'viem';
 import { sepolia } from 'viem/chains';
+import { SEPOLIA_RPC } from './deployment.mjs';
 
 const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
 const unique = (xs) => [...new Set(xs)];
@@ -21,7 +22,7 @@ const found = (re) => unique(readme.match(re) ?? []);
 
 const client = createPublicClient({
     chain: sepolia,
-    transport: http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
+    transport: http(SEPOLIA_RPC),
 });
 
 /** The deployment table only — not every linked address, since some are accounts on purpose. */

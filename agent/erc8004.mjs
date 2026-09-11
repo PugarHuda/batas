@@ -9,6 +9,7 @@
 
 import { createPublicClient, http, getAddress } from 'viem';
 import { sepolia } from 'viem/chains';
+import { SEPOLIA_RPC } from './deployment.mjs';
 
 // Same address on Ethereum Sepolia and Hedera testnet.
 export const IDENTITY_REGISTRY = getAddress('0x8004A818BFB912233c491871b3d84c89A494BD9e');
@@ -69,7 +70,7 @@ export async function resolveAgent(agentId, { client, rpcUrl } = {}) {
     if (id === null) throw new Error('agentId must be a non-negative integer');
     const pub = client ?? createPublicClient({
         chain: sepolia,
-        transport: http(rpcUrl || process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
+        transport: http(rpcUrl || SEPOLIA_RPC),
     });
 
     let owner;

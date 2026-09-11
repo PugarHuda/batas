@@ -24,11 +24,11 @@ import { createHash } from 'node:crypto';
 import { createPublicClient, http } from 'viem';
 import { sepolia } from 'viem/chains';
 
-import { ROUTER, APP } from './deployment.mjs';
+import { ROUTER, APP, SEPOLIA_RPC } from './deployment.mjs';
 
 const client = createPublicClient({
     chain: sepolia,
-    transport: http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
+    transport: http(SEPOLIA_RPC),
 });
 
 /**

@@ -19,7 +19,7 @@ import { lookupMandate } from './hcs.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { latestProgramOnChain, programFromStrategy } from './inspect.mjs';
 import { readReputation } from './reputation.mjs';
-import { OWNER, ENS_REGISTRY, MANDATE_NAME, HCS_TOPIC, AGENT_ID } from './deployment.mjs';
+import { OWNER, ENS_REGISTRY, MANDATE_NAME, HCS_TOPIC, AGENT_ID, SEPOLIA_RPC } from './deployment.mjs';
 
 const HEX = /^0x[0-9a-fA-F]*$/;
 
@@ -87,7 +87,7 @@ export async function publicationAnswer(program) {
 export async function authorityAnswer({ label, grantedUntil } = {}) {
     const pub = createPublicClient({
         chain: sepolia,
-        transport: http(process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'),
+        transport: http(SEPOLIA_RPC),
     });
 
     let until = grantedUntil;

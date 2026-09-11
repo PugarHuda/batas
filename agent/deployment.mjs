@@ -33,6 +33,29 @@ export const MANDATE_NAME = env('BATAS_MANDATE_NAME', 'agent');
 
 /** Where mandates are published, and the ERC-8004 identity that publishes them. */
 export const HCS_TOPIC = env('BATAS_HCS_TOPIC', '0.0.10394165');
+/**
+ * The Sepolia endpoint everything here reads through, in one place rather than twelve.
+ *
+ * It was `ethereum-sepolia-rpc.publicnode.com`, repeated as an inline default in every file that
+ * needed a client, and it cost this project real time. publicnode fronts a load-balanced pool whose
+ * backends do not all hold the same receipts: asked eight times for a transaction that is
+ * demonstrably on the canonical chain, it answered seven. That is what turned `readme.test.mjs` red
+ * with "linked from the README but is not on Sepolia" — a false statement about the chain,
+ * assembled out of one endpoint's gaps.
+ *
+ * Measured before switching, five calls each:
+ *
+ *   rpc.sepolia.ethpandaops.io    5/5 up, 532ms,  8/8 receipts
+ *   sepolia.gateway.tenderly.co   5/5 up, 701ms,  8/8 receipts
+ *   1rpc.io/sepolia               5/5 up, 990ms
+ *   ethereum-sepolia-rpc.publicnode.com  4/5 up, 1680ms, 7/8 receipts
+ *
+ * `SEPOLIA_RPC_URL` still overrides it, and tenderly is the alternate worth reaching for. The retry
+ * in `readme.test.mjs` stays either way: a better endpoint makes a wrong answer rarer, and the
+ * reason that test insists on asking twice is that rare is not never.
+ */
+export const SEPOLIA_RPC = env('SEPOLIA_RPC_URL', 'https://rpc.sepolia.ethpandaops.io');
+
 export const AGENT_ID = env('BATAS_AGENT_ID', '10123');
 /**
  * ERC-8004's reputation registry, paired with the identity registry above.

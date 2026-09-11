@@ -141,12 +141,29 @@ command.
 **Before recording**
 
 ```bash
-forge build --force                      # so nothing compiles on camera
-anvil --fork-url $SEPOLIA_RPC_URL &      # the demo runs against a fork; no gas, no waiting
+forge build --force                      # ~36s, so nothing compiles on camera
+anvil --fork-url $SEPOLIA_RPC_URL &      # ~25s to be ready; the demo runs against this
 curl -s https://batas-one.vercel.app/ >/dev/null   # warm the serverless cold start
 ```
 
 Two terminals, font large enough to read at 720p.
+
+**Check `SEPOLIA_RPC_URL` first.** It must not be `ethereum-sepolia-rpc.publicnode.com`. Measured
+over five calls: publicnode was up 4/5 at 1680ms, and a fork through it made the demo beat take 71
+seconds and then fail outright. `rpc.sepolia.ethpandaops.io` was 5/5 at 532ms and the same beat took
+16. `sepolia.gateway.tenderly.co` is the alternate.
+
+**Measured run times**, so nothing is a surprise on camera:
+
+| Beat | Command | Takes |
+|---|---|---|
+| what it is worth | `forge test --match-test test_WhatTheMandateIsWorth -vv` | 1s |
+| on chain, one run | `forge script … Demo.s.sol --broadcast` (fork) | 16s |
+| the kill switch | `node agent/killswitch.mjs --prove` | **92s** — two Sepolia transactions |
+| the other agent | `node agent/counterparty.mjs --paranoid --trade` | **103s** — Hedera payment, then two Sepolia transactions |
+
+The last two are the ones to cut in. Each waits on a block twice; the quotes between them return
+instantly, so cut on the waits and keep the answers.
 
 **0:00–0:20 — the problem**
 
@@ -203,8 +220,8 @@ node agent/killswitch.mjs --prove
 > Re-grant it, and the position comes back. The name is an instruction in the program, so revoking
 > it stops every caller, not only the one that asks permission.
 
-*(Two Sepolia transactions inside that run, roughly 30 seconds each — cut between them rather than
-waiting on camera. The three quotes are eth_calls and return instantly.)*
+*(92 seconds measured end to end: two Sepolia transactions, roughly 40 seconds each. The three
+quotes are eth_calls and return instantly, so cut on the two waits and keep the three answers.)*
 
 **2:35–3:20 — the other agent pays** *(the Hedera requirement)*
 
