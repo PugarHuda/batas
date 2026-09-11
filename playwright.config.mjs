@@ -19,6 +19,9 @@ export default defineConfig({
     },
     webServer: {
         command: 'node agent/service.mjs',
+        // Low on purpose: the suite asserts the free routes have a brake, and finding that out at
+        // the production number would mean sixty requests to learn one fact.
+        env: { ...process.env, BATAS_FREE_RATE_LIMIT: '12' },
         url: 'http://127.0.0.1:4021/',
         reuseExistingServer: !process.env.CI,
         timeout: 30_000,

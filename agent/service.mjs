@@ -119,7 +119,53 @@ app.get('/', (req, res) => {
 // assistant holding the MCP server has been able to ask all three since it existed. What the
 // payment buys is still the one answer none of them contains — the operator's ERC-8004 identity,
 // and whether it vouches for the address that granted the mandate.
+/**
+ * A bucket per caller, for the free routes only.
+ *
+ * The paid route needs none of this: a caller who wants to hammer it may, one settled payment at a
+ * time. The free ones are the exposed surface — the publication lookup walks a mirror node and the
+ * authority check makes three Sepolia reads — and something has to stand between a loop and two
+ * public networks this project does not pay for.
+ *
+ * ponytail: a plain in-memory counter. It is per instance rather than global, so the real ceiling
+ * is this number times however many instances are warm, and it resets whenever one is recycled. A
+ * shared store is the upgrade if anyone ever actually abuses it; until then this is the difference
+ * between "a runaway script costs the mirror node something" and "it does not".
+ */
+const WINDOW_MS = 60_000;
+const MAX_PER_WINDOW = Number(process.env.BATAS_FREE_RATE_LIMIT || 60);
+const buckets = new Map();
+
+function overLimit(req) {
+    // Behind Vercel the socket address is the proxy's, so the forwarded header is the only thing
+    // that identifies a caller. It is caller-controlled and therefore spoofable, which is fine for
+    // what this is: a brake on accidents and loops, not an access control.
+    const who = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim();
+    const now = Date.now();
+    const bucket = buckets.get(who);
+    if (!bucket || now - bucket.start >= WINDOW_MS) {
+        buckets.set(who, { start: now, count: 1 });
+        // Swept here rather than on a timer: a serverless instance that goes idle never runs the
+        // timer anyway, and the map only grows while requests are arriving.
+        if (buckets.size > 10_000) {
+            for (const [k, v] of buckets) if (now - v.start >= WINDOW_MS) buckets.delete(k);
+        }
+        return false;
+    }
+    bucket.count += 1;
+    return bucket.count > MAX_PER_WINDOW;
+}
+
 const freely = (handler) => async (req, res) => {
+    if (overLimit(req)) {
+        return res.status(429)
+            .set('Retry-After', String(Math.ceil(WINDOW_MS / 1000)))
+            .json({
+                error: `too many free requests; at most ${MAX_PER_WINDOW} per ${WINDOW_MS / 1000}s`,
+                retryAfterSeconds: Math.ceil(WINDOW_MS / 1000),
+                note: 'the paid route is not rate limited — a settled payment is the quota',
+            });
+    }
     try {
         res.json(await handler(req));
     } catch (e) {

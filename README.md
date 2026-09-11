@@ -1049,6 +1049,13 @@ All six of those call `agent/free.mjs` rather than each implementing the questio
 one format is how this project once shipped mandates with no expiry, and two answers to one
 question would be the same mistake wearing a different hat.
 
+The free routes carry a brake — 60 requests a minute per caller, answered as a `429` in JSON with a
+`Retry-After` and a note that the paid route is not what is being limited, because a settled payment
+is its quota. The publication lookup walks a mirror node and the authority check makes three Sepolia
+reads, and something has to stand between a runaway loop and two public networks this project does
+not pay for. It is a per-instance counter rather than a shared one, which is stated in the code
+along with what that means: the real ceiling is the number times however many instances are warm.
+
 What stays paid is what it always was: the whole answer in one place, with the ERC-8004 identity and
 whether it vouches for the address that granted the mandate. A test asserts the free decode carries
 neither `publication` nor `operator`, so the free door cannot quietly become the paid one.
@@ -1092,6 +1099,31 @@ The payment path is not written twice. `inspect.mjs` exports `payForExplanation`
 the MCP tool both call it; the spend cap and the cold-start retry live in one place. The logger is
 injected rather than assumed, because MCP speaks JSON-RPC over stdout and the narration the CLI
 prints would corrupt the stream.
+
+## What the mandate is worth
+
+Every other test answers *does the limit bind*. `test_WhatTheMandateIsWorth` answers the question a
+maker actually asks, by running the same attacker against the same reserves twice — once under a
+mandate, once under a position identical in every other way, same app, same fee, same curve, with
+nothing that refuses:
+
+```
+$ forge test --match-test test_WhatTheMandateIsWorth -vv
+
+the same reserves, the same attacker, 64 attempts each
+                      trades   average rate   tokenB left in the position
+  under a mandate  :  2        1.662          1667.53
+  with none        :  64       0.270          271.86
+```
+
+The pool opens at 2.0. The mandate refuses the third trade and the position keeps **83%** of its
+reserve, everything that left having gone at 1.662 or better. The unguarded one sells until the
+curve is exhausted: 86% of the reserve gone at an average of **0.270**, a seventh of where it
+started, and every one of those trades was a perfectly ordinary constant-product swap that no
+application-layer check was there to stop.
+
+That gap is the product. Not that a guard exists, but that a position without one is worth a
+seventh of what it was by the time anyone notices.
 
 ## So what can an attacker actually do
 
@@ -1225,9 +1257,9 @@ payload is being built, before anything is signed or sent, so an unfunded key re
 can move even if the assertion is wrong, and CI needs no secret to run it.
 
 ```
-forge test          44 passing
+forge test          45 passing
 npm run test:js    148 passing
-npm run test:api    18 passing
+npm run test:api    19 passing
 npm run test:prod    5 passing
 ```
 

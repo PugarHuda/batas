@@ -245,6 +245,27 @@ test('the description lists what is free and what is paid', async ({ request }) 
     expect(body.endpoint).toBe('POST /v1/mandate/explain');
 });
 
+test('the free routes have a brake, and it says how to wait', async ({ request }) => {
+    // Set low for the suite so this costs a moment rather than a minute. The point being pinned is
+    // that a limit exists, answers JSON like everything else, and tells the caller when to come
+    // back — not the particular number.
+    const limit = 12; // matches playwright.config.mjs's webServer env
+    const responses = [];
+    for (let i = 0; i < limit + 3; i++) {
+        responses.push(await request.post('/v1/mandate/decode', { data: { program: LIVE_PROGRAM } }));
+    }
+    const refused = responses.filter((r) => r.status() === 429);
+    expect(refused.length, `expected some of ${responses.length} requests to be refused`).toBeGreaterThan(0);
+
+    const [first] = refused;
+    expect(first.headers()['content-type']).toContain('application/json');
+    expect(first.headers()['retry-after']).toBeTruthy();
+    const body = await first.json();
+    expect(body.error).toMatch(/too many free requests/);
+    // And the shape of the offer: the paid route is not what is being limited.
+    expect(body.note).toMatch(/paid route is not rate limited/);
+});
+
 test('concurrent callers all get the same payment requirement', async ({ request }) => {
     // The facilitator handshake runs on the request path, so a burst is where a shared client would
     // show up as inconsistent terms — one caller quoted a different price than another.

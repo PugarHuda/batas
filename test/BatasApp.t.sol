@@ -334,6 +334,113 @@ contract BatasAppTest is Test, IBatasCallback {
     ///   the mandate refuses as soon as the next trade would breach the floor. What follows checks
     ///   both halves: every settled trade clears the floor on its own, and the cumulative rate
     ///   across all of them does too.
+    /// @notice The same reserves, worked by the same attacker, with and without the mandate.
+    /// @dev Every other test here answers "does the limit bind". This one answers the question a
+    ///   maker actually asks — *what does the mandate save me* — by running the identical sequence
+    ///   against a position that has one and a position that does not, and printing both.
+    ///
+    ///   The unguarded side is not a straw man: it is the same constant-product app, the same fee,
+    ///   the same reserves. The only difference is that nothing refuses.
+    ///
+    ///   `forge test --match-test test_WhatTheMandateIsWorth -vv` to watch it.
+    function test_WhatTheMandateIsWorth() public {
+        uint256 guardedOutTotal;
+        uint256 guardedInTotal;
+        uint256 guardedTrades;
+        uint256 guardedReserveLeft;
+        {
+            Mandate memory m = _mandate();
+            _ship(m);
+            for (uint256 i = 0; i < 64; i++) {
+                try app.swap(m, m.maxAmountIn, 0, address(this), "") returns (uint256 out) {
+                    guardedInTotal += m.maxAmountIn;
+                    guardedOutTotal += out;
+                    guardedTrades++;
+                } catch {
+                    break;
+                }
+            }
+            // Read from Aqua for this strategy hash, not from the maker's wallet: the wallet holds
+            // every position's reserve at once, so the second run below would read as if the first
+            // had never happened.
+            (, guardedReserveLeft) = aqua.safeBalances(maker, address(app), m.hash(), m.tokenIn, m.tokenOut);
+        }
+
+        // The same position with the limits removed: no cap, no floor. Everything else is
+        // identical, including the fee and the curve, so the difference below is the mandate and
+        // nothing else.
+        uint256 bareOutTotal;
+        uint256 bareInTotal;
+        uint256 bareTrades;
+        uint256 bareReserveLeft;
+        {
+            tokenIn.mint(maker, RESERVE_IN);
+            tokenOut.mint(maker, RESERVE_OUT);
+            Mandate memory m = _mandate();
+            m.maxAmountIn = type(uint128).max;
+            m.minRateE18 = 0;
+            m.salt = 1;
+            _ship(m);
+            for (uint256 i = 0; i < 64; i++) {
+                try app.swap(m, 100e18, 0, address(this), "") returns (uint256 out) {
+                    bareInTotal += 100e18;
+                    bareOutTotal += out;
+                    bareTrades++;
+                } catch {
+                    break;
+                }
+            }
+            (, bareReserveLeft) = aqua.safeBalances(maker, address(app), m.hash(), m.tokenIn, m.tokenOut);
+        }
+
+        emit log("the same reserves, the same attacker, 64 attempts each");
+        emit log("                      trades   average rate   tokenB left in the position");
+        emit log_named_string(
+            "  under a mandate  ",
+            string.concat(
+                vm.toString(guardedTrades),
+                "        ",
+                vm.toString((guardedOutTotal * 1e18) / guardedInTotal),
+                "    ",
+                vm.toString(guardedReserveLeft)
+            )
+        );
+        emit log_named_string(
+            "  with none        ",
+            string.concat(
+                vm.toString(bareTrades),
+                "       ",
+                vm.toString((bareOutTotal * 1e18) / bareInTotal),
+                "     ",
+                vm.toString(bareReserveLeft)
+            )
+        );
+
+        // The position the mandate protected is still a position; the other one is a husk.
+        assertGt(
+            guardedReserveLeft * 4,
+            RESERVE_OUT,
+            "a mandate that stops only after three quarters of the reserve is gone is not stopping much"
+        );
+        assertLt(bareReserveLeft * 4, RESERVE_OUT, "the unguarded position should be most of the way gone");
+
+        // The mandate stops while the position is still a position.
+        assertLt(guardedTrades, 64, "the mandate must stop the sequence, not run out of loop");
+        assertGe(
+            (guardedOutTotal * 1e18) / guardedInTotal,
+            _mandate().minRateE18,
+            "every token that left did so above the floor, on average as well as trade by trade"
+        );
+
+        // And the unguarded one keeps selling all the way down.
+        assertGt(bareTrades, guardedTrades, "without limits the attacker gets more trades");
+        assertLt(
+            (bareOutTotal * 1e18) / bareInTotal,
+            _mandate().minRateE18,
+            "and ends up selling below a rate the maker would have refused"
+        );
+    }
+
     function test_RepeatedTradingCannotWalkThePositionBelowItsFloor() public {
         Mandate memory m = _mandate();
         _ship(m);
