@@ -17,6 +17,7 @@
 //   node agent/hcs.mjs --create-topic     once, to make the topic
 //   node agent/hcs.mjs --publish 0x…      publish a program
 //   node agent/hcs.mjs --lookup 0x…       find its publication record
+//   node agent/hcs.mjs --revocations agent  every time that name was taken back
 
 import 'dotenv/config';
 
@@ -50,6 +51,34 @@ export function mandateMessage({ program, maker, app, chainId, strategyHash }) {
 }
 
 /**
+ * A revocation, recorded on the same ledger as the grant.
+ *
+ * A publication trail that carries only grants tells half a story: it says when authority was
+ * given and never when it was taken back, so a reader arriving after a withdrawal sees a standing
+ * mandate. The chain has the truth either way — the name is burned and the settlement refuses —
+ * but the ledger a stranger reads without an account should not be the optimistic half.
+ *
+ * The label and registry rather than the program, because revocation is an act against a *name*,
+ * and one name may gate more than one position. The program it was gating is carried when it is
+ * known, so a reader can join the two.
+ */
+export function revocationMessage({ label, registry, program, chainId, at }) {
+    if (typeof label !== 'string' || label.length === 0) throw new Error('label is required');
+    if (typeof registry !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(registry)) {
+        throw new Error('registry must be a 0x-prefixed 20-byte address');
+    }
+    return JSON.stringify({
+        v: MESSAGE_VERSION,
+        kind: 'batas.revocation',
+        label,
+        registry: registry.toLowerCase(),
+        ...(program ? { program: String(program).toLowerCase() } : {}),
+        ...(chainId ? { chainId: Number(chainId) } : {}),
+        ...(at ? { at: Number(at) } : {}),
+    });
+}
+
+/**
  * Read a mirror-node message back into a record.
  *
  * Anything that is not one of ours comes back as null rather than as a half-parsed object: a topic
@@ -70,6 +99,19 @@ export function parseMandateMessage(base64) {
         return null;
     }
     if (parsed?.kind !== 'batas.mandate' || typeof parsed.program !== 'string') return null;
+    if (parsed.v !== MESSAGE_VERSION) return null;
+    return parsed;
+}
+
+/** The same discipline for the other kind: anything that is not ours comes back as null. */
+export function parseRevocationMessage(base64) {
+    let parsed;
+    try {
+        parsed = JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
+    } catch {
+        return null;
+    }
+    if (parsed?.kind !== 'batas.revocation' || typeof parsed.label !== 'string') return null;
     if (parsed.v !== MESSAGE_VERSION) return null;
     return parsed;
 }
@@ -114,9 +156,17 @@ export async function createTopic(memo = 'Batas mandate publications') {
  * mirror node has the message, so it is left to `lookupMandate` rather than guessed here.
  */
 export async function publishMandate(topicId, record) {
+    return publishMessage(topicId, mandateMessage(record));
+}
+
+/** The same, for a revocation. One topic, both halves of the story. */
+export async function publishRevocation(topicId, record) {
+    return publishMessage(topicId, revocationMessage(record));
+}
+
+async function publishMessage(topicId, message) {
     const id = topicId || process.env.BATAS_HCS_TOPIC;
     if (!id) throw new Error('no topic: set BATAS_HCS_TOPIC or pass one');
-    const message = mandateMessage(record);
     const { TopicMessageSubmitTransaction } = await import('@hiero-ledger/sdk');
     const c = await client();
     try {
@@ -132,6 +182,41 @@ export async function publishMandate(topicId, record) {
     } finally {
         c.close();
     }
+}
+
+/**
+ * Every revocation recorded for a name, oldest first.
+ *
+ * Unlike a grant, a revocation is not matched on bytes: the question is "has this name been taken
+ * back", and a name can be granted and pulled more than once. All of them are returned rather than
+ * the latest, because a name that was revoked, re-granted and revoked again has a history that a
+ * single row would misrepresent.
+ */
+export async function lookupRevocations(topicId, label, { fetchImpl = fetch, maxPages = 10 } = {}) {
+    const id = topicId || process.env.BATAS_HCS_TOPIC;
+    if (!id) return { topic: null, revocations: [], reason: 'no topic configured' };
+
+    const found = [];
+    let next = `/topics/${id}/messages?limit=100&order=asc`;
+    for (let page = 0; page < maxPages && next; page++) {
+        const res = await fetchImpl(next.startsWith('http') ? next : MIRROR + next.replace(/^\/api\/v1/, ''));
+        if (!res.ok) throw new Error(`mirror node ${res.status}`);
+        const body = await res.json();
+        for (const m of body.messages ?? []) {
+            const record = parseRevocationMessage(m.message);
+            if (record?.label === label) {
+                found.push({
+                    ...record,
+                    consensusTimestamp: m.consensus_timestamp,
+                    revokedAt: consensusToISO(m.consensus_timestamp),
+                    sequenceNumber: m.sequence_number,
+                    mirror: `${MIRROR}/topics/${id}/messages/${m.sequence_number}`,
+                });
+            }
+        }
+        next = body.links?.next ?? null;
+    }
+    return { topic: String(id), revocations: found };
 }
 
 /**
@@ -206,6 +291,21 @@ async function main() {
         console.log(`\nadd to .env:\nBATAS_HCS_TOPIC=${id}`);
         return;
     }
+    if (flag === '--revocations') {
+        const label = value || 'agent';
+        const { revocations, topic } = await lookupRevocations(undefined, label);
+        if (revocations.length === 0) {
+            console.log(`no revocation of "${label}" recorded on topic ${topic}`);
+            return;
+        }
+        console.log(`"${label}" on topic ${topic}: ${revocations.length} revocation(s)`);
+        for (const r of revocations) {
+            console.log(`  #${r.sequenceNumber}  ${r.revokedAt}  registry ${r.registry}`);
+            console.log(`     ${r.mirror}`);
+        }
+        return;
+    }
+
     if (flag === '--publish' && value) {
         const out = await publishMandate(null, { program: value, chainId: 11155111 });
         console.log(out);
@@ -215,7 +315,7 @@ async function main() {
         console.log(await lookupMandate(null, value));
         return;
     }
-    console.log('usage: node agent/hcs.mjs [--create-topic | --publish 0x… | --lookup 0x…]');
+    console.log('usage: node agent/hcs.mjs [--create-topic | --publish 0x… | --lookup 0x… | --revocations <label>]');
 }
 
 if (import.meta.filename === process.argv[1]) {

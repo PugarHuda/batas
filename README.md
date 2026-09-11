@@ -913,7 +913,30 @@ Reading it costs nothing and needs no account:
 ```bash
 curl 'https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages'
 node agent/hcs.mjs --lookup 0x2120...      # or ask the same question locally
+node agent/hcs.mjs --revocations agent     # and every time that name was taken back
 ```
+
+**Withdrawals are published too, and that is not decoration.** A ledger carrying only grants tells
+the optimistic half of the story: it says when authority was given and never when it was taken
+back, so a reader arriving after a revocation sees a mandate that still looks to be standing. The
+chain has the truth either way — the name is burned and the settlement refuses — but the record
+that needs no account should not be the half that flatters us. `node agent/ens.mjs --revoke agent`
+writes the note itself:
+
+```
+"agent" on topic 0.0.10394165: 1 revocation(s)
+  #7  2026-09-11T02:55:10.617Z  registry 0x945800bd6cdd60521b64a12d7b3f12fc90916a6b
+     https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/7
+```
+
+It is best effort on purpose. By the time that write is attempted the name is already revoked and
+the authority already gone, so a failure to publish must not leave the operator thinking otherwise
+— it says what it could not do and moves on.
+
+A revocation names the *name*, not the program, because one name may gate more than one position,
+and a topic is public and writable by anyone holding its submit key. `parseRevocationMessage` and
+`parseMandateMessage` each refuse the other's records, which is pinned by a test: a revocation
+counted as a grant would say authority was given at the moment it was taken away.
 
 That is the property worth the trouble. The record is useful to a stranger *because* it does not
 route through us.

@@ -344,6 +344,34 @@ async function revoke(label) {
     console.log(`revoked "${label}"`);
     console.log(`tx      ${hash}`);
     console.log(`status  ${receipt.status}`);
+
+    // And say so on the ledger a stranger reads.
+    //
+    // The publication topic carried only grants, which is the optimistic half of the story: a
+    // reader arriving after a withdrawal saw a mandate that still looked to be standing. The chain
+    // has the truth either way — the name is burned and the settlement refuses — but the record
+    // that needs no account should not be the half that flatters us.
+    //
+    // Best effort on purpose. The name is already revoked and the authority already gone; failing
+    // to write the note must not make the operator think otherwise, so it reports and moves on.
+    if (process.env.HEDERA_SERVICE_ID && process.env.BATAS_HCS_TOPIC) {
+        try {
+            const { publishRevocation } = await import('./hcs.mjs');
+            const record = await publishRevocation(process.env.BATAS_HCS_TOPIC, {
+                label,
+                registry,
+                chainId: 11155111,
+                at: Math.floor(Date.now() / 1000),
+            });
+            console.log(`
+recorded on HCS topic ${record.topicId}`);
+            console.log(`  sequence ${record.sequenceNumber}  tx ${record.transactionId}`);
+        } catch (e) {
+            console.log(`
+could not record the revocation on HCS: ${String(e.message ?? e)}`);
+            console.log('  the name is revoked regardless; only the public note is missing');
+        }
+    }
 }
 
 async function main() {

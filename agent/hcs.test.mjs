@@ -133,3 +133,41 @@ test('and a real topic that simply lacks these bytes says so instead', {
     assert.equal(unpublished.topicExists, true, 'the configured topic is real');
     assert.match(unpublished.reason, /not been published/);
 });
+
+// --- the other half of the story ---------------------------------------------
+
+test('a revocation record names the name, not the program', async () => {
+    const { revocationMessage, parseRevocationMessage } = await import('./hcs.mjs');
+    const msg = revocationMessage({
+        label: 'agent',
+        registry: '0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B',
+        chainId: 11155111,
+        at: 1789000000,
+    });
+    const back = parseRevocationMessage(Buffer.from(msg, 'utf8').toString('base64'));
+    assert.equal(back.kind, 'batas.revocation');
+    assert.equal(back.label, 'agent');
+    // Lowercased, like every other address this project publishes, so a reader comparing two
+    // records is not defeated by checksum casing.
+    assert.equal(back.registry, '0x945800bd6cdd60521b64a12d7b3f12fc90916a6b');
+});
+
+test('the two kinds of record do not read as each other', async () => {
+    const { revocationMessage, mandateMessage, parseRevocationMessage, parseMandateMessage } = await import('./hcs.mjs');
+    const rev = Buffer.from(revocationMessage({ label: 'agent', registry: '0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B' }), 'utf8').toString('base64');
+    const grant = Buffer.from(mandateMessage({ program: '0x2120' }), 'utf8').toString('base64');
+
+    // A topic is public and writable by anyone holding its submit key, so foreign traffic is
+    // expected. What must not happen is one of our own kinds being read as the other: a revocation
+    // counted as a grant would say authority was given at the moment it was taken away.
+    assert.equal(parseMandateMessage(rev), null);
+    assert.equal(parseRevocationMessage(grant), null);
+    assert.ok(parseRevocationMessage(rev));
+    assert.ok(parseMandateMessage(grant));
+});
+
+test('a revocation refuses to be built without the two things that identify it', async () => {
+    const { revocationMessage } = await import('./hcs.mjs');
+    assert.throws(() => revocationMessage({ registry: '0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B' }), /label/);
+    assert.throws(() => revocationMessage({ label: 'agent', registry: 'not-an-address' }), /registry/);
+});
