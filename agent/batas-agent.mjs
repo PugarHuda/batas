@@ -150,12 +150,17 @@ export function refusesOwnCap({ reserveA, reserveB, maxAmountIn, minRateE18, fee
 /**
  * Should this mandate be replaced yet?
  *
- * Pure, exported and deliberately narrow. The agent renews on *time*, and on the one condition
- * under which the mandate has already stopped authorising anything: a position that refuses its
- * own cap (see `refusesOwnCap`). It does not renew because the price moved, and that is a decision
- * rather than an omission — re-shipping burns a strategy hash and writes new terms, so an agent
- * that did it whenever spot drifted would be rewriting its own limits as a matter of routine,
+ * Pure, exported and deliberately narrow. The agent renews on *time* and on nothing else: a
+ * mandate approaching its deadline is about to stop authorising anything, and re-granting is the
+ * only way the position keeps working. It does not renew because the price moved, and that is a
+ * decision rather than an omission — re-shipping burns a strategy hash and writes new terms, so an
+ * agent that did it whenever spot drifted would be rewriting its own limits as a matter of routine,
  * which is the one thing this project exists to prevent it doing.
+ *
+ * One condition is reported rather than acted on. A position that refuses its own cap (see
+ * `refusesOwnCap`) has already stopped authorising anything, but renewing it would not help: the
+ * floor may not loosen on renewal, so the new position would refuse exactly what the old one does,
+ * at the price of a ship. That is the owner's to fix, so it comes back as `warn` with `act: false`.
  *
  * `live` is the position as it stands — its reserves and the terms it enforces — passed in so the
  * decision stays pure; null when the strategy could not be read.
@@ -166,7 +171,7 @@ export function renewalDecision({ expiry, now = Math.floor(Date.now() / 1000), r
     }
     const left = Number(expiry) - now;
     if (left <= 0) return { act: true, reason: `the mandate expired ${-left}s ago` };
-    if (live && refusesOwnCap(live)) return { act: true, reason: 'refuses its own cap' };
+    if (live && refusesOwnCap(live)) return { act: false, warn: 'refuses its own cap' };
     if (left <= renewBeforeSeconds) {
         return { act: true, reason: `${left}s left, inside the ${renewBeforeSeconds}s renewal window` };
     }
@@ -433,6 +438,11 @@ async function tick({ watching = false, mayShip = true } = {}) {
         expiry: liveExpiry, renewBeforeSeconds: RENEW_BEFORE,
         live: { reserveA, reserveB, maxAmountIn: liveCap, minRateE18: liveFloor, feeBps: liveTerms.feeBps },
     });
+    // Not a renewal case, in or out of a watch: the held floor would ship the same refusal again.
+    if (due.warn) {
+        console.log(`\nthe position ${due.warn} at its live reserves; only the owner can loosen a floor; nothing was shipped`);
+        return { shipped: false, stopped: 'refuses own cap' };
+    }
     if (watching) {
         console.log(`\nrenewal  ${due.reason}`);
         if (!due.act) return { shipped: false, reason: due.reason };
@@ -559,6 +569,9 @@ async function watch() {
                 shipped += 1;
                 console.log(`\nships used ${shipped}/${budget}`);
             }
+            // Unlike a revoked name, this does not clear on its own: nothing the loop can do
+            // changes it, and a loop that keeps reporting the same refusal is noise.
+            if (result?.stopped === 'refuses own cap') return;
         } catch (e) {
             // A failed round is a bad minute, not a reason to stop running the position. The next
             // one re-reads everything from the chain, so nothing carries over from this one.

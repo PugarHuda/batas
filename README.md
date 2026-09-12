@@ -1567,9 +1567,10 @@ terms are derived from the amounts that actually ship** — `min(wallet balance,
 fixed before the decision — so a trade landing between the reserve read and the ship cannot leave a
 position whose floor refuses a tenth of a token for its whole term. **And a position that refuses
 its own cap** — one whose floor rejects even one percent of its stated maximum at its live reserves
-— is renewed at once rather than at its deadline, since a mandate that authorises nothing is not one
-worth keeping alive on schedule. Together with the cap rule already in place, only the owner can
-widen anything; the agent can only tighten, and only tell you when it has painted itself in.
+— is reported, and the loop stops. Renewing it would ship the same refusal again under a floor the
+agent may not loosen, so that is a decision for the owner: dock the position, or grant a wider
+mandate by hand. Together with the cap rule already in place, only the owner can widen anything;
+the agent can only tighten, and only tell you when it has painted itself in.
 
 **Off chain** — the two encoders agree byte for byte on arbitrary terms; the decision math never
 returns a cap that its own floor would refuse; the ENSv2 role bitmaps withhold exactly the four

@@ -189,10 +189,10 @@ test('a live mandate with no deadline at all is replaced with one that has', asy
     }
 });
 
-test('a position that refuses its own cap is renewed before its time', async () => {
+test('a position that refuses its own cap is reported, not renewed', async () => {
     // One max fill lands on the floor and leaves spot under it; from there the mandate authorises
-    // nothing for the rest of its term. Waiting for the deadline would be keeping a dead position
-    // alive on schedule.
+    // nothing for the rest of its term. Renewing would not help — the floor may not loosen, so the
+    // new position refuses the same trades — so it is a warning for the owner, not an action.
     const { renewalDecision } = await import('./batas-agent.mjs');
     const now = 1_789_000_000;
     const reserveA = E(1000);
@@ -204,13 +204,15 @@ test('a position that refuses its own cap is renewed before its time', async () 
     // Spot has walked 3% under the floor the mandate still carries.
     const walked = { ...healthy, reserveB: (reserveB * 97n) / 100n };
     const d = renewalDecision({ expiry: now + 10 * 3600, now, live: walked });
-    assert.equal(d.act, true);
-    assert.equal(d.reason, 'refuses its own cap');
+    assert.equal(d.act, false);
+    assert.equal(d.warn, 'refuses its own cap');
+    // Time still wins: a mandate that is expired anyway is renewed anyway.
+    assert.equal(renewalDecision({ expiry: now - 1, now, live: walked }).act, true);
 
     // A cap of zero is a mandate permitting nothing by decision, not one that drifted there.
-    assert.equal(renewalDecision({ expiry: now + 10 * 3600, now, live: { ...walked, maxAmountIn: 0n } }).act, false);
-    // And unreadable terms are not a reason to act.
-    assert.equal(renewalDecision({ expiry: now + 10 * 3600, now, live: null }).act, false);
+    assert.equal(renewalDecision({ expiry: now + 10 * 3600, now, live: { ...walked, maxAmountIn: 0n } }).warn, undefined);
+    // And unreadable terms are not a verdict.
+    assert.equal(renewalDecision({ expiry: now + 10 * 3600, now, live: null }).warn, undefined);
 });
 
 // --- where the floor comes from ----------------------------------------------
