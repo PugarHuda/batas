@@ -102,7 +102,7 @@ commit 6 September, the event opened on the 4th; version control with frequent c
 across the event, each one a single argued change; public repository — yes; video under four
 minutes with no speed-ups — the storyboard below runs 3:50 and says which waits to cut rather than
 accelerate. The suites at last count: `forge test` 58 passing, `node --test agent/*.test.mjs`
-216 of 222 passing.
+228 of 228 passing.
 
 **AI disclosure.** The commits carry Claude co-author trailers: this was AI-assisted development,
 and all code was reviewed, tested and deployed by the author.
@@ -165,7 +165,7 @@ leave with *83% against 14%, same attacker*; everything after that is the explan
 
 ```bash
 forge build --force                      # ~36s, so nothing compiles on camera
-anvil --fork-url $SEPOLIA_RPC_URL &      # ~25s to be ready; the demo runs against this, in a terminal never shown
+anvil --fork-url $SEPOLIA_RPC_URL &      # ~40s to be ready on a public RPC; the demo runs against this, in a terminal never shown
 curl -s https://batas-one.vercel.app/ >/dev/null   # warm the serverless cold start
 node agent/killswitch.mjs                # read-only preflight: must print a quote, not "refused"
 chcp 65001                               # Windows: so — and → render in the terminal
@@ -195,7 +195,7 @@ waits return instantly, so every cut lands on a wait and keeps an answer.
 | 6d | 2:10–2:14 | `re-granting "agent" …` | *Sepolia tx ~40 s, trimmed* | Grant it back. |
 | 6e | 2:14–2:24 | `quote 1 A, name restored -> 1.95 B`, and the closing line | **Same position, same price, back.** | And the position comes back at the same price. One transaction to stop, one to resume, no cooperation needed from the thing you are stopping. |
 | 7a | 2:24–2:40 | `node agent/counterparty.mjs --paranoid --trade`: discovery via `/.well-known/x402`, then the three free answers | **A stranger's agent, its own money** | This is a different agent with its own wallet and its own rules, arriving at a position it did not create. It finds the service through the host's x402 discovery manifest, nothing hard-coded, and asks three free questions: what do the bytes permit, when did they go public on Hedera, does the name still hold. |
-| 7b | 2:40–2:52 | `every free check passed / but the grant is only 41s old…` → `paying 0.001 HBAR…` → `settled 0.0.7162784@…` → `vouches true` | **Refuse for free. Pay 0.001 HBAR for doubt.** | A position it does not like costs nothing to refuse. Here everything checks out but one doubt remains, so it pays a tenth of a cent over x402 for the one answer it cannot compute alone: who operates this, and whether their ERC-8004 identity is held by the address that granted the mandate. It is. |
+| 7b | 2:40–2:52 | `every free check passed / --paranoid: buying the full answer regardless` (or `but the grant is only Ns old…` when the grant is under an hour old and --paranoid is omitted) → `paying 0.001 HBAR…` → `settled 0.0.7162784@…` → `vouches true` | **Refuse for free. Pay 0.001 HBAR for doubt.** | A position it does not like costs nothing to refuse. Here everything checks out but one doubt remains, so it pays a tenth of a cent over x402 for the one answer it cannot compute alone: who operates this, and whether their ERC-8004 identity is held by the address that granted the mandate. It is. |
 | 7c | 2:52–3:12 | `traded 1 A in / received 1.952… B` → `leaving feedback: 60bps above the floor` → `feedback success 0x…` | **Trades. Then says so on chain: +60 bps** | So it trades. One token in, one point nine five out. Then it writes what it saw into the ERC-8004 reputation registry: sixty basis points above the floor the mandate advertised. The registry will not let the agent say that about itself. That is what makes the number worth reading. |
 | 8 | 3:12–3:38 | browser, *The live position* panel: Publication / Authority / Reputation | **Sepolia · Hedera · ENSv2 · ERC-8004. Live.** | Everything you just saw is live and public. The terms, on Sepolia. When they became public, on Hedera Consensus Service, from a mirror node that is not ours. Whether the name still holds, from ENSv2. What counterparties said, from ERC-8004. Three limits, checked in the two places that gate the money, and endable by a name the settlement itself obeys. |
 | 9 | 3:38–3:50 | black card: Batas · github.com/PugarHuda/batas · batas-one.vercel.app | *(the sentence)* | The agent picks the limits, the settlement enforces them, and the maker takes them back in one transaction. |

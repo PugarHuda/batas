@@ -23,6 +23,7 @@ export function page({ origin, price, payTo, topic, facilitator, network }) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Batas — a mandate a machine enforces</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9B%91%3C/text%3E%3C/svg%3E">
 <style>
   :root {
     color-scheme: light dark;
@@ -332,7 +333,7 @@ npm run walkthrough -- --paid</pre>
     <dd>Four tools for an assistant: three free, one that says <code>THIS SPENDS MONEY</code>. Reputation is over HTTP only.
       <code>claude mcp add batas -- node agent/mcp.mjs</code></dd>
     <dt>HTTP, free</dt>
-    <dd>Four free routes: the three free MCP questions, plus reputation.
+    <dd>Five free routes: the three free MCP questions, plus reputation and the position's health report.
       <code>POST /v1/mandate/decode · POST /v1/mandate/publication · GET /v1/agent/authority · GET /v1/agent/reputation</code></dd>
   </dl>
 

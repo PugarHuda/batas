@@ -1597,9 +1597,9 @@ can move even if the assertion is wrong, and CI needs no secret to run it.
 
 ```
 forge test          58 passing
-npm run test:js    216 passing
-npm run test:api    20 passing
-npm run test:prod    5 passing
+npm run test:js    228 passing
+npm run test:api    26 passing
+npm run test:prod    7 passing
 ```
 
 **This document** — `agent/readme.test.mjs` walks the README and asks the chain about everything it
