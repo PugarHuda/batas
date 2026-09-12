@@ -19,10 +19,17 @@ interface IMandateNameRegistry {
     ///   as a burned one, so a check built on `ownerOf` could never tell a lapse from a
     ///   revocation — every lapse presented as `MandateNameNotHeld`, and the error this library
     ///   named for it was unreachable on the registry it was written for.
+    /// @dev The registry returns a `State` struct, and a struct of static fields is ABI-encoded as
+    ///   its fields in declaration order — `status, expiry, latestOwner, tokenId, resource`. The
+    ///   first version of this interface listed them in the order the docs described them, not
+    ///   the order the struct declares them, and every settlement against a named mandate on the
+    ///   live router reverted while all 52 tests passed: the mock had been written to match the
+    ///   interface rather than the registry. The order below is the deployed `UserRegistry`'s
+    ///   (`0x624a25d6…` behind the proxy), and the fork test in `MandateAgreement.t.sol` reads it.
     function getState(uint256 anyId)
         external
         view
-        returns (uint64 expiry, uint256 tokenId, uint256 resource, address latestOwner, uint8 status);
+        returns (uint8 status, uint64 expiry, address latestOwner, uint256 tokenId, uint256 resource);
 }
 
 /// @title MandateName
@@ -141,7 +148,7 @@ library MandateName {
         // could not be reached at all. `latestOwner` is the raw owner, which is the one the
         // distinction needs. A registry that reverts on the call reverts the settlement, which is
         // the safe direction: no answer about the name means no trade.
-        (uint64 expiry,,, address owner,) =
+        (, uint64 expiry, address owner,,) =
             IMandateNameRegistry(registry).getState(uint256(keccak256(bytes(label))));
         require(owner == holder, MandateNameNotHeld(owner, holder));
         require(expiry > block.timestamp, MandateNameLapsed(expiry, block.timestamp));

@@ -18,7 +18,7 @@ import {
     keccak256, concat, formatUnits, getAddress,
 } from 'viem';
 
-import { toProgram, decideMandate, decodeProgram, readMandate, volatilityBudget } from './swapvm.mjs';
+import { toProgram, decideMandate, decodeProgram, readMandate, volatilityBudget, clearsFloor } from './swapvm.mjs';
 import { programFromStrategy } from './inspect.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { publishMandate } from './hcs.mjs';
@@ -112,21 +112,61 @@ const encodeOrder = (order) =>
 const pct = (n, d) => (d === 0n ? '0' : (Number((n * 10000n) / d) / 100).toFixed(2));
 
 /**
+ * The rate one settled trade got, in B per A — or null if it is not this maker's, not this
+ * mandate's direction, or not this pair.
+ *
+ * The mandate's own direction only. A trade the other way reports its rate in the other unit — A
+ * per B — and one of them among A-per-B rates read as a 7400bps move and pinned the budget at its
+ * ceiling. The router refuses that direction now, so that half is belt and braces; belts are cheap.
+ * The pair check is not: `Swapped` is filtered here by maker, and this maker may have shipped an
+ * A/C position, or an older A/B one it has since docked, whose settlements share a tokenIn and a
+ * different price. Mixing those in measures a market this position never traded.
+ */
+export function ownSettlement(args, maker) {
+    if (args.maker?.toLowerCase() !== maker.toLowerCase()) return null;
+    if (args.tokenIn?.toLowerCase() !== TOKEN_A.toLowerCase()) return null;
+    if (args.tokenOut?.toLowerCase() !== TOKEN_B.toLowerCase()) return null;
+    if (!args.amountIn || args.amountIn === 0n) return null;
+    return (args.amountOut * E18) / args.amountIn;
+}
+
+/**
+ * Can the live position still honour its own mandate?
+ *
+ * A mandate whose floor refuses even a sliver of its stated cap is a position that authorises
+ * nothing: one max fill lands on the floor and leaves spot under it, and from there every trade
+ * is refused until the terms are struck again. The probe is 1% of the cap, small enough that the
+ * curve barely moves and the answer is about the floor, not about size. A cap of zero is left
+ * alone — that is a mandate permitting nothing by decision, not one that drifted there.
+ */
+export function refusesOwnCap({ reserveA, reserveB, maxAmountIn, minRateE18, feeBps } = {}) {
+    if (!maxAmountIn || !minRateE18 || !reserveA || !reserveB) return false;
+    const probe = maxAmountIn / 100n;
+    if (probe === 0n) return false;
+    // readMandate reports the fee as a Number; clearsFloor multiplies by it.
+    return !clearsFloor({ reserveA, reserveB, amountIn: probe, minRateE18, feeBps: BigInt(feeBps ?? 30_000n) });
+}
+
+/**
  * Should this mandate be replaced yet?
  *
- * Pure, exported and deliberately narrow. The agent renews on *time* and on nothing else: a
- * mandate approaching its deadline is about to stop authorising anything, and re-granting is the
- * only way the position keeps working. It does not renew because the price moved, and that is a
- * decision rather than an omission — re-shipping burns a strategy hash and writes new terms, so an
- * agent that did it whenever spot drifted would be rewriting its own limits as a matter of routine,
+ * Pure, exported and deliberately narrow. The agent renews on *time*, and on the one condition
+ * under which the mandate has already stopped authorising anything: a position that refuses its
+ * own cap (see `refusesOwnCap`). It does not renew because the price moved, and that is a decision
+ * rather than an omission — re-shipping burns a strategy hash and writes new terms, so an agent
+ * that did it whenever spot drifted would be rewriting its own limits as a matter of routine,
  * which is the one thing this project exists to prevent it doing.
+ *
+ * `live` is the position as it stands — its reserves and the terms it enforces — passed in so the
+ * decision stays pure; null when the strategy could not be read.
  */
-export function renewalDecision({ expiry, now = Math.floor(Date.now() / 1000), renewBeforeSeconds = 3600 }) {
+export function renewalDecision({ expiry, now = Math.floor(Date.now() / 1000), renewBeforeSeconds = 3600, live = null }) {
     if (expiry === null || expiry === undefined) {
         return { act: true, reason: 'the live mandate carries no deadline; granting one that does' };
     }
     const left = Number(expiry) - now;
     if (left <= 0) return { act: true, reason: `the mandate expired ${-left}s ago` };
+    if (live && refusesOwnCap(live)) return { act: true, reason: 'refuses its own cap' };
     if (left <= renewBeforeSeconds) {
         return { act: true, reason: `${left}s left, inside the ${renewBeforeSeconds}s renewal window` };
     }
@@ -212,14 +252,9 @@ async function tick({ watching = false, mayShip = true } = {}) {
             const from = to > WINDOW ? to - WINDOW : 0n;
             const batch = await pub.getLogs({ address: ROUTER, event: swappedEvent, fromBlock: from, toBlock: to });
             for (const l of batch) {
-                if (l.args.maker?.toLowerCase() !== account.address.toLowerCase()) continue;
-                // The mandate's own direction only. A trade the other way reports its rate in the
-                // other unit — A per B — and one of them among A-per-B rates read as a 7400bps move
-                // and pinned the budget at its ceiling. The router refuses that direction now, so
-                // this is belt and braces; belts are cheap.
-                if (l.args.tokenIn?.toLowerCase() !== TOKEN_A.toLowerCase()) continue;
-                if (!l.args.amountIn || l.args.amountIn === 0n) continue;
-                settledRates.push({ block: l.blockNumber, index: l.logIndex ?? 0, rate: (l.args.amountOut * E18) / l.args.amountIn });
+                const rate = ownSettlement(l.args, account.address);
+                if (rate === null) continue;
+                settledRates.push({ block: l.blockNumber, index: l.logIndex ?? 0, rate });
             }
             to = from - 1n;
             if (from === 0n) break;
@@ -235,29 +270,30 @@ async function tick({ watching = false, mayShip = true } = {}) {
         args: [account.address, ROUTER, strategyHash, TOKEN_A, TOKEN_B],
     });
 
+    // The terms the live position enforces, read once. An undecodable strategy is not a reason to
+    // skip the authority check, and it caps nothing: the fresh mandate starts from measurement.
+    let liveTerms = {};
+    try {
+        liveTerms = readMandate(decodeProgram(programFromStrategy(latest.args.strategy)));
+    } catch { /* see above */ }
+    const liveExpiry = liveTerms.expiry ?? null;
+    const liveCap = liveTerms.maxAmountIn ?? null;
+    const liveFloor = liveTerms.minRateE18 ?? null;
+
     // 2. Check that it is allowed to act at all, before doing any work.
     //
     // The ENS mandate name is the owner's kill switch. Revoking it, or simply letting it expire,
     // ends the agent's authority without touching the position or spending anything on chain. An
     // agent that does not consult it turns that control into decoration, so the check runs before
     // the transaction rather than after.
-    let liveExpiry = null;
     let nameExpiry = null;
-    let liveCap = null;
     const ensRegistry = ENS_REGISTRY;
     if (ensRegistry) {
         const label = MANDATE_NAME;
         // The live mandate's own deadline. The name is granted to run exactly that long, so an
         // earlier expiry on the name means the owner pulled it rather than that it ran out — and
         // an agent reporting a withdrawal as a lapse tells its operator the wrong thing.
-        let grantedUntil;
-        try {
-            grantedUntil = readMandate(decodeProgram(programFromStrategy(latest.args.strategy))).expiry ?? undefined;
-        } catch { /* an undecodable strategy is not a reason to skip the authority check */ }
-        liveExpiry = grantedUntil ?? null;
-        try {
-            liveCap = readMandate(decodeProgram(programFromStrategy(latest.args.strategy))).maxAmountIn ?? null;
-        } catch { /* an undecodable strategy caps nothing; the fresh mandate starts from measurement */ }
+        const grantedUntil = liveExpiry ?? undefined;
         const status = await mandateNameStatus(pub, getAddress(ensRegistry), label, account.address, { grantedUntil });
         console.log('');
         console.log(`mandate name "${label}": ${status.reason}`);
@@ -277,10 +313,22 @@ async function tick({ watching = false, mayShip = true } = {}) {
     }
 
 
-    // 3. Decide. Spot comes from the reserves the chain reports, not from a guess.
-    const spotE18 = (reserveB * E18) / reserveA;
+    // 3. Decide. Spot comes from what the new position will actually hold, not from a guess — and
+    //    not from the reserves either. The ship below sends min(wallet balance, reserve) per side,
+    //    and a trade landing between the reserve read and the ship moves both the wallet and the
+    //    reserves. A floor struck against the old ratio and shipped with the new one produced a
+    //    position that refused a tenth of a token for its whole term. So the shipped amounts are
+    //    fixed first and the terms derived from those.
+    const balA = await pub.readContract({ address: TOKEN_A, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
+    const balB = await pub.readContract({ address: TOKEN_B, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
+    const shipA = balA < reserveA ? balA : reserveA;
+    const shipB = balB < reserveB ? balB : reserveB;
+    if (shipA === 0n || shipB === 0n) throw new Error('owner holds none of the pair; mint demo tokens first');
+
     console.log(`\nreserves ${formatUnits(reserveA, 18)} A / ${formatUnits(reserveB, 18)} B`);
-    console.log(`spot     ${formatUnits(spotE18, 18)} B per A`);
+    if (shipA !== reserveA || shipB !== reserveB) {
+        console.log(`wallet   ${formatUnits(shipA, 18)} A / ${formatUnits(shipB, 18)} B is what the new position will hold; terms derive from that`);
+    }
 
     // The floor sits one slippage budget under spot; the cap is a slice of the reserve, which is
     // what actually bounds how far a single trade can walk the price.
@@ -293,25 +341,36 @@ async function tick({ watching = false, mayShip = true } = {}) {
     const FEE_BPS = 30_000n; // 0.3% of SwapVM's 1e7 base
 
     const decided = decideMandate({
-        reserveA, reserveB, slippageBps: SLIPPAGE_BPS, capBps: CAP_BPS,
+        reserveA: shipA, reserveB: shipB, slippageBps: SLIPPAGE_BPS, capBps: CAP_BPS,
     });
-    const { minRateE18 } = decided;
+    const { spotE18 } = decided;
+    console.log(`spot     ${formatUnits(spotE18, 18)} B per A`);
+
     // Renewal may not widen the cap. The floor follows the measurement — it is derived from a
     // price the agent does not choose — but the cap is the one term an agent holding the maker's
     // key could grow for itself, one renewal at a time, and the chain would let it: every mandate
     // is valid on its own. So the previous mandate's cap is a ceiling on the next one. Tightening
     // is the maker's to undo, by granting a wider mandate by hand.
-    let { maxAmountIn } = decided;
+    let { maxAmountIn, minRateE18 } = decided;
     if (liveCap !== null && maxAmountIn > liveCap) {
         console.log(`  cap held at the previous mandate's ${formatUnits(liveCap, 18)} A: renewal may tighten, never widen`);
         maxAmountIn = liveCap;
     }
+    // And it may not lower the floor, for the same reason with a slower fuse. The floor is struck
+    // one budget under the spot the position's own reserves imply, and a max fill lands exactly on
+    // the floor and leaves spot lower than it. Re-striking at every renewal is a ratchet: a day of
+    // hourly renewals took spot from 1.96 to 1.43 in the arithmetic, one budget at a time, with no
+    // single step that looked like anything. So the previous floor is a floor on the next one.
+    if (liveFloor !== null && minRateE18 < liveFloor) {
+        console.log(`  floor held at the previous mandate's ${formatUnits(liveFloor, 18)} B per A: renewal may tighten, never loosen`);
+        minRateE18 = liveFloor;
+    }
 
     console.log('\ndecision');
     console.log(`  budget ${SLIPPAGE_BPS}bps from ${budget.samples} settled trade(s) — ${budget.reason}`);
-    console.log(`  floor  ${formatUnits(minRateE18, 18)} B per A  (${pct(SLIPPAGE_BPS, 10000n)}% under spot)`);
+    console.log(`  floor  ${formatUnits(minRateE18, 18)} B per A  (${pct(spotE18 - minRateE18, spotE18)}% under spot)`);
     console.log(
-        `  cap    ${formatUnits(maxAmountIn, 18)} A  (${pct((maxAmountIn * 10_000n) / reserveA, 10_000n)}% of reserve,`
+        `  cap    ${formatUnits(maxAmountIn, 18)} A  (${pct((maxAmountIn * 10_000n) / shipA, 10_000n)}% of what ships,`
         + ` the largest trade that still clears the floor)`,
     );
     console.log(`  fee    ${Number(FEE_BPS) / Number(BPS) * 100}%`);
@@ -370,7 +429,10 @@ async function tick({ watching = false, mayShip = true } = {}) {
     if (!agrees) return { shipped: false, stopped: 'encoding' };
 
     // In a watch, wanting to ship is not the same as it being time to.
-    const due = renewalDecision({ expiry: liveExpiry, renewBeforeSeconds: RENEW_BEFORE });
+    const due = renewalDecision({
+        expiry: liveExpiry, renewBeforeSeconds: RENEW_BEFORE,
+        live: { reserveA, reserveB, maxAmountIn: liveCap, minRateE18: liveFloor, feeBps: liveTerms.feeBps },
+    });
     if (watching) {
         console.log(`\nrenewal  ${due.reason}`);
         if (!due.act) return { shipped: false, reason: due.reason };
@@ -383,13 +445,7 @@ async function tick({ watching = false, mayShip = true } = {}) {
         return { shipped: false, reason: 'not shipping' };
     }
 
-    // 5. Act.
-    const balA = await pub.readContract({ address: TOKEN_A, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
-    const balB = await pub.readContract({ address: TOKEN_B, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
-    const shipA = balA < reserveA ? balA : reserveA;
-    const shipB = balB < reserveB ? balB : reserveB;
-    if (shipA === 0n || shipB === 0n) throw new Error('owner holds none of the pair; mint demo tokens first');
-
+    // 5. Act, with the amounts the terms were derived from.
     console.log(`\nshipping ${formatUnits(shipA, 18)} A / ${formatUnits(shipB, 18)} B under the new mandate`);
     const hash = await wallet.writeContract({
         address: AQUA, abi: AQUA_ABI, functionName: 'ship',

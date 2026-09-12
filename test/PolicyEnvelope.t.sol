@@ -11,7 +11,10 @@ import { MakerTraitsLib } from "@1inch/swap-vm/src/libs/MakerTraits.sol";
 import { TakerTraitsLib } from "@1inch/swap-vm/src/libs/TakerTraits.sol";
 import { XYCSwap } from "@1inch/swap-vm/src/instructions/XYCSwap.sol";
 import { FeeFlatIn } from "@1inch/swap-vm/src/instructions/FeeFlat.sol";
-import { Deadline } from "@1inch/swap-vm/src/instructions/Controls.sol";
+import { Deadline, Stop } from "@1inch/swap-vm/src/instructions/Controls.sol";
+import { Jump } from "@1inch/swap-vm/src/instructions/Jumps.sol";
+import { ContextLib } from "@1inch/swap-vm/src/libs/VM.sol";
+import { AquaOpcodes } from "@1inch/swap-vm/src/opcodes/AquaOpcodes.sol";
 
 import { BatasRouter } from "../src/BatasRouter.sol";
 import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
@@ -424,6 +427,86 @@ contract PolicyEnvelopeTest is Test {
         bytes memory takerData = _takerData();
         vm.expectPartialRevert(Deadline.DeadlineReached.selector);
         swapVM.swap(order, 10e18, takerData);
+    }
+
+    /// @notice There is no "after" the envelope. An instruction appended past the curve still runs
+    ///   inside the frame and is judged there; one placed past a jump never runs; a stray byte
+    ///   or a `Stop` is refused before anything settles.
+    /// @dev SwapVM bytecode has no closing bracket. A wrapping instruction's inner `runLoop`
+    ///   consumes the program to its end, and when it returns the outer loop reads the same
+    ///   program counter and finds nothing left. So `[PolicyEnvelope [Deadline, XYCSwap]] FeeFlatIn`
+    ///   is not a program with a fee outside the envelope — it is the program
+    ///   `[PolicyEnvelope [Deadline, XYCSwap, FeeFlatIn]]`, whatever the brackets in the author's
+    ///   head said. The question is then whether a fee *behind* the curve can move the settled
+    ///   amounts, and the answer differs by mode, which is why both are pinned:
+    ///
+    ///    - exactIn: `FeeFlatIn` takes its cut, runs the (now empty) rest of the program, sees
+    ///      nothing inside it moved `amountIn`, and gives the cut back. A trailing fee is a no-op
+    ///      and the router settles exactly what the bare program would.
+    ///    - exactOut: `FeeFlatIn` grosses `amountIn` up after its empty inner loop, so the trailing
+    ///      fee *does* change the amounts — and the envelope, whose own inner loop ran the fee,
+    ///      judges the grossed-up number. Inside the terms it settles at the inflated input;
+    ///      outside them it is refused.
+    ///
+    ///   The other two shapes are refusals rather than judgements. `Stop` is not in the Aqua
+    ///   instruction set this router extends, so a program that tries to close the frame early
+    ///   never runs at all; and a half instruction after the curve trips the VM's own bounds check.
+    ///   The only way to put bytes after the frame is a `Jump` to the end of the program, and those
+    ///   bytes are then dead — the settlement is the bare program's to the wei.
+    ///
+    ///   Fails if the router ever resumed the outer loop after a wrapper returned, if the envelope
+    ///   read the registers before its inner loop instead of after, or if `FeeFlatIn` stopped
+    ///   restoring its cut when nothing inside it moved the input.
+    function test_NothingRunsOutsideTheEnvelopeFrame() public {
+        uint40 expiry = uint40(block.timestamp + 2 hours);
+        bytes memory envelope = PolicyEnvelope.build(100e18, 1.9e18, true);
+        bytes memory inside = bytes.concat(Deadline.build(expiry), XYCSwap.build());
+        bytes memory bare = bytes.concat(envelope, inside);
+        bytes memory trailingFee = bytes.concat(bare, FeeFlatIn.build(0.1e7));
+        bytes memory trailingCurve = bytes.concat(bare, XYCSwap.build());
+        bytes memory jumpedOver = bytes.concat(bare, Jump.build(uint16(bare.length + Jump.sizeOf(0) + FeeFlatIn.sizeOf(0))), FeeFlatIn.build(0.1e7));
+        bytes memory stopped = bytes.concat(bare, Stop.build(), FeeFlatIn.build(0.1e7));
+        bytes memory halfInstruction = bytes.concat(bare, bytes1(uint8(FeeFlatIn.opcode)));
+        // Same trailing fee, terms wide enough that the grossed-up input still fits.
+        bytes memory roomy = bytes.concat(PolicyEnvelope.build(1_000e18, 0, true), inside, FeeFlatIn.build(0.1e7));
+
+        ISwapVM.Order memory oBare = _order(bare);
+        ISwapVM.Order memory oFee = _order(trailingFee);
+        ISwapVM.Order memory oCurve = _order(trailingCurve);
+        ISwapVM.Order memory oJump = _order(jumpedOver);
+        ISwapVM.Order memory oStop = _order(stopped);
+        ISwapVM.Order memory oHalf = _order(halfInstruction);
+        ISwapVM.Order memory oRoomy = _order(roomy);
+        _ship(oBare); _ship(oFee); _ship(oCurve); _ship(oJump); _ship(oStop); _ship(oHalf); _ship(oRoomy);
+
+        bytes memory exactIn = _takerData();
+        bytes memory exactOut = _takerData(false, abi.encodePacked(bytes32(type(uint256).max)));
+
+        // exactIn: the trailing fee and the trailing curve change nothing.
+        (, uint256 bareOut,) = swapVM.quote(oBare, 10e18, exactIn);
+        (, uint256 feeOut,) = swapVM.quote(oFee, 10e18, exactIn);
+        (, uint256 curveOut,) = swapVM.quote(oCurve, 10e18, exactIn);
+        (, uint256 jumpOut,) = swapVM.quote(oJump, 10e18, exactIn);
+        assertEq(feeOut, bareOut, "exactIn: a fee behind the curve restores its own cut");
+        assertEq(curveOut, bareOut, "exactIn: a second curve re-prices the same registers to the same number");
+        assertEq(jumpOut, bareOut, "exactIn: bytes past a jump to the end are dead");
+
+        // exactOut: the trailing fee grosses the input up, and that is the number the envelope judges.
+        (uint256 bareIn,,) = swapVM.quote(oBare, 19e18, exactOut);
+        (uint256 roomyIn,,) = swapVM.quote(oRoomy, 19e18, exactOut);
+        (uint256 jumpIn,,) = swapVM.quote(oJump, 19e18, exactOut);
+        assertEq(roomyIn, bareIn + (bareIn * 0.1e7 + (1e7 - 0.1e7) - 1) / (1e7 - 0.1e7), "exactOut: the trailing fee is settled, grossed up exactly as FeeFlatIn computes it");
+        assertEq(jumpIn, bareIn, "exactOut: bytes past a jump to the end are dead");
+        vm.expectPartialRevert(PolicyEnvelope.MandateRateTooLow.selector);
+        swapVM.quote(oFee, 19e18, exactOut);
+
+        // The two shapes the router refuses outright, in either mode.
+        vm.expectRevert(abi.encodeWithSelector(AquaOpcodes.UnknownOpcode.selector, uint256(Stop.opcode)));
+        swapVM.quote(oStop, 10e18, exactIn);
+        // (Its length byte is read from whatever calldata follows the program, so only the
+        // selector is pinned.)
+        vm.expectPartialRevert(ContextLib.RunLoopExceedProgramLength.selector);
+        swapVM.quote(oHalf, 10e18, exactIn);
     }
 
     /// @notice An envelope whose args are shorter than its two limits is refused, not half-read.

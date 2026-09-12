@@ -134,3 +134,32 @@ test('and a chain short enough to search entirely answers null, which is a findi
     };
     assert.equal(await latestProgramOnChain({ client: shortChain }), null);
 });
+
+test('a docked position is reported as docked, not as the live one', async () => {
+    // Docking leaves no event behind it. The newest `Shipped` log names a position the maker may
+    // already have emptied, and until this was checked every free answer described its terms as
+    // if they were still on offer. Aqua's `safeBalances` refuses to answer for a docked strategy,
+    // and that refusal is the only record — so a revert is the finding.
+    const { encodeAbiParameters, parseAbiParameters, BaseError } = await import('viem');
+    const { ROUTER } = await import('./deployment.mjs');
+    const strategy = encodeAbiParameters(parseAbiParameters('(address maker, uint256 traits, bytes data)'), [
+        { maker: MAKER, traits: TRAITS, data: '0x' + '00'.repeat(40) + '2121' },
+    ]);
+    const log = { args: { maker: MAKER, app: ROUTER, strategyHash: '0x' + 'ab'.repeat(32), strategy } };
+    class Reverted extends BaseError { name = 'ContractFunctionRevertedError'; }
+    const docked = {
+        getBlockNumber: async () => 100n,
+        getLogs: async () => [log],
+        readContract: async () => { throw new BaseError('call reverted', { cause: new Reverted('SafeBalancesForTokenNotInActiveStrategy') }); },
+    };
+    const found = await latestProgramOnChain({ client: docked });
+    assert.equal(found.docked, true);
+    assert.equal(found.strategyHash, log.args.strategyHash, 'the position is still named, so a caller can see which one was docked');
+
+    // And an RPC that simply failed is not a dock.
+    const broken = { ...docked, readContract: async () => { throw new Error('ECONNRESET'); } };
+    await assert.rejects(() => latestProgramOnChain({ client: broken }), /ECONNRESET/);
+
+    const live = { ...docked, readContract: async () => [1n, 1n] };
+    assert.equal((await latestProgramOnChain({ client: live })).docked, false);
+});

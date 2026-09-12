@@ -3,29 +3,53 @@
   "version": "0.1.0",
   "private": true,
   "description": "Mandates a machine enforces: scoped, expiring authority for autonomous market-making on 1inch Aqua",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "batas": "./agent/cli.mjs"
+  },
+  "exports": {
+    ".": "./agent/index.mjs",
+    "./mcp": "./agent/mcp.mjs",
+    "./tools": "./agent/tools.mjs",
+    "./ai-sdk": "./agent/adapters/ai-sdk.mjs",
+    "./langchain": "./agent/adapters/langchain.mjs",
+    "./openai-agents": "./agent/adapters/openai-agents.mjs",
+    "./claude-agent-sdk": "./agent/adapters/claude-agent-sdk.mjs",
+    "./hedera-agent-kit": "./agent/adapters/hedera-agent-kit.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "agent/*.mjs",
+    "agent/adapters/",
+    "docs/INTEGRATE.md",
+    "!agent/*.test.mjs"
+  ],
   "dependencies": {
-    "@1inch/aqua": "github:1inch/aqua#v1.0.0",
-    "@1inch/solidity-utils": "6.9.10",
-    "@1inch/swap-vm": "github:1inch/swap-vm#f09a41e689240adc645934f965c8061749397cd2",
     "@hiero-ledger/sdk": "^2.87.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@openzeppelin/contracts": "5.4.0",
     "@x402/express": "^2.25.0",
     "@x402/fetch": "^2.25.0",
     "@x402/hedera": "^2.25.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "forge-std": "github:foundry-rs/forge-std#v1.11.0",
     "viem": "^2.56.3",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@playwright/test": "^1.63.0"
+    "@1inch/aqua": "github:1inch/aqua#v1.0.0",
+    "@1inch/solidity-utils": "6.9.10",
+    "@1inch/swap-vm": "github:1inch/swap-vm#f09a41e689240adc645934f965c8061749397cd2",
+    "@openzeppelin/contracts": "5.4.0",
+    "@playwright/test": "^1.63.0",
+    "forge-std": "github:foundry-rs/forge-std#v1.11.0"
   },
   "scripts": {
     "test": "npm run build:contracts && npm run test:sol && npm run test:js && npm run test:api",
     "test:sol": "forge test",
-    "test:js": "node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs agent/inspect-handler.test.mjs agent/counterparty.test.mjs agent/killswitch.test.mjs agent/ui-render.test.mjs agent/reputation.test.mjs",
+    "test:js": "node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs agent/inspect-handler.test.mjs agent/counterparty.test.mjs agent/killswitch.test.mjs agent/ui-render.test.mjs agent/reputation.test.mjs agent/health.test.mjs agent/attest.test.mjs agent/index.test.mjs agent/batas-agent.test.mjs",
     "test:api": "playwright test --project=local",
     "service": "node agent/service.mjs",
     "agent": "node agent/batas-agent.mjs",
@@ -35,7 +59,7 @@
     "hcs": "node agent/hcs.mjs",
     "mcp": "node agent/mcp.mjs",
     "walkthrough": "node agent/walkthrough.mjs",
-    "coverage": "node --test --experimental-test-coverage agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs agent/inspect-handler.test.mjs agent/counterparty.test.mjs agent/killswitch.test.mjs agent/ui-render.test.mjs agent/reputation.test.mjs",
+    "coverage": "node --test --experimental-test-coverage agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs agent/inspect-handler.test.mjs agent/counterparty.test.mjs agent/killswitch.test.mjs agent/ui-render.test.mjs agent/reputation.test.mjs agent/health.test.mjs agent/attest.test.mjs agent/index.test.mjs agent/batas-agent.test.mjs",
     "build:contracts": "forge build --force",
     "killswitch": "node agent/killswitch.mjs",
     "counterparty": "node agent/counterparty.mjs",

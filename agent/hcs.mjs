@@ -18,9 +18,13 @@
 //   node agent/hcs.mjs --publish 0x…      publish a program
 //   node agent/hcs.mjs --lookup 0x…       find its publication record
 //   node agent/hcs.mjs --revocations agent  every time that name was taken back
+//   node agent/hcs.mjs --name-grants agent  every time it was granted, or granted again
+//   node agent/hcs.mjs --publish-name-grant agent  record the grant the registry holds right now
 
 import 'dotenv/config';
-import { PUBLISHER } from './deployment.mjs';
+import { createPublicClient, http, keccak256, toHex } from 'viem';
+import { sepolia } from 'viem/chains';
+import { PUBLISHER, ENS_REGISTRY, SEPOLIA_RPC } from './deployment.mjs';
 
 // Mirror nodes are public and unauthenticated: anyone verifying a mandate reads the record without
 // an account, a key, or our permission. That is the property that makes this worth doing.
@@ -80,6 +84,35 @@ export function revocationMessage({ label, registry, program, chainId, at }) {
 }
 
 /**
+ * A grant of the name, recorded on the same ledger as its revocation.
+ *
+ * Revocations alone are the pessimistic half. A name that was taken back and then granted again —
+ * which is exactly what the kill-switch proof does, twice a demo — left the ledger's last word as
+ * "revoked" while the chain said "held", and the health report called that a disagreement because
+ * it was one. This is the other half: who holds the name, until when, written the moment it is
+ * granted, so the newest record about a label agrees with the registry.
+ */
+export function nameGrantMessage({ label, holder, registry, expiry, tx, chainId }) {
+    if (typeof label !== 'string' || label.length === 0) throw new Error('label is required');
+    for (const [name, value] of [['holder', holder], ['registry', registry]]) {
+        if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value)) {
+            throw new Error(`${name} must be a 0x-prefixed 20-byte address`);
+        }
+    }
+    if (!Number.isInteger(Number(expiry)) || Number(expiry) <= 0) throw new Error('expiry must be a unix timestamp');
+    return JSON.stringify({
+        v: MESSAGE_VERSION,
+        kind: 'batas.name-grant',
+        label,
+        holder: holder.toLowerCase(),
+        registry: registry.toLowerCase(),
+        expiry: Number(expiry),
+        ...(tx ? { tx: String(tx).toLowerCase() } : {}),
+        ...(chainId ? { chainId: Number(chainId) } : {}),
+    });
+}
+
+/**
  * Read a mirror-node message back into a record.
  *
  * Anything that is not one of ours comes back as null rather than as a half-parsed object. The
@@ -115,6 +148,19 @@ export function parseRevocationMessage(base64) {
         return null;
     }
     if (parsed?.kind !== 'batas.revocation' || typeof parsed.label !== 'string') return null;
+    if (parsed.v !== MESSAGE_VERSION) return null;
+    return parsed;
+}
+
+/** And for a grant. A grant without a holder is not a grant of anything. */
+export function parseNameGrantMessage(base64) {
+    let parsed;
+    try {
+        parsed = JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
+    } catch {
+        return null;
+    }
+    if (parsed?.kind !== 'batas.name-grant' || typeof parsed.label !== 'string' || typeof parsed.holder !== 'string') return null;
     if (parsed.v !== MESSAGE_VERSION) return null;
     return parsed;
 }
@@ -167,6 +213,11 @@ export async function publishRevocation(topicId, record) {
     return publishMessage(topicId, revocationMessage(record));
 }
 
+/** And for a grant of the name, so a re-grant is not left as the ledger's unsaid half. */
+export async function publishNameGrant(topicId, record) {
+    return publishMessage(topicId, nameGrantMessage(record));
+}
+
 async function publishMessage(topicId, message) {
     const id = topicId || process.env.BATAS_HCS_TOPIC;
     if (!id) throw new Error('no topic: set BATAS_HCS_TOPIC or pass one');
@@ -195,9 +246,25 @@ async function publishMessage(topicId, message) {
  * the latest, because a name that was revoked, re-granted and revoked again has a history that a
  * single row would misrepresent.
  */
-export async function lookupRevocations(topicId, label, { fetchImpl = fetch, maxPages = 10, publisher = PUBLISHER } = {}) {
+export async function lookupRevocations(topicId, label, options = {}) {
+    const walk = await walkTopic(topicId, label, { ...options, parse: parseRevocationMessage, stamp: 'revokedAt' });
+    if (!walk) return { topic: null, revocations: [], reason: 'no topic configured' };
+    const { found, ...rest } = walk;
+    return { ...rest, revocations: found };
+}
+
+/** Every grant recorded for a name, oldest first. The same shape, for the same reason. */
+export async function lookupNameGrants(topicId, label, options = {}) {
+    const walk = await walkTopic(topicId, label, { ...options, parse: parseNameGrantMessage, stamp: 'grantedAt' });
+    if (!walk) return { topic: null, nameGrants: [], reason: 'no topic configured' };
+    const { found, ...rest } = walk;
+    return { ...rest, nameGrants: found };
+}
+
+/** Our records about one name, of one kind, oldest first. Null when there is no topic to ask. */
+async function walkTopic(topicId, label, { fetchImpl = fetch, maxPages = 10, publisher = PUBLISHER, parse, stamp }) {
     const id = topicId || process.env.BATAS_HCS_TOPIC;
-    if (!id) return { topic: null, revocations: [], reason: 'no topic configured' };
+    if (!id) return null;
 
     const found = [];
     let next = `/topics/${id}/messages?limit=100&order=asc`;
@@ -207,13 +274,13 @@ export async function lookupRevocations(topicId, label, { fetchImpl = fetch, max
         const body = await res.json();
         for (const m of body.messages ?? []) {
             if (m.payer_account_id !== publisher) continue;
-            const record = parseRevocationMessage(m.message);
+            const record = parse(m.message);
             if (record?.label === label) {
                 found.push({
                     ...record,
                     payer: m.payer_account_id,
                     consensusTimestamp: m.consensus_timestamp,
-                    revokedAt: consensusToISO(m.consensus_timestamp),
+                    [stamp]: consensusToISO(m.consensus_timestamp),
                     sequenceNumber: m.sequence_number,
                     mirror: `${MIRROR}/topics/${id}/messages/${m.sequence_number}`,
                 });
@@ -221,14 +288,39 @@ export async function lookupRevocations(topicId, label, { fetchImpl = fetch, max
         }
         next = body.links?.next ?? null;
     }
-    // Same rule as above: an unfinished walk is not a finding. A caller told "no revocations" by a
+    // Same rule as below: an unfinished walk is not a finding. A caller told "no revocations" by a
     // loop that ran out of pages has been told the comfortable half of "I do not know".
     return {
         topic: String(id),
-        revocations: found,
+        found,
         searched: next ? 'incomplete' : 'complete',
         ...(next ? { reason: `stopped after ${maxPages} pages with more to read` } : {}),
     };
+}
+
+/**
+ * What the registry says about a name right now, in the shape a grant record wants.
+ *
+ * For the grant that happened before this record existed: the chain has held the name since
+ * then, and the ledger has only ever said it was taken away. Refuses when the name is not held,
+ * because a "grant" of a burned name is the exact lie this record exists to prevent.
+ */
+export async function currentNameGrant(label, { registry = ENS_REGISTRY, rpc = SEPOLIA_RPC } = {}) {
+    const pub = createPublicClient({ chain: sepolia, transport: http(rpc) });
+    const [, expiry, holder] = await pub.readContract({
+        address: registry,
+        abi: [{
+            name: 'getState', type: 'function', stateMutability: 'view', inputs: [{ name: 'id', type: 'uint256' }],
+            outputs: [
+                { name: 'status', type: 'uint8' }, { name: 'expiry', type: 'uint64' }, { name: 'latestOwner', type: 'address' },
+                { name: 'tokenId', type: 'uint256' }, { name: 'resource', type: 'uint256' },
+            ],
+        }],
+        functionName: 'getState',
+        args: [BigInt(keccak256(toHex(label)))],
+    });
+    if (Number(expiry) === 0 || /^0x0{40}$/.test(holder)) throw new Error(`"${label}" is not held in ${registry}; nothing to record`);
+    return { label, holder, registry, expiry: Number(expiry), chainId: 11155111 };
 }
 
 /**
@@ -346,6 +438,28 @@ async function main() {
         return;
     }
 
+    if (flag === '--name-grants') {
+        const label = value || 'agent';
+        const { nameGrants, topic } = await lookupNameGrants(undefined, label);
+        if (nameGrants.length === 0) {
+            console.log(`no grant of "${label}" recorded on topic ${topic}`);
+            return;
+        }
+        console.log(`"${label}" on topic ${topic}: ${nameGrants.length} grant(s)`);
+        for (const g of nameGrants) {
+            console.log(`  #${g.sequenceNumber}  ${g.grantedAt}  to ${g.holder} until ${new Date(g.expiry * 1000).toISOString()}`);
+            console.log(`     ${g.mirror}`);
+        }
+        return;
+    }
+    if (flag === '--publish-name-grant') {
+        const label = value || 'agent';
+        const grant = await currentNameGrant(label);
+        console.log(`"${label}" is held by ${grant.holder} until ${new Date(grant.expiry * 1000).toISOString()}`);
+        console.log(await publishNameGrant(null, grant));
+        return;
+    }
+
     if (flag === '--publish' && value) {
         const out = await publishMandate(null, { program: value, chainId: 11155111 });
         console.log(out);
@@ -355,7 +469,7 @@ async function main() {
         console.log(await lookupMandate(null, value));
         return;
     }
-    console.log('usage: node agent/hcs.mjs [--create-topic | --publish 0x… | --lookup 0x… | --revocations <label>]');
+    console.log('usage: node agent/hcs.mjs [--create-topic | --publish 0x… | --lookup 0x… | --revocations <label> | --name-grants <label> | --publish-name-grant <label>]');
 }
 
 if (import.meta.filename === process.argv[1]) {

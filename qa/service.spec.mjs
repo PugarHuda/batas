@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 // still see a plausible response.
 
 const LIVE_PROGRAM =
-    '0x212100000000000000006367be30fcbd45ea00000000000000001aeff914e72b45e8802005006acd0476222e945800bd6cdd60521b64a12d7b3f12fc90916a6b39d2bae5eaeda9283535ddc98f1991c81ed5cd7e056167656e74700300753050000208000000006aa58586';
+    '0x212100000000000000006367be30fcbd45ea00000000000000001aeff914e72b45e8802005006acd0476222e945800Bd6CDd60521B64a12D7b3F12fC90916a6B39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E056167656e74700300753050000208000000006aa5dc37';
 
 const decodeRequirement = (header) => JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
 
@@ -253,8 +253,89 @@ test('the description lists what is free and what is paid', async ({ request }) 
         'POST /v1/mandate/publication',
         'GET /v1/agent/authority',
         'GET /v1/agent/reputation',
+        'GET /v1/position/health',
     ]);
     expect(body.endpoint).toBe('POST /v1/mandate/explain');
+    expect(body.attribution).toMatch(/SwapVM/);
+});
+
+// --- described, so a machine can find it ------------------------------------
+//
+// Three documents in formats other people's software already reads, all generated from the one
+// route table in openapi.mjs. What is pinned is that they name every route the service actually
+// has, and that the free/paid split survives the translation.
+
+test('the OpenAPI document names every route, and says which one costs money', async ({ request }) => {
+    const res = await request.get('/openapi.json');
+    expect(res.status()).toBe(200);
+    expect(res.headers()['payment-required']).toBeUndefined();
+
+    const doc = await res.json();
+    expect(doc.openapi).toMatch(/^3\.1\./);
+    expect(doc.servers[0].url).toMatch(/^https:\/\//);
+    for (const path of ['/v1/mandate/decode', '/v1/mandate/publication', '/v1/agent/authority', '/v1/agent/reputation',
+        '/v1/mandate/explain', '/.well-known/x402', '/.well-known/agent-card.json', '/openapi.json', '/mcp', '/']) {
+        expect(doc.paths[path], `${path} is missing from the document`).toBeTruthy();
+    }
+    const paid = doc.paths['/v1/mandate/explain'].post;
+    expect(paid['x-cost']).toContain('0.001 HBAR');
+    expect(paid.responses['402'], 'the 402 is the interface; it has to be documented').toBeTruthy();
+    expect(paid.responses['402'].headers['PAYMENT-REQUIRED']).toBeTruthy();
+    expect(doc.paths['/v1/mandate/decode'].post['x-cost']).toBe('free');
+    // Every $ref resolves: a schema that points at nothing validates nothing.
+    const refs = JSON.stringify(doc).match(/#\/components\/schemas\/(\w+)/g) ?? [];
+    for (const ref of refs) expect(doc.components.schemas[ref.split('/').pop()], `${ref} is dangling`).toBeTruthy();
+    // And the description links to it.
+    expect((await (await request.get('/')).json()).openapi).toMatch(/\/openapi\.json$/);
+});
+
+test('the Agent Card carries the four questions as skills and points at the x402 manifest', async ({ request }) => {
+    const res = await request.get('/.well-known/agent-card.json');
+    expect(res.status()).toBe(200);
+    const card = await res.json();
+    expect(typeof card.name).toBe('string');
+    expect(typeof card.description).toBe('string');
+    expect(card.url).toMatch(/^https:\/\//);
+    expect(card.version).toBeTruthy();
+    expect(card.capabilities).toBeTruthy();
+    expect(Array.isArray(card.supportedInterfaces)).toBe(true);
+    expect(card.skills.map((s) => s.id)).toEqual([
+        'read_mandate', 'check_publication', 'check_agent_authority', 'check_reputation', 'inspect_mandate_paid',
+    ]);
+    for (const s of card.skills) {
+        expect(typeof s.name).toBe('string');
+        expect(typeof s.description).toBe('string');
+        expect(s.tags.length).toBeGreaterThan(0);
+    }
+    // The paid skill says so where the reader will look, not only in a tag.
+    expect(card.skills.find((s) => s.id === 'inspect_mandate_paid').description).toContain('HBAR');
+    const x402 = card.extensions.find((e) => e.uri.includes('x402'));
+    expect(x402.params.manifest).toMatch(/\/\.well-known\/x402$/);
+    const erc8004 = card.extensions.find((e) => e.uri.includes('8004'));
+    expect(erc8004.params.agentId).toMatch(/^\d+$/);
+    expect(erc8004.params.identityRegistry).toMatch(/^0x[0-9a-fA-F]{40}$/);
+});
+
+test('the MCP server answers over HTTP with the same four tools', async ({ request }) => {
+    const headers = { Accept: 'application/json, text/event-stream' };
+    const init = await request.post('/mcp', {
+        headers,
+        data: {
+            jsonrpc: '2.0', id: 1, method: 'initialize',
+            params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'qa', version: '0' } },
+        },
+    });
+    expect(init.status()).toBe(200);
+    expect(init.headers()['payment-required']).toBeUndefined();
+    const hello = await init.json();
+    expect(hello.result.serverInfo.name).toBe('batas');
+    // Stateless: no session to carry, so nothing to hand back.
+    expect(init.headers()['mcp-session-id']).toBeUndefined();
+
+    const list = await request.post('/mcp', { headers, data: { jsonrpc: '2.0', id: 2, method: 'tools/list' } });
+    expect(list.status()).toBe(200);
+    const names = (await list.json()).result.tools.map((t) => t.name).sort();
+    expect(names).toEqual(['check_agent_authority', 'check_publication', 'inspect_mandate_paid', 'read_mandate']);
 });
 
 test('the free routes have a brake, and it says how to wait', async ({ request }) => {

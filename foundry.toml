@@ -8,6 +8,14 @@ evm_version    = "cancun"
 optimizer      = true
 optimizer_runs = 700
 via_ir         = true
+# test/halmos/ is compiled by the halmos profile only. Adding a file to the compilation unit changes
+# the router's via-IR bytecode by a few bytes (UPSTREAM.md), and deployed.test.mjs compares out/
+# against Sepolia byte for byte; the symbolic tests must not move that target.
+skip           = ["test/halmos/**"]
+
+[profile.halmos]
+skip           = []
+out            = "out-halmos"
 
 [fmt]
 line_length          = 120

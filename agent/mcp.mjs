@@ -21,14 +21,9 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
 import 'dotenv/config';
 
-import { decodeAnswer, publicationAnswer, authorityAnswer, resolveProgram } from './free.mjs';
-import { payForExplanation } from './inspect.mjs';
-
-const text = (s) => ({ content: [{ type: 'text', text: s }] });
-const fail = (s) => ({ content: [{ type: 'text', text: s }], isError: true });
+import { TOOLS } from './tools.mjs';
 
 /**
  * A server per connection.
@@ -36,107 +31,24 @@ const fail = (s) => ({ content: [{ type: 'text', text: s }], isError: true });
  * A factory rather than a shared instance: the SDK binds one transport per server, so a single
  * exported instance can be connected exactly once. That is fine for one stdio process and wrong
  * for anything else — including a test that opens two clients.
+ *
+ * The tools themselves live in tools.mjs, one table shared with every other framework adapter.
+ * Each answer goes out twice: as text, for clients that only read text, and as
+ * `structuredContent`, for the ones that would otherwise parse the text back into JSON.
  */
 export function createServer() {
     const server = new McpServer({ name: 'batas', version: '1.0.0' });
 
-    server.registerTool(
-        'read_mandate',
-        {
-            title: 'Read a mandate from its bytes',
-            // Unannotated, a tool is presumed destructive and non-idempotent by clients that honour
-            // hints — the spec's defaults — so a free read looked like a write until this was said.
-            annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-            description:
-                'Decode a SwapVM program into the limits it enforces: the size cap, the floor price, the'
-                + ' expiry, the fee and the curve. Free — this is arithmetic on bytes you already hold.'
-                + ' Reports whether PolicyEnvelope is in the outermost position, which is what makes the'
-                + ' limits binding rather than advisory. Omit `program` to read the live Sepolia position.',
-            inputSchema: { program: z.string().optional().describe('0x SwapVM instruction stream') },
-        },
-        async ({ program }) => {
+    for (const [name, { title, description, annotations, shape, run }] of Object.entries(TOOLS)) {
+        server.registerTool(name, { title, description, annotations, inputSchema: shape }, async (args) => {
             try {
-                return text(JSON.stringify(await decodeAnswer(program), null, 2));
+                const answer = await run(args);
+                return { content: [{ type: 'text', text: JSON.stringify(answer, null, 2) }], structuredContent: answer };
             } catch (e) {
-                return fail(String(e.message ?? e));
+                return { content: [{ type: 'text', text: String(e.shortMessage ?? e.message ?? e) }], isError: true };
             }
-        },
-    );
-
-    server.registerTool(
-        'check_publication',
-        {
-            title: 'Check when a mandate was published',
-            // Unannotated, a tool is presumed destructive and non-idempotent by clients that honour
-            // hints — the spec's defaults — so a free read looked like a write until this was said.
-            annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-            description:
-                'Ask Hedera Consensus Service when these exact bytes were first published, and by whom.'
-                + ' Free, and read from a public mirror node rather than from us. A program that decodes'
-                + ' cleanly but has no record is a set of terms someone handed you a minute ago, which is'
-                + ' a different thing from a grant that has been standing. The match is on the whole'
-                + ' program: a mandate differing by one byte is a different grant.',
-            inputSchema: { program: z.string().optional().describe('0x SwapVM instruction stream') },
-        },
-        async ({ program }) => {
-            try {
-                return text(JSON.stringify(await publicationAnswer(program), null, 2));
-            } catch (e) {
-                return fail(String(e.message ?? e));
-            }
-        },
-    );
-
-    server.registerTool(
-        'check_agent_authority',
-        {
-            title: 'Check whether the agent is still authorised',
-            // Unannotated, a tool is presumed destructive and non-idempotent by clients that honour
-            // hints — the spec's defaults — so a free read looked like a write until this was said.
-            annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-            description:
-                'Read the ENSv2 mandate name that gates the agent. Free. Returns whether the name is held'
-                + ' and unexpired, and if not, whether it lapsed or was revoked ahead of its term — the'
-                + ' owner can end the agent\'s authority at any moment without touching the position.',
-            inputSchema: {
-                label: z.string().optional().describe('mandate name label, default "agent"'),
-                grantedUntil: z.number().optional()
-                    .describe('the mandate\'s own deadline, unix seconds; supply it to tell revocation from lapse'),
-            },
-        },
-        async ({ label, grantedUntil }) => {
-            try {
-                return text(JSON.stringify(await authorityAnswer({ label, grantedUntil }), null, 2));
-            } catch (e) {
-                return fail(String(e.shortMessage ?? e.message ?? e));
-            }
-        },
-    );
-
-    server.registerTool(
-        'inspect_mandate_paid',
-        {
-            title: 'Buy a full mandate inspection',
-            description:
-                'Settle 0.001 HBAR on Hedera testnet and get the complete answer from the live service:'
-                + ' the decoded limits, the publication record, and the ERC-8004 identity behind the'
-                + ' position with a check that it is held by the address that granted the mandate.'
-                + ' THIS SPENDS MONEY — one payment per call, capped at 0.01 HBAR by the client. Prefer'
-                + ' the free tools first and reach for this when the operator behind a position matters.',
-            inputSchema: { program: z.string().optional().describe('0x SwapVM instruction stream') },
-            annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-        },
-        async ({ program }) => {
-            try {
-                const { program: p, source } = await resolveProgram(program);
-                // Silent logger: the narration the CLI prints would land in the JSON-RPC stream here.
-                const { body, settlement } = await payForExplanation(p, { log: () => {} });
-                return text(JSON.stringify({ source, paid: true, settlement, ...body }, null, 2));
-            } catch (e) {
-                return fail(String(e.message ?? e));
-            }
-        },
-    );
+        });
+    }
 
     return server;
 }

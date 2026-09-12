@@ -172,6 +172,37 @@ test('a revocation refuses to be built without the two things that identify it',
     assert.throws(() => revocationMessage({ label: 'agent', registry: 'not-an-address' }), /registry/);
 });
 
+test('a revocation counts only from our own account, and a grant never counts as one', async () => {
+    const { lookupRevocations, revocationMessage, mandateMessage } = await import('./hcs.mjs');
+    const registry = '0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B';
+    const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
+    const mirror = async (url) => (String(url).includes('/messages')
+        ? { ok: true, status: 200, json: async () => ({
+            messages: [
+                // A grant: a different kind of record, and one that must not read as a revocation.
+                { message: b64(mandateMessage({ program: '0x2120' })), payer_account_id: '0.0.10388560', consensus_timestamp: '1.0', sequence_number: 1 },
+                // A stranger revoking our name. The topic has no submit key; the payer is the signature.
+                { message: b64(revocationMessage({ label: 'agent', registry })), payer_account_id: '0.0.999999', consensus_timestamp: '2.0', sequence_number: 2 },
+                // Ours, of another name.
+                { message: b64(revocationMessage({ label: 'other', registry })), payer_account_id: '0.0.10388560', consensus_timestamp: '3.0', sequence_number: 3 },
+                // Ours, of this name: the only one that counts.
+                { message: b64(revocationMessage({ label: 'agent', registry, at: 1789000000 })), payer_account_id: '0.0.10388560', consensus_timestamp: '4.5', sequence_number: 4 },
+            ],
+            links: {},
+        }) }
+        : { ok: true, status: 200, json: async () => ({}) });
+
+    const res = await lookupRevocations('0.0.1', 'agent', { fetchImpl: mirror, maxPages: 3, publisher: '0.0.10388560' });
+    assert.equal(res.searched, 'complete');
+    assert.equal(res.revocations.length, 1, `one revocation of "agent" by us: ${JSON.stringify(res.revocations)}`);
+    const [rev] = res.revocations;
+    assert.equal(rev.sequenceNumber, 4);
+    assert.equal(rev.payer, '0.0.10388560');
+    assert.equal(rev.label, 'agent');
+    assert.equal(rev.revokedAt, '1970-01-01T00:00:04.500Z', 'the consensus time is the time, not the record\'s own claim');
+    assert.match(rev.mirror, /\/topics\/0\.0\.1\/messages\/4$/, 'a reader must be able to fetch the row themselves');
+});
+
 test('running out of pages is reported as not knowing, not as not published', async () => {
     const { lookupMandate } = await import('./hcs.mjs');
     // A mirror that always offers another page: the walk can never finish, which is exactly the
@@ -230,4 +261,92 @@ test('a perfect-looking record from the wrong account is not a publication', asy
     const yes = await lookupMandate('0.0.1', '0x2120', { fetchImpl: ours, maxPages: 3, publisher: '0.0.10388560' });
     assert.equal(yes.published, true);
     assert.equal(yes.payer, '0.0.10388560');
+});
+
+// --- and the half that was missing: the grant itself --------------------------
+
+test('a grant record names the holder, the name and its term', async () => {
+    const { nameGrantMessage, parseNameGrantMessage } = await import('./hcs.mjs');
+    const msg = nameGrantMessage({
+        label: 'agent',
+        holder: '0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E',
+        registry: '0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B',
+        expiry: 1791820918,
+        tx: '0xABC',
+        chainId: 11155111,
+    });
+    const back = parseNameGrantMessage(Buffer.from(msg, 'utf8').toString('base64'));
+    assert.equal(back.kind, 'batas.name-grant');
+    assert.equal(back.label, 'agent');
+    assert.equal(back.holder, '0x39d2bae5eaeda9283535ddc98f1991c81ed5cd7e');
+    assert.equal(back.registry, '0x945800bd6cdd60521b64a12d7b3f12fc90916a6b');
+    assert.equal(back.expiry, 1791820918);
+    assert.equal(back.tx, '0xabc');
+    assert.deepEqual(Object.keys(JSON.parse(nameGrantMessage({ label: 'a', holder: back.holder, registry: back.registry, expiry: 1 }))),
+        ['v', 'kind', 'label', 'holder', 'registry', 'expiry'], 'optional fields are omitted, not published as null');
+});
+
+test('a grant refuses to be built without a holder, a registry or a term', async () => {
+    const { nameGrantMessage } = await import('./hcs.mjs');
+    const ok = { label: 'agent', holder: '0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E', registry: '0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B', expiry: 1 };
+    assert.throws(() => nameGrantMessage({ ...ok, label: '' }), /label/);
+    assert.throws(() => nameGrantMessage({ ...ok, holder: undefined }), /holder/);
+    assert.throws(() => nameGrantMessage({ ...ok, registry: 'not-an-address' }), /registry/);
+    assert.throws(() => nameGrantMessage({ ...ok, expiry: 0 }), /expiry/);
+});
+
+test('the three kinds of record do not read as each other', async () => {
+    const { nameGrantMessage, revocationMessage, mandateMessage, parseNameGrantMessage, parseRevocationMessage, parseMandateMessage } = await import('./hcs.mjs');
+    const registry = '0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B';
+    const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
+    const grant = b64(nameGrantMessage({ label: 'agent', holder: registry, registry, expiry: 1 }));
+    const rev = b64(revocationMessage({ label: 'agent', registry }));
+    const mandate = b64(mandateMessage({ program: '0x2120' }));
+    // A grant read as a revocation would say the name was taken away at the moment it was given.
+    assert.equal(parseRevocationMessage(grant), null);
+    assert.equal(parseMandateMessage(grant), null);
+    assert.equal(parseNameGrantMessage(rev), null);
+    assert.equal(parseNameGrantMessage(mandate), null);
+    assert.equal(parseNameGrantMessage(b64(JSON.stringify({ v: MESSAGE_VERSION, kind: 'batas.name-grant', label: 'agent' }))), null, 'no holder, no grant');
+    assert.ok(parseNameGrantMessage(grant));
+});
+
+test('a grant counts only from our own account, and a revocation never counts as one', async () => {
+    const { lookupNameGrants, nameGrantMessage, revocationMessage } = await import('./hcs.mjs');
+    const registry = '0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B';
+    const holder = '0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E';
+    const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
+    const mirror = async (url) => (String(url).includes('/messages')
+        ? { ok: true, status: 200, json: async () => ({
+            messages: [
+                // Ours, but a revocation: the other kind, and it must not read as a grant.
+                { message: b64(revocationMessage({ label: 'agent', registry })), payer_account_id: '0.0.10388560', consensus_timestamp: '1.0', sequence_number: 1 },
+                // A stranger granting our name. The payer is the signature.
+                { message: b64(nameGrantMessage({ label: 'agent', holder, registry, expiry: 5 })), payer_account_id: '0.0.999999', consensus_timestamp: '2.0', sequence_number: 2 },
+                // Ours, of another name.
+                { message: b64(nameGrantMessage({ label: 'other', holder, registry, expiry: 5 })), payer_account_id: '0.0.10388560', consensus_timestamp: '3.0', sequence_number: 3 },
+                // Ours, of this name: the only one that counts.
+                { message: b64(nameGrantMessage({ label: 'agent', holder, registry, expiry: 5 })), payer_account_id: '0.0.10388560', consensus_timestamp: '4.5', sequence_number: 4 },
+            ],
+            links: {},
+        }) }
+        : { ok: true, status: 200, json: async () => ({}) });
+
+    const res = await lookupNameGrants('0.0.1', 'agent', { fetchImpl: mirror, maxPages: 3, publisher: '0.0.10388560' });
+    assert.equal(res.searched, 'complete');
+    assert.equal(res.nameGrants.length, 1, `one grant of "agent" by us: ${JSON.stringify(res.nameGrants)}`);
+    const [g] = res.nameGrants;
+    assert.equal(g.sequenceNumber, 4);
+    assert.equal(g.holder, holder.toLowerCase());
+    assert.equal(g.grantedAt, '1970-01-01T00:00:04.500Z', 'the consensus time is the time');
+    assert.match(g.mirror, /\/topics\/0\.0\.1\/messages\/4$/);
+});
+
+test('a grant walk that runs out of pages says so', async () => {
+    const { lookupNameGrants } = await import('./hcs.mjs');
+    const endless = async () => ({ ok: true, status: 200, json: async () => ({ messages: [], links: { next: '/topics/0.0.1/messages?page=next' } }) });
+    const res = await lookupNameGrants('0.0.1', 'agent', { fetchImpl: endless, maxPages: 2 });
+    assert.equal(res.searched, 'incomplete');
+    assert.deepEqual(res.nameGrants, []);
+    assert.match(res.reason, /stopped after 2 pages/);
 });

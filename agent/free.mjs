@@ -17,7 +17,7 @@ import { sepolia } from 'viem/chains';
 import { explain, decodeProgram, readMandate } from './swapvm.mjs';
 import { lookupMandate } from './hcs.mjs';
 import { mandateNameStatus } from './ens.mjs';
-import { latestProgramOnChain, programFromStrategy } from './inspect.mjs';
+import { latestProgramOnChain, programFromStrategy } from './position.mjs';
 import { readReputation } from './reputation.mjs';
 import { OWNER, ENS_REGISTRY, MANDATE_NAME, HCS_TOPIC, AGENT_ID, SEPOLIA_RPC } from './deployment.mjs';
 
@@ -48,7 +48,7 @@ export async function liveProgram() {
     try {
         const found = await latestProgramOnChain();
         const value = found
-            ? { program: programFromStrategy(found.strategy), strategyHash: found.strategyHash }
+            ? { program: programFromStrategy(found.strategy), strategyHash: found.strategyHash, docked: found.docked }
             : null;
         cached = { at: Date.now(), value };
         return value;
@@ -73,19 +73,29 @@ export async function resolveProgram(program) {
     }
     const live = await liveProgram();
     if (!live) throw new Error('no program given, and no mandate has been shipped to the live router yet');
-    return { program: live.program, source: `live position ${live.strategyHash}` };
+    return { program: live.program, source: `live position ${live.strategyHash}`, docked: live.docked };
 }
+
+/**
+ * A docked position still decodes; it just no longer holds anything. The bytes are the same and
+ * the terms read the same, so without this the answer would describe a grant the maker has already
+ * withdrawn as if it were standing. Said in the same `notes` the decoder uses, so a reader who only
+ * looks there still sees it.
+ */
+const docking = (answer, docked) => (docked
+    ? { ...answer, docked: true, notes: [...(answer.notes ?? []), 'the maker has docked this position; its terms are no longer on offer'] }
+    : answer);
 
 /** What these bytes permit. Arithmetic, and therefore free. */
 export async function decodeAnswer(program) {
-    const { program: p, source } = await resolveProgram(program);
-    return { source, program: p, ...explain(p) };
+    const { program: p, source, docked } = await resolveProgram(program);
+    return docking({ source, program: p, ...explain(p) }, docked);
 }
 
 /** When these exact bytes became public, from a mirror node that is not ours. */
 export async function publicationAnswer(program) {
-    const { program: p, source } = await resolveProgram(program);
-    return { source, ...(await lookupMandate(HCS_TOPIC, p)) };
+    const { program: p, source, docked } = await resolveProgram(program);
+    return docking({ source, ...(await lookupMandate(HCS_TOPIC, p)) }, docked);
 }
 
 /**

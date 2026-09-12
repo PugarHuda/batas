@@ -23,6 +23,14 @@ import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
 ///   expiry to the moment of revocation instead of zeroing it, and `ownerOf` answers a burned name
 ///   with the zero address rather than reverting. Both of those have already misled this project
 ///   once — a mock that was tidier than the chain would hide the same bug twice.
+/// @dev The registry's real surface, for the fork test only; `MandateName` carries its own copy.
+interface IMandateNameRegistryView {
+    function getState(uint256 anyId)
+        external
+        view
+        returns (uint8 status, uint64 expiry, address latestOwner, uint256 tokenId, uint256 resource);
+}
+
 contract MandateRegistryMock {
     mapping(bytes32 => uint64) private _expiry;
     mapping(bytes32 => uint256) private _id;
@@ -68,16 +76,20 @@ contract MandateRegistryMock {
     function getState(uint256 anyId)
         external
         view
-        returns (uint64 expiry, uint256 tokenId, uint256 resource, address latestOwner, uint8 status)
+        returns (uint8 status, uint64 expiry, address latestOwner, uint256 tokenId, uint256 resource)
     {
+        // Field order is the registry's `State` struct, not the interface's prose. The mock once
+        // matched the interface instead, and the two agreed with each other about a layout the
+        // chain does not use; `test_TheLiveRegistryAnswersInTheOrderTheInterfaceDeclares` is the
+        // reason that cannot happen silently again.
         bytes32 k = bytes32(anyId & ~uint256(0xffffffff));
         for (uint256 i; i < _labels.length; i++) {
             bytes32 lk = keccak256(bytes(_labels[i]));
             if ((uint256(lk) & ~uint256(0xffffffff)) == uint256(k)) {
-                return (_expiry[lk], _id[lk], 0, _owner[_id[lk]], 0);
+                return (2, _expiry[lk], _owner[_id[lk]], _id[lk], 0);
             }
         }
-        return (0, 0, 0, address(0), 0);
+        return (0, 0, address(0), 0, 0);
     }
 
     string[] private _labels;
@@ -160,12 +172,19 @@ contract MandateAgreementTest is Test, IBatasCallback {
     /// @dev Ships the same reserves twice: once to the app under the encoded mandate, once to the
     ///   router under the encoded order whose program was compiled from that mandate.
     function _shipBoth(Mandate memory m) internal returns (ISwapVM.Order memory order) {
+        return _shipBoth(m, RESERVE_IN, RESERVE_OUT);
+    }
+
+    function _shipBoth(Mandate memory m, uint256 reserveIn, uint256 reserveOut)
+        internal
+        returns (ISwapVM.Order memory order)
+    {
         address[] memory tokens = new address[](2);
         tokens[0] = address(tokenA);
         tokens[1] = address(tokenB);
         uint256[] memory amounts = new uint256[](2);
-        amounts[0] = RESERVE_IN;
-        amounts[1] = RESERVE_OUT;
+        amounts[0] = reserveIn;
+        amounts[1] = reserveOut;
 
         vm.prank(maker);
         aqua.ship(address(app), m.encode(), tokens, amounts);
@@ -333,22 +352,73 @@ contract MandateAgreementTest is Test, IBatasCallback {
         Mandate memory m = _mandate(cap, floorRate, expiry, feeBps);
         ISwapVM.Order memory order = _shipBoth(m);
 
-        bool appOk;
-        uint256 appOut;
-        try app.quote(m, amountIn) returns (uint256 out) {
-            appOk = true;
-            appOut = out;
-        } catch { }
+        (Verdict memory a, Verdict memory v) = _quoteBoth(m, order, amountIn);
+        assertEq(a.ok, v.ok, "one surface accepted a trade the other refused");
+        if (a.ok) assertEq(a.amountOut, v.amountOut, "both accepted but priced it differently");
+    }
 
-        bool vmOk;
-        uint256 vmOut;
-        try router.quote(order, amountIn, _takerData()) returns (uint256, uint256 out, bytes32) {
-            vmOk = true;
-            vmOut = out;
-        } catch { }
+    /// @dev What one surface said about one trade: settled and for how much, or refused and why.
+    struct Verdict {
+        bool ok;
+        uint256 amountOut;
+        bytes err;
+    }
 
-        assertEq(appOk, vmOk, "one surface accepted a trade the other refused");
-        if (appOk) assertEq(appOut, vmOut, "both accepted but priced it differently");
+    /// @dev The same trade through both doors. Low-level calls rather than try/catch so the revert
+    ///   bytes survive: two surfaces that refuse for different reasons are two surfaces that
+    ///   disagree, even when both refuse.
+    function _quoteBoth(Mandate memory m, ISwapVM.Order memory order, uint256 amountIn)
+        internal
+        returns (Verdict memory a, Verdict memory v)
+    {
+        bytes memory ret;
+        (a.ok, ret) = address(app).call(abi.encodeCall(app.quote, (m, amountIn)));
+        if (a.ok) a.amountOut = abi.decode(ret, (uint256));
+        else a.err = ret;
+        (v.ok, ret) = address(router).call(abi.encodeCall(router.quote, (order, amountIn, _takerData())));
+        if (v.ok) (, v.amountOut,) = abi.decode(ret, (uint256, uint256, bytes32));
+        else v.err = ret;
+    }
+
+    /// @notice The agreement has to hold across reserves too, not only against the one pool every
+    ///   test here ships.
+    /// @dev Reserves are the term neither surface carries: both read them from Aqua at settlement
+    ///   and feed them into arithmetic of a different shape — `quoteExactIn` is one expression,
+    ///   the compiled program is `FeeFlatIn` wrapping `XYCSwap` with a restore step between. Fixed
+    ///   reserves check that shape at one scale. This walks twenty-four orders of magnitude, which
+    ///   puts a six-decimal token against an eighteen-decimal one in the middle of the range, and
+    ///   derives the cap and floor from the reserves so that each binds somewhere inside it. Every
+    ///   accepted trade is then held to the cap and the floor directly, so two surfaces agreeing on
+    ///   a number that broke the mandate would fail here rather than pass as agreement.
+    ///
+    ///   Fails if either surface's rounding drifts from the other at some scale, if the floor's
+    ///   cross-multiplication overflows short of 1e30, or if one surface accepts what the other
+    ///   refuses.
+    function testFuzz_TheTwoSurfacesAgreeAcrossReserves(uint128 reserveA, uint128 reserveB, uint128 amountIn) public {
+        uint256 rIn = bound(reserveA, 1e6, 1e30);
+        uint256 rOut = bound(reserveB, 1e6, 1e30);
+        uint256 size = bound(amountIn, 1e6, 1e30);
+
+        // The cap is the input reserve, so half the size range is over it; the floor is nine tenths
+        // of the opening price, which the curve crosses once a trade is about a ninth of the pool.
+        // An opening price too large for the field is clamped, and a floor of 2^128-1 is simply a
+        // mandate nothing can satisfy — which both surfaces still have to say.
+        uint128 cap = uint128(rIn);
+        uint256 opening = (rOut * 1e18 / rIn) * 9 / 10;
+        uint128 floorRate = opening > type(uint128).max ? type(uint128).max : uint128(opening);
+
+        tokenA.mint(maker, rIn * 2);
+        tokenB.mint(maker, rOut * 2);
+        Mandate memory m = _mandate(cap, floorRate);
+        ISwapVM.Order memory order = _shipBoth(m, rIn, rOut);
+
+        (Verdict memory a, Verdict memory v) = _quoteBoth(m, order, size);
+        assertEq(a.ok, v.ok, "one surface accepted a trade the other refused");
+        if (a.ok) {
+            assertEq(a.amountOut, v.amountOut, "both accepted but priced it differently");
+            assertLe(size, cap, "settled over the cap");
+            assertGe(a.amountOut * 1e18, size * uint256(floorRate), "settled under the floor");
+        }
     }
 
     /// @dev `toProgram` is an internal library call, so a revert from it happens at the same call
@@ -541,6 +611,103 @@ contract MandateAgreementTest is Test, IBatasCallback {
         assertEq(fromVm, before, "and so must the VM surface");
     }
 
+    /// @notice The registry on Sepolia answers `getState` in the order the interface declares.
+    /// @dev A mock can only agree with the interface it was written against. This asks the deployed
+    ///   `UserRegistry` behind `0x945800Bd…` — the one every live mandate names — for the state of
+    ///   the `agent` label and checks that the words land in the right slots: an expiry that is a
+    ///   timestamp, an owner that is an address, a status that is a small enum. Skipped, not
+    ///   failed, when no `SEPOLIA_RPC_URL` is set, so a fresh clone stays green offline.
+    function test_TheLiveRegistryAnswersInTheOrderTheInterfaceDeclares() public {
+        string memory rpc = vm.envOr("SEPOLIA_RPC_URL", string(""));
+        if (bytes(rpc).length == 0) return;
+        vm.createSelectFork(rpc);
+        address registry = 0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B;
+        (uint8 status, uint64 expiry, address owner, uint256 tokenId,) =
+            IMandateNameRegistryView(registry).getState(uint256(keccak256("agent")));
+        assertLe(status, 2, "status is a three-value enum");
+        assertGt(expiry, 1_700_000_000, "expiry decodes as a timestamp");
+        assertTrue(owner != address(0), "the label is held");
+        assertEq(tokenId & ~uint256(0xffffffff), uint256(keccak256("agent")) & ~uint256(0xffffffff), "token id is the labelhash with version bits");
+    }
+
+    /// @notice A name is read the same way by the compiler and by the checker: at every length the
+    ///   encoder allows, whoever holds it, and on either side of its expiry second.
+    /// @dev `MandateName.build` packs the label behind a one-byte length; `parse` reads it back
+    ///   out of calldata by that byte; `check` hashes what it read. The app hashes the label
+    ///   straight from the struct. A label that came back a byte short — or a byte long, into the
+    ///   fee instruction that follows it — would ask the registry about a name nobody granted, and
+    ///   the VM would refuse a settlement the app accepted. So every length is tried with bytes
+    ///   that are not text, the holder is or is not the grantee, and the expiry sits one second
+    ///   before now, on it, or one after. Where both refuse they must refuse with the same bytes.
+    ///
+    ///   Fails if the length byte and the bytes behind it ever disagree, if the holder comparison
+    ///   or the expiry rule differs between the surfaces, or if `>` on the expiry drifts to `>=`.
+    function testFuzz_TheNameIsReadTheSameOnBothSurfaces(
+        uint8 rawLen,
+        bytes32 seed,
+        address holder,
+        bool held,
+        int8 rawDelta
+    ) public {
+        vm.warp(1_800_000_000);
+        uint256 len = bound(rawLen, 1, type(uint8).max - MandateName.HEADER);
+        holder = address(uint160(bound(uint160(holder), 1, type(uint160).max)));
+        uint64 expiry = uint64(uint256(int256(block.timestamp) + bound(rawDelta, -1, 1)));
+
+        bytes memory raw = new bytes(len);
+        for (uint256 i; i < len; i++) raw[i] = bytes1(uint8(uint256(keccak256(abi.encode(seed, i)))));
+        string memory label = string(raw);
+
+        Mandate memory m = _named(label, holder);
+        names.grant(label, held ? holder : makeAddr("someone else"), expiry);
+        ISwapVM.Order memory order = _shipBoth(m);
+
+        (Verdict memory a, Verdict memory v) = _quoteBoth(m, order, 10e18);
+        bool live = held && expiry > block.timestamp;
+        assertEq(a.ok, live, "the app surface disagrees with the registry's own rule");
+        assertEq(v.ok, live, "the VM surface disagrees with the registry's own rule");
+        if (live) assertEq(a.amountOut, v.amountOut, "a live name must not change what a trade is worth");
+        else assertEq(keccak256(a.err), keccak256(v.err), "the two surfaces refused for different reasons");
+    }
+
+    /// @dev `parse` reads calldata, so this is its external door; the two-byte header is the
+    ///   instruction's own and not part of its args.
+    function parseName(bytes calldata instruction) external pure returns (address, address, string memory) {
+        (address registry, address holder, string calldata label) = MandateName.parse(instruction[2:]);
+        return (registry, holder, label);
+    }
+
+    /// @notice The longest label the encoder accepts comes back out of the program byte for byte
+    ///   and settles on both surfaces; one byte longer is refused rather than cut.
+    /// @dev 214 is not a round number, which is the reason to pin it: it is 255 less the
+    ///   forty-one-byte header, and the first version of the encoder allowed 255 and let the
+    ///   instruction builder refuse the last forty-one under its own name. Fails if the header
+    ///   grows without the limit moving, or if the limit is enforced by truncating.
+    function test_TheLongestLabelRoundTrips() public {
+        uint256 max = type(uint8).max - MandateName.HEADER;
+        bytes memory raw = new bytes(max);
+        for (uint256 i; i < max; i++) raw[i] = bytes1(uint8(97 + i % 26));
+        string memory label = string(raw);
+
+        Mandate memory m = _named(label, agent);
+        bytes memory instruction = MandateName.build(address(names), agent, label);
+        assertEq(instruction.length, 2 + MandateName.HEADER + max, "the whole label is carried");
+        (address registry, address holder, string memory back) = this.parseName(instruction);
+        assertEq(registry, address(names));
+        assertEq(holder, agent);
+        assertEq(back, label, "the label must come back exactly as it went in");
+
+        names.grant(label, agent, uint64(block.timestamp + 1 days));
+        ISwapVM.Order memory order = _shipBoth(m);
+        (Verdict memory a, Verdict memory v) = _quoteBoth(m, order, 10e18);
+        assertTrue(a.ok && v.ok, "the longest name must still settle");
+        assertEq(a.amountOut, v.amountOut);
+
+        m.nameLabel = string(bytes.concat(raw, "!"));
+        vm.expectRevert(abi.encodeWithSelector(MandateName.MandateNameArgsTruncated.selector, max + 1));
+        this.compile(m);
+    }
+
     /// @notice A mandate that names no registry is unchanged, and that is a choice, not a default.
     function test_WithoutARegistryNothingIsAsked() public {
         Mandate memory m = _mandate(500e18, 1e18);
@@ -558,6 +725,11 @@ contract MandateAgreementTest is Test, IBatasCallback {
     ///   the reverse trade was refused by luck of the numbers (1/2.0 is under 1.9), which is not
     ///   the same as being refused. `BatasApp.swap` sells `m.tokenIn` and nothing else, so on the
     ///   app surface the reverse trade does not exist; the VM surface has to say the same.
+    ///
+    ///   The app half is here too, because "cannot express it" deserves a witness. The only way to
+    ///   ask the app for B-to-A is a mandate with the tokens swapped, and that hashes to a position
+    ///   the maker never shipped: Aqua refuses before a single term is read. Each surface says no
+    ///   in its own vocabulary — the envelope's direction byte on one, no door at all on the other.
     function testFuzz_TheReverseDirectionIsRefused(uint128 rawCap, uint128 rawFloor, uint96 rawAmount) public {
         uint128 cap = uint128(bound(rawCap, 1, 800e18));
         uint128 floorRate = uint128(bound(rawFloor, 0, 3e18));
@@ -569,6 +741,16 @@ contract MandateAgreementTest is Test, IBatasCallback {
         bytes memory reverse = _takerData(false);
         vm.expectPartialRevert(PolicyEnvelope.MandateDirectionMismatch.selector);
         router.quote(order, amountIn, reverse);
+
+        Mandate memory reversed = _mandate(cap, floorRate);
+        (reversed.tokenIn, reversed.tokenOut) = (m.tokenOut, m.tokenIn);
+        assertTrue(reversed.hash() != m.hash(), "the reverse is a different position, not a flag on this one");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAqua.SafeBalancesForTokenNotInActiveStrategy.selector, maker, address(app), reversed.hash(), reversed.tokenIn
+            )
+        );
+        app.quote(reversed, amountIn);
     }
 
     /// @notice A mandate whose floor is unreachable must be refused by both, never by one.

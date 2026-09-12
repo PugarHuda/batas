@@ -52,6 +52,7 @@ export const ERRORS = {
     '0x916a879b': 'MandateNameArgsTruncated',
     '0xb9f1dc1d': 'MandateAmountInExceeded — over the size cap',
     '0x5dbf695b': 'MandateRateTooLow — under the floor',
+    '0xbec85dff': 'MandateDirectionMismatch — the taker asked for the direction the mandate does not permit',
     '0x70b57d90': 'DeadlineReached — the mandate has expired',
 };
 
@@ -77,7 +78,7 @@ async function liveOrder() {
  * A revert is the result being looked for, so it is caught rather than thrown: the interesting
  * output of this script is *which* refusal, and a stack trace is not that.
  */
-async function tryQuote(order, amountIn) {
+export async function tryQuote(order, amountIn) {
     try {
         const [, amountOut] = await client.readContract({
             address: getAddress(ROUTER), abi: QUOTE_ABI, functionName: 'quote',
@@ -91,9 +92,19 @@ async function tryQuote(order, amountIn) {
         // viem puts the revert bytes on `cause.raw` and only the words in the message, so the
         // selector is read from the data rather than scraped out of English that changes between
         // versions. The message is the fallback, not the source.
-        const raw = e.cause?.raw ?? e.raw ?? String(e.message ?? e);
-        const selector = String(raw).match(/0x[0-9a-f]{8}/i)?.[0]?.toLowerCase();
-        return { ok: false, why: ERRORS[selector] ?? selector ?? 'reverted' };
+        // The message fallback reads only after "signature:"; the first eight hex digits in the
+        // message are the router's own address, and a revert with no data was being named after it.
+        const raw = e.cause?.raw ?? e.raw ?? e.cause?.data;
+        const selector = raw
+            ? String(raw).slice(0, 10).toLowerCase()
+            : String(e.message ?? e).match(/signature:\s*(0x[0-9a-f]{8})/i)?.[1]?.toLowerCase();
+        if (!selector || selector === '0x') {
+            // No selector at all is not one of the mandate's refusals: those all carry one. A bare
+            // revert is what an external call bubbles up when the callee answered in a shape the
+            // caller could not decode — the registry, most likely.
+            return { ok: false, why: 'reverted with no data — the registry answered in a shape the instruction could not decode (interface mismatch?)' };
+        }
+        return { ok: false, why: ERRORS[selector] ?? selector };
     }
 }
 
@@ -141,14 +152,33 @@ async function main() {
         return;
     }
 
-    console.log(`\nrevoking "${terms.name.label}" …`);
-    ens('--revoke', terms.name.label || MANDATE_NAME);
+    const label = terms.name.label || MANDATE_NAME;
+    console.log(`\nrevoking "${label}" …`);
+    ens('--revoke', label);
 
-    const during = await tryQuote(order, amountIn);
-    console.log(`quote 1 A, name revoked   -> ${during.ok ? `${during.amountOut} B` : `refused: ${during.why}`}`);
-
-    console.log(`\nre-granting "${terms.name.label}" …`);
-    ens('--grant', terms.name.label || MANDATE_NAME);
+    // The re-grant runs whatever the middle quote does. A demonstration that ends with the name
+    // still revoked because the RPC hiccuped has not left the name as it found it, and the agent
+    // is stopped until somebody notices.
+    let during;
+    try {
+        during = await tryQuote(order, amountIn);
+        console.log(`quote 1 A, name revoked   -> ${during.ok ? `${during.amountOut} B` : `refused: ${during.why}`}`);
+    } finally {
+        console.log(`\nre-granting "${label}" …`);
+        try {
+            // `--grant` also writes the grant to the HCS topic, so the ledger's last word about the
+            // name is not the revocation above. That note is best-effort inside ens.mjs; the one
+            // line worth repeating here is whether it landed.
+            const out = ens('--grant', label);
+            const note = out.split('\n').filter((line) => /HCS/.test(line));
+            if (note.length) console.log(note.map((line) => `  ${line.trim()}`).join('\n'));
+        } catch (e) {
+            console.error(`re-grant failed: ${String(e.stderr || e.message || e).trim()}`);
+            console.error(`the name "${label}" is still revoked and the agent is stopped. restore it by hand:`);
+            console.error(`  node agent/ens.mjs --grant ${label}`);
+            process.exitCode = 1;
+        }
+    }
 
     const after = await tryQuote(order, amountIn);
     console.log(`quote 1 A, name restored  -> ${after.ok ? `${after.amountOut} B` : `refused: ${after.why}`}`);
@@ -182,7 +212,9 @@ export function verdict({ before, during, after }) {
 
 if (import.meta.filename === process.argv[1]) {
     main().catch((e) => {
-        console.error(String(e.shortMessage ?? e.message ?? e));
+        // An exhausted scan is a statement about how far we looked, not about the chain; it is
+        // printed as the message it already is rather than as a crash.
+        console.error(e.scanExhausted ? e.message : String(e.shortMessage ?? e.message ?? e));
         process.exitCode = 1;
     });
 }

@@ -19,7 +19,7 @@ import { createServer } from './mcp.mjs';
 import { xycSwap, salt } from './swapvm.mjs';
 
 const LIVE_PROGRAM =
-    '0x212100000000000000006367be30fcbd45ea00000000000000001aeff914e72b45e8802005006acd0476222e945800bd6cdd60521b64a12d7b3f12fc90916a6b39d2bae5eaeda9283535ddc98f1991c81ed5cd7e056167656e74700300753050000208000000006aa58586';
+    '0x212100000000000000006367be30fcbd45ea00000000000000001aeff914e72b45e8802005006acd0476222e945800Bd6CDd60521B64a12D7b3F12fC90916a6B39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E056167656e74700300753050000208000000006aa5dc37';
 
 async function connected() {
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
@@ -152,4 +152,13 @@ test('the publication tool agrees with the mandate tool about which position tha
     const read = parse(await client.callTool({ name: 'read_mandate', arguments: {} }));
     const pub = parse(await client.callTool({ name: 'check_publication', arguments: {} }));
     assert.equal(pub.source, read.source);
+});
+
+test('answers go out structured as well as as text, and the two agree', async () => {
+    // A client that reads `structuredContent` should never have to parse the text block back into
+    // JSON — and if the two ever diverged, two kinds of client would be told two different things.
+    const client = await connected();
+    const res = await client.callTool({ name: 'read_mandate', arguments: { program: LIVE_PROGRAM } });
+    assert.deepEqual(res.structuredContent, parse(res));
+    assert.equal(res.structuredContent.guarded, true);
 });

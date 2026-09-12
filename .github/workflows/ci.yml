@@ -8,6 +8,15 @@ on:
     - cron: "23 5 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# A push on top of a push cancels the run it made stale; the daily schedule keys on its own event
+# name so it never cancels a push's run or gets cancelled by one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Nothing here is a secret. A topic id and an account id are public by construction — the whole
 # point of the publication ledger is that a stranger can read it — and no key is needed to assert
 # what a 402 promises, only to settle one.
@@ -17,9 +26,13 @@ env:
 
 jobs:
   test:
+    # The schedule exists for the production job. Running the full build against a chain that has
+    # not changed since the last push proves nothing and spends a fork's worth of RPC every day.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Pinned, not "stable". agent/deployed.test.mjs compares the bytecode on Sepolia against a
       # local build, and forge 1.8.1 does not produce the same bytes for BatasRouter as the 1.8.0
@@ -30,9 +43,10 @@ jobs:
         with:
           version: v1.8.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
+          cache: npm
 
       - run: npm ci
 
@@ -72,15 +86,27 @@ jobs:
   production:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
+          cache: npm
 
       - run: npm ci
 
       # No Foundry and no contract build: this job starts the local Express app only to compare its
       # two description surfaces against the deployed ones, and reads nothing from a chain.
       - run: npm run test:prod
+
+      # A red run on a schedule is an email nobody opens. An issue is a thing that stays open until
+      # somebody closes it, which is the difference between a check and a log.
+      - if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue create --title "Production drift $(date -u +%F)" --body "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

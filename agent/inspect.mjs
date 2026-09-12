@@ -8,104 +8,18 @@
 // authentication. Every call is settled independently, so there is nothing to cancel and nothing
 // to over-buy.
 
-import { wrapFetchWithPayment, x402Client, decodePaymentResponseHeader } from '@x402/fetch';
-import { ExactHederaScheme } from '@x402/hedera/exact/client';
-import { createClientHederaSigner, PrivateKey } from '@x402/hedera';
-import { createPublicClient, http, decodeAbiParameters, parseAbiParameters } from 'viem';
-import { sepolia } from 'viem/chains';
 import 'dotenv/config';
 
-import { AQUA, ROUTER, OWNER, AGENT_ID, SEPOLIA_RPC } from './deployment.mjs';
+import { ROUTER, OWNER, AGENT_ID } from './deployment.mjs';
+import { latestProgramOnChain, programFromStrategy } from './position.mjs';
 
-const SERVICE = process.env.BATAS_SERVICE_URL || 'http://localhost:4021';
+// Finding the position moved to position.mjs so the free path stops loading the payment client.
+// Still exported from here: the walkthrough, the counterparty and the kill switch import them.
+export { latestProgramOnChain, programFromStrategy };
 
-/** Pull the newest program this owner shipped to the router, straight out of Aqua's event log. */
-export async function latestProgramOnChain({ client } = {}) {
-    const owner = OWNER;
-
-    // Injectable for the same reason `resolveAgent` is: the interesting branch here is the one
-    // where the scan gives up, and reaching it against a real chain would mean waiting for sixty
-    // thousand empty blocks to go by.
-    const pub = client ?? createPublicClient({
-        chain: sepolia,
-        transport: http(SEPOLIA_RPC),
-    });
-
-    // Aqua's Shipped event indexes nothing, so filtering happens here rather than at the node.
-    const shipped = {
-        type: 'event',
-        name: 'Shipped',
-        inputs: [
-            { name: 'maker', type: 'address' },
-            { name: 'app', type: 'address' },
-            { name: 'strategyHash', type: 'bytes32' },
-            { name: 'strategy', type: 'bytes' },
-        ],
-    };
-
-    const head = await pub.getBlockNumber();
-    const WINDOW = 60_000n;
-    let exhausted = false;
-    for (let to = head, scanned = 0n; to > 0n; ) {
-        if (scanned >= WINDOW) {
-            exhausted = true;
-            break;
-        }
-        const from = to > 9_000n ? to - 9_000n : 0n;
-        const batch = await pub.getLogs({ address: AQUA, event: shipped, fromBlock: from, toBlock: to });
-        const mine = batch.filter(
-            (l) => l.args.maker?.toLowerCase() === owner.toLowerCase()
-                && l.args.app?.toLowerCase() === ROUTER.toLowerCase(),
-        );
-        if (mine.length > 0) {
-            // strategy is abi.encode(Order); the program is the tail of `data` after the two tokens.
-            const strategy = mine[mine.length - 1].args.strategy;
-            return { strategyHash: mine[mine.length - 1].args.strategyHash, strategy };
-        }
-        scanned += to - from;
-        to = from - 1n;
-    }
-
-    // Nothing found — and which "nothing" this is matters.
-    //
-    // `Shipped` indexes none of its parameters, so a node cannot filter it and this walks the logs
-    // by hand. The walk is bounded, and until now hitting that bound returned the same `null` as
-    // searching the entire chain: every caller then said "no mandate has been shipped yet", which
-    // is a claim about the maker made out of a decision we took about how long to look.
-    //
-    // The whole chain having been searched is a finding. Sixty thousand blocks having gone by is
-    // not, so it is raised rather than returned — a caller that cannot tell them apart should be
-    // stopped rather than quietly handed the wrong one.
-    if (exhausted) {
-        const err = new Error(
-            `no position found in the last ${WINDOW} blocks from ${head}; this is where the scan `
-            + 'stopped, not where the chain does. Pass the program explicitly, or widen the window.',
-        );
-        err.scanExhausted = true;
-        err.headBlock = head;
-        err.windowBlocks = Number(WINDOW);
-        throw err;
-    }
-    return null;
-}
-
-/**
- * Recover the program from the strategy bytes Aqua stored.
- *
- * The strategy is `abi.encode(Order)`, and `Order` has a dynamic member, so the encoding opens
- * with an offset word before the struct itself. Hand-counting those words is how the first version
- * of this function got it wrong; viem already knows the layout, so it decodes rather than counts.
- * `Order.data` is then tokenA ++ tokenB ++ program, and the program starts 40 bytes in.
- */
-export function programFromStrategy(strategyHex) {
-    const [order] = decodeAbiParameters(
-        parseAbiParameters('(address maker, uint256 traits, bytes data)'),
-        strategyHex,
-    );
-    const data = order.data.replace(/^0x/, '');
-    if (data.length < 80) throw new Error('order data is shorter than its two token addresses');
-    return `0x${data.slice(80)}`;
-}
+// The deployed service, not a local one. counterparty.mjs already defaulted here, and the two
+// disagreeing meant `--paid` walked up to a port nobody was listening on.
+const SERVICE = process.env.BATAS_SERVICE_URL || 'https://batas-one.vercel.app';
 
 /**
  * Pay for one explanation and return it.
@@ -117,12 +31,20 @@ export function programFromStrategy(strategyHex) {
  * `log` exists so the CLI can narrate while the MCP server stays silent. An MCP server speaks
  * JSON-RPC over stdout; a stray console.log there corrupts the stream.
  */
-export async function payForExplanation(program, { log = () => {} } = {}) {
-    const accountId = process.env.HEDERA_AGENT_ID;
-    const privateKey = process.env.HEDERA_AGENT_KEY;
+export async function payForExplanation(program, {
+    log = () => {},
+    accountId = process.env.HEDERA_AGENT_ID,
+    privateKey = process.env.HEDERA_AGENT_KEY,
+    origin = SERVICE,
+} = {}) {
     if (!accountId || !privateKey) {
         throw new Error('HEDERA_AGENT_ID and HEDERA_AGENT_KEY missing; create a testnet ECDSA account at https://portal.hedera.com');
     }
+
+    // Loaded here rather than at the top: these three take about a second to import, and every
+    // free answer used to pay that second for a client it never constructed.
+    const [{ wrapFetchWithPayment, x402Client, decodePaymentResponseHeader }, { ExactHederaScheme }, { createClientHederaSigner, PrivateKey }] =
+        await Promise.all([import('@x402/fetch'), import('@x402/hedera/exact/client'), import('@x402/hedera')]);
 
     const signer = createClientHederaSigner(accountId, PrivateKey.fromStringECDSA(privateKey), {
         network: 'hedera:testnet',
@@ -147,7 +69,7 @@ export async function payForExplanation(program, { log = () => {} } = {}) {
     // paywall needs runs on that request path. The first caller after an idle period can therefore
     // see a 5xx while a warm one sees the 402 immediately. Retrying once is the honest fix: no
     // payment is created for a failed request, so the retry costs nothing but a second.
-    const post = () => paidFetch(`${SERVICE}/v1/mandate/explain`, {
+    const post = () => paidFetch(`${origin}/v1/mandate/explain`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         // The operator lookup is opt-in on the service side, so ask for it when we know who to ask
@@ -193,6 +115,7 @@ async function main() {
         }
         program = programFromStrategy(found.strategy);
         console.log(`reading the live position ${found.strategyHash}`);
+        if (found.docked) console.log('docked   the maker has withdrawn it; these terms are no longer on offer');
     }
     console.log(`program  ${program}`);
     console.log(`service  ${SERVICE}`);

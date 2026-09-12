@@ -17,3 +17,6 @@ blob-report/
 .github/hooks/
 .github/skills/
 .playwright-mcp/
+
+out-halmos/
+!.env.example

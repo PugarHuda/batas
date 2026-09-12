@@ -25,6 +25,11 @@ import { OWNER, ENS_REGISTRY, MANDATE_NAME, AGENT_ID, HCS_TOPIC, SEPOLIA_RPC } f
 
 const step = (n, title) => console.log(`\n${n}. ${title}\n${'─'.repeat(60)}`);
 const line = (k, v) => console.log(`   ${k.padEnd(12)} ${v}`);
+const hex = (h) => (h.length > 44 ? `${h.slice(0, 42)}…` : h);
+const ago = (iso) => {
+    const h = (Date.now() - Date.parse(iso)) / 36e5;
+    return h < 1 ? `${Math.round(h * 60)}m ago` : h < 48 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`;
+};
 
 async function main() {
     const owner = OWNER;
@@ -33,7 +38,7 @@ async function main() {
     const found = await latestProgramOnChain();
     if (!found) throw new Error('no mandate shipped to this router yet; run script/Demo.s.sol first');
     const program = programFromStrategy(found.strategy);
-    line('mandate', found.strategyHash);
+    line('position', hex(found.strategyHash));
     line('program', `${program.slice(0, 42)}… (${(program.length - 2) / 2} bytes)`);
     line('verify', `https://sepolia.etherscan.io/address/${owner}`);
 
@@ -41,15 +46,15 @@ async function main() {
     const answer = explain(program);
     const m = answer.mandate;
     line('guarded', `${answer.guarded}   (PolicyEnvelope outermost, so later instructions run inside it)`);
-    line('max input', m.maxAmountInFormatted ?? '—');
-    line('floor rate', m.minRateFormatted ?? '—');
+    line('cap', m.maxAmountInFormatted ?? '—');
+    line('floor', m.minRateFormatted == null ? '—' : `${m.minRateFormatted} B per A`);
     line('fee', m.feePercent === null ? '—' : `${m.feePercent}%`);
     line('expires', m.expiryISO ?? 'never');
     line(
         'kill switch',
         m.killSwitch
             ? `"${m.killSwitch.label}" in ${m.killSwitch.registry}, held by ${m.killSwitch.holder}`
-            : 'none — only the expiry and Aqua.dock() end this grant',
+            : 'none — only the expiry, or the maker closing the position, ends this mandate',
     );
     for (const n of answer.notes) console.log(`   note         ${n}`);
 
@@ -65,16 +70,17 @@ async function main() {
 
     step(4, 'Whether the agent may still act — ENSv2, free, the owner\'s switch');
     const registry = ENS_REGISTRY;
+    let status;
     {
         const client = createPublicClient({
             chain: sepolia,
             transport: http(SEPOLIA_RPC),
         });
-        const status = await mandateNameStatus(
+        status = await mandateNameStatus(
             client, registry, MANDATE_NAME, owner,
             { grantedUntil: m.expiry ?? undefined },
         );
-        line('authority', status.valid ? 'live' : (status.revoked ? 'revoked by the owner' : 'ended'));
+        line('authority', status.valid ? 'held' : (status.revoked ? 'revoked by the owner' : 'expired'));
         line('reason', status.reason);
         if (status.valid) line('remaining', `${Math.floor(status.secondsLeft / 3600)} hours`);
         // The distinction worth drawing here, because it is the one the project got wrong for most
@@ -91,11 +97,12 @@ async function main() {
 
     step(5, 'Who is behind it — ERC-8004');
     const agentId = AGENT_ID;
+    let check;
     {
         const agent = await resolveAgent(agentId);
         line('agent', `#${agent.agentId}  ${agent.registration?.name ?? '(unnamed)'}`);
         line('held by', agent.owner);
-        const check = vouchesFor(agent, owner);
+        check = vouchesFor(agent, owner);
         line('vouches', `${check.vouched ? 'yes' : 'no'} — ${check.reason}`);
 
         // The registry the project used to skip. Identity answers who; this answers whether anyone
@@ -106,16 +113,25 @@ async function main() {
             line(
                 'reputation',
                 rep.feedbackCount === 0
-                    ? 'no client feedback yet (and the agent itself is barred from leaving any)'
-                    : `${rep.feedbackCount} from ${rep.clientCount} client(s), `
-                        + `${rep.summaryValue}bps above the floor on average`,
+                    ? 'no counterparty feedback yet (and the agent itself is barred from leaving any)'
+                    : `${rep.feedbackCount} from ${rep.clientCount} counterpart${rep.clientCount === 1 ? 'y' : 'ies'}, `
+                        + `${rep.summaryValue} bps above the floor on average`,
             );
         } catch (e) {
             line('reputation', `could not read: ${String(e.shortMessage ?? e.message ?? e)}`);
         }
     }
 
+    // One line to read the whole thing by, in the terms the page uses.
+    const verdict = (vouched) => console.log(`\nverdict  ${[
+        answer.guarded ? 'guarded' : 'not guarded',
+        pub.published ? `published ${ago(pub.publishedAt)}` : 'unpublished',
+        `name ${status.valid ? 'held' : status.revoked ? 'revoked' : 'expired'}`,
+        `identity ${vouched ? 'vouches' : 'does not vouch'}`,
+    ].join(' · ')}`);
+
     if (!process.argv.includes('--paid')) {
+        verdict(check.vouched);
         console.log('\nEverything above was free and none of it went through this project\'s service.');
         console.log('Run again with --paid to settle 0.001 HBAR and get the same answer from the');
         console.log('live endpoint, which is the part a stranger cannot compute for themselves.\n');
@@ -127,6 +143,7 @@ async function main() {
     line('settled', settlement ? 'yes' : 'no payment header returned');
     line('agrees', String(body.mandate.minRateFormatted === m.minRateFormatted));
     if (body.operator?.check) line('vouches', `${body.operator.check.vouched} — ${body.operator.check.reason}`);
+    verdict(body.operator?.check?.vouched ?? check.vouched);
     console.log('');
 }
 

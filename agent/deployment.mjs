@@ -19,8 +19,8 @@ export const AQUA = getAddress('0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a');
 /** Same address on Ethereum Sepolia and Hedera testnet; both checked for code before use. */
 export const IDENTITY_REGISTRY = getAddress('0x8004A818BFB912233c491871b3d84c89A494BD9e');
 
-export const ROUTER = getAddress(env('BATAS_ROUTER', '0x648a0F330f432452CF53B967fd13305528C320a6'));
-export const APP = getAddress(env('BATAS_APP', '0x2A06D6121Cedc9D67404bfb0Ec34BAB8d393e05e'));
+export const ROUTER = getAddress(env('BATAS_ROUTER', '0xaAC338aC7776b40F0f2757B824D188f8fbe35E8E'));
+export const APP = getAddress(env('BATAS_APP', '0xD2cB41A7E77af1171deb18A3c559c578f4D82146'));
 export const TOKEN_A = getAddress(env('BATAS_TOKEN_A', '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B'));
 export const TOKEN_B = getAddress(env('BATAS_TOKEN_B', '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81'));
 

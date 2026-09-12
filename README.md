@@ -5,6 +5,9 @@
 An autonomous agent can run your liquidity position. It cannot exceed the terms you granted it,
 because the only contract allowed to touch your tokens refuses to settle a swap that breaks them.
 
+*Powered by SwapVM — © Degensoft Ltd 2025. The router is a redeployment of 1inch's SwapVM carrying
+two instructions of ours; see [License](#license).*
+
 ---
 
 ## In sixty seconds
@@ -192,6 +195,8 @@ position, with two Sepolia transactions and three `eth_call`s that cost nothing:
 ```
 $ node agent/killswitch.mjs --prove
 
+position   0x4ed644d49b49c00c8913b87d4af774b4cf224890674052f36218bf7bc2104921
+router     0xaAC338aC7776b40F0f2757B824D188f8fbe35E8E
 kill switch  registry 0x945800bd6cdd60521b64a12d7b3f12fc90916a6b
              holder   0x39d2bae5eaeda9283535ddc98f1991c81ed5cd7e
              name     "agent"
@@ -221,11 +226,26 @@ already fixed off chain: the operator of a stopped agent told it had run out of 
 authority had in fact been taken away. Burning clears the owner and lapsing does not, so asking who
 holds it first separates them.
 
-**The token id comes from the registry, never from the label.** It is the labelhash with its low 32
-bits cleared, and those hold a version counter the registry bumps on re-registration. Deriving it
-would ask about a token that does not exist — and the zero address that comes back reads as
-*revoked* rather than as a wrong question. It is also why the re-grant in that transcript works at
-all: the name has a new id afterwards, and `findTokenId` finds it.
+**The token id is the registry's business, and so is the shape of its answer.** The id is the
+labelhash with its low 32 bits cleared, and those hold a version counter the registry bumps on
+re-registration. The off-chain reader asks `findTokenId` for it; the instruction passes
+`keccak256(label)` to `getState`, which accepts any id form and strips the version bits itself, so
+the settlement path makes one call rather than two. That is also why the re-grant in that transcript
+works: the name has a new id afterwards, and the registry resolves it either way.
+
+`getState` is also where the router before this one was wrong, and how it was wrong is the lesson.
+The interface declared the registry's `State` struct in the order the documentation describes it.
+The registry returns it in the order the struct declares it — `status, expiry, latestOwner,
+tokenId, resource` — and Solidity decodes a tuple by position, so the instruction read a status byte
+as an expiry and a token id as an owner, and every settlement against a named mandate on that router
+reverted with empty data. Every contract test passed while it did, because the mock registry had
+been written to match the interface rather than the chain; a test double that agrees with your
+declaration proves only that you declared it consistently.
+`test_TheLiveRegistryAnswersInTheOrderTheInterfaceDeclares` now forks Sepolia and asks the deployed
+registry — it skips without `SEPOLIA_RPC_URL`, so a fresh clone stays green offline — because a
+disagreement between an interface and the contract it describes is a class of bug only a fork can
+catch. The router and the app were redeployed for it, and `agent/deployed.test.mjs` holds this
+repository to those two.
 
 **The argument length is checked.** `InstructionArgs` performs no bounds validation, so a truncated
 `MandateName` reads its registry address out of whatever follows it in calldata. A misparsed fee
@@ -244,18 +264,61 @@ than as a warning.
 
 ## What already exists, and what does not
 
-This is a crowded problem and an empty position. Both halves are worth stating plainly.
+This is a crowded problem and an empty position. Both halves are worth stating plainly, and the
+first is easier to state as a table than as a paragraph, because the field is not one thing.
 
-**The problem is not speculative.** The **Asset-Enforced Spend Mandate**
-draft, posted to Ethereum Magicians in June 2026 with participation from the ERC-8226 authors and
-MetaMask's delegation team, proposes token-level guardrails for agent wallets: a `spendGate` on the
-transfer path, `checkTransfer` returning reason codes like `EXPIRED` and `OVER_TX_CAP`. It reaches
-for the same word and nearly the same error taxonomy as this repository.
+| System | Enforced where | Bounds | Binds whom | Sees the second leg | Counterparty can verify |
+|---|---|---|---|---|---|
+| [Coinbase Spend Permissions](https://github.com/coinbase/spend-permissions) | on-chain, account | per-tx, per-period, expiry, revoke | the spender's key | no | yes |
+| [MetaMask Delegation Framework](https://docs.metamask.io/smart-accounts-kit/reference/delegation/caveats/) (ERC-7710, draft) | on-chain caveats | per-tx, period, streaming, targets/methods/calldata, time, revoke, post-execution balance delta | the delegate | yes, per redemption (`ERC20BalanceChangeEnforcer`) | yes |
+| [ERC-7579 Smart Sessions](https://docs.rhinestone.dev/smart-wallet/smart-sessions/overview) (Rhinestone/Biconomy) | on-chain validator | ERC-20 spend, value, timeframe, usage count, calldata rules | the session key | no | yes |
+| [Zodiac Roles v2](https://github.com/gnosisguild/zodiac-modifier-roles) on Safe | on-chain module | targets, functions, param conditions, allowances | the role holder | no | yes |
+| [Privy](https://docs.privy.io/controls/policies/overview) · [Turnkey](https://docs.turnkey.com/features/policies/delegated-access/agentic-wallets) · [CDP Agentic Wallets](https://eco.com/support/en/articles/14845485-coinbase-agentic-wallets-explained) · [Circle Agent Wallets](https://developers.circle.com/agent-stack/agent-wallets) | off-chain, enclave / policy server | value, recipients, calldata, chain, session caps | the signing key | no | no |
+| [Openfort](https://www.openfort.io/blog/programmable-wallet-controls) · [Crossmint](https://www.crossmint.com/learn/agent-wallets-compared) | both: policy server + smart-account session keys | per-tx, per-period, allowlists, expiry | the session key | no | on-chain half only |
+| [ERC-8226 RAMS](https://eips.ethereum.org/EIPS/eip-8226) (draft) · [Asset-Enforced Spend Mandate](https://ethereum-magicians.org/t/erc-asset-enforced-spend-mandate/28831) (discussion) | on-chain, token/registry | per-tx, cumulative (8226), allowed tokens, expiry, revoke, freeze | the agent, per asset | no | yes |
+| [1inch Limit Order Protocol](https://github.com/1inch/limit-order-protocol/blob/master/description.md) | on-chain, venue, per order | limit price, expiry, allowed taker, predicates | one signed order | yes | yes |
+| [Hyperliquid API wallets](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/nonces-and-api-wallets) | venue (L1) | trade-only scope, no withdraw, ≤180-day expiry | the agent key | n/a | yes |
+| [AP2 mandates](https://github.com/google-agentic-commerce/AP2) · [x402 client caps](https://github.com/x402-foundation/x402) | off-chain, signed intents / client SDK | price cap, expiry, merchant allowlist, per-payment cap | the agent, per purchase | n/a | signature only |
+| **Batas** | on-chain, inside settlement (SwapVM frame + Aqua app) | per-trade cap, rate floor, direction, expiry, ENSv2 kill switch | **every taker against the position** | yes, on settled registers | yes, plus paid attestation |
 
-It also shows where the ceiling of that approach is. A gate on the transfer path sees one leg. It
-can bound **how much leaves** and nothing else, because a token contract has no idea what comes
-back. `minRateE18` is not expressible there. Enforcement inside the settlement venue sees both
-legs, which is why Batas can bound the price a position accepts rather than only its size.
+Read the fourth column down and the position is visible. Most agent policy is enforced either off
+chain at signing (Turnkey, Privy, CDP Agentic Wallets, Circle) or on chain in the agent's own
+account (Coinbase Spend Permissions, MetaMask caveat enforcers, Smart Sessions, Zodiac Roles,
+Openfort session keys). The second kind is verifiable and non-advisory — an earlier version of this
+paragraph said all of it ran before a signature and off chain, which was wrong for most of the field
+— but it binds the agent's key, not the position. Nothing stops a different caller from trading
+against the same liquidity, and none of it can express a floor on what the position receives except
+per-redemption balance checks on the delegate's own account. `PolicyEnvelope` runs during
+settlement, has no prompt, and reverts for whoever arrived.
+
+Three things in that last row appear in no other:
+
+1. **The bound binds the counterparty, not the agent's key.** Every taker is refused at the same
+   cap, floor and expiry; revoking the name stops takers, not just the operator. Every other row
+   constrains the party that was given a key, and says nothing about the party that was not.
+2. **The policy is the position's identity and cannot be edited.** The terms are hashed into the
+   Aqua strategy hash, and Aqua refuses to re-ship a hash it has seen. Every other system's policy
+   is a mutable record — a caveat, a session, a role, a row in a policy server — that the party
+   holding admin can change.
+3. **A counterparty-facing paid attestation with a timestamp that is not ours.** x402 for the
+   answer, HCS for when the bytes became public, ERC-8004 for the identity behind them and what
+   the last taker got above the floor. Openfort's own documentation concedes that an off-chain
+   policy "can only be proven by the party running the engine"; the point of the last column is
+   that here it can be proven by anyone.
+
+**The problem is not speculative.** The **Asset-Enforced Spend Mandate** draft, posted to Ethereum
+Magicians on 18 June 2026 (thread 28831), proposes token-level guardrails for agent wallets: a
+`spendGate` on the transfer path, `checkTransfer` returning reason codes like `EXPIRED` and
+`OVER_TX_CAP`. It reaches for the same word and nearly the same error taxonomy as this repository.
+A Brickken ERC-8226 co-author and a MetaMask Delegation Framework contributor replied in the
+thread, and neither raised the one-leg limitation.
+
+That limitation is the ceiling of the approach. A gate on the token's transfer path sees one leg,
+so a rate floor cannot live there. It can live in an account-layer post-execution balance check —
+MetaMask's balance-change enforcers, paired with a transfer-amount enforcer, are a per-redemption
+rate floor — or in a signed limit order, which is a rate floor and an expiry at the venue. But both
+bound one delegate's or one order's execution. Batas puts the floor inside the venue so it binds
+every settlement against the position, whoever the taker is.
 
 [`docs/spend-mandate-reply.md`](docs/spend-mandate-reply.md) is that argument written out for the
 thread, with the measurement behind it and two places where the draft's layer is clearly the better
@@ -264,12 +327,11 @@ one. It is drafted rather than posted: it goes out under a person's name, so tha
 changes when an instruction's job is to refuse rather than to price, and one for Foundry about
 `forge build` and `forge test` writing different bytecode for the same contract.
 
-**Enforcement elsewhere is advisory.** [ENShell](https://ethglobal.com/showcase/enshell-6t95y)
-(ETHGlobal Cannes 2026, top ten) routes agent intents through Chainlink CRE to an LLM that scores
-them 0–100,000 and answers approve/escalate/block. Wallet infrastructure — Turnkey, Openfort —
-places policy at the account layer. All of it runs before a signature and off-chain, which means a
-counterparty has to trust the operator's server, and a judgement made from a prompt can be argued
-with. `PolicyEnvelope` runs during settlement, has no prompt, and reverts.
+**Judgement is not enforcement.** [ENShell](https://ethglobal.com/showcase/enshell-6t95y)
+(ETHGlobal Cannes 2026 finalist, Chainlink CRE prize) routes agent intents through Chainlink CRE to
+an LLM that scores them and answers approve/escalate/block, and gates on an on-chain strike count
+(`AgentFirewall`, on Sepolia). The strike count is enforced; the score that feeds it is a judgement
+made from a prompt, and a judgement can be argued with. A cap cannot.
 
 **1inch has a wrapping rate guard of its own, and this document used to say otherwise.** An
 earlier version of this paragraph claimed nobody had written a policy instruction for SwapVM. That
@@ -302,6 +364,10 @@ second. `/v1/mandate/explain` meters nothing. It sells a verdict that the party 
 produce alone: what a program's bytes actually permit, and whether the identity claiming to operate
 it holds the registration it names.
 
+What the table's other rows do that this one does not is not hidden either; it is under
+[What a mandate does not bound](#what-a-mandate-does-not-bound), because a comparison that lists
+only the column you win is an advertisement.
+
 ## Where to look
 
 | What | File |
@@ -320,7 +386,7 @@ conditions and access guards bank, beside `Deadline` and the taker gates, which 
 for both: one bounds what a settlement may do, the other bounds who may still cause one. The router is a redeployment, which
 the 1inch track permits.
 
-Two things about which base class to extend, both learned the hard way (the sizes below are from the first deployment; the router carrying both instructions is 21,178 bytes):
+Two things about which base class to extend, both learned the hard way (the sizes below are from the first deployment; the router carrying both instructions is 21,132 bytes):
 
 > **`AquaOpcodes`, not `Opcodes`.** The full set carries 24 instructions an Aqua strategy never
 > reaches for, including every balance instruction, because in Aqua mode balances come from Aqua
@@ -333,8 +399,9 @@ Two things about which base class to extend, both learned the hard way (the size
 ## Running it
 
 ```bash
+foundryup -i 1.8.0    # exactly: agent/deployed.test.mjs compares Sepolia against what this forge emits
 npm install
-npm test          # contracts, decoder, and the paid API surface
+npm test              # contracts, decoder, and the paid API surface
 ```
 
 Four suites, run separately if you prefer:
@@ -537,14 +604,14 @@ reproduce the bytecode independently of the explorer.
 Aqua is already deployed on Sepolia, so the liquidity layer is used as-is. Only our own contracts
 went out.
 
-All four are source-verified on Etherscan, so the code below can be read on the explorer rather
-than taken from this repo on trust.
+All four are source-verified on Etherscan — the router and the app are full matches on Sourcify
+too — so the code below can be read on the explorer rather than taken from this repo on trust.
 
 | Contract | Address |
 |---|---|
 | Aqua (canonical, not ours) | [`0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`](https://sepolia.etherscan.io/address/0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a) |
-| `BatasRouter` (SwapVM + PolicyEnvelope + MandateName) | [`0x648a0F330f432452CF53B967fd13305528C320a6`](https://sepolia.etherscan.io/address/0x648a0F330f432452CF53B967fd13305528C320a6) |
-| `BatasApp` | [`0x2A06D6121Cedc9D67404bfb0Ec34BAB8d393e05e`](https://sepolia.etherscan.io/address/0x2A06D6121Cedc9D67404bfb0Ec34BAB8d393e05e) |
+| `BatasRouter` (SwapVM + PolicyEnvelope + MandateName) | [`0xaAC338aC7776b40F0f2757B824D188f8fbe35E8E`](https://sepolia.etherscan.io/address/0xaAC338aC7776b40F0f2757B824D188f8fbe35E8E) |
+| `BatasApp` | [`0xD2cB41A7E77af1171deb18A3c559c578f4D82146`](https://sepolia.etherscan.io/address/0xD2cB41A7E77af1171deb18A3c559c578f4D82146) |
 | Demo token A | [`0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B`](https://sepolia.etherscan.io/address/0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B) |
 | Demo token B | [`0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81`](https://sepolia.etherscan.io/address/0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81) |
 | ERC-8004 identity registry (canonical) | [`0x8004A818BFB912233c491871b3d84c89A494BD9e`](https://sepolia.etherscan.io/address/0x8004A818BFB912233c491871b3d84c89A494BD9e) |
@@ -591,8 +658,8 @@ transfers, no mocked settlement:
 
 | Step | Transaction |
 |---|---|
-| Ship liquidity under the mandate | [`0x46d3822b…`](https://sepolia.etherscan.io/tx/0x46d3822bb6096432f02d1ac29aa07e737cc7f048d2ecc2e984792526ae3694b1) |
-| Swap settled inside the mandate | [`0x6fe65721…`](https://sepolia.etherscan.io/tx/0x6fe6572134ae5a67248a08ec5bb193a0ef2be70e5a5f0d6ba155ae1e9106be40) |
+| Ship liquidity under the mandate | [`0x8cdec703…`](https://sepolia.etherscan.io/tx/0x8cdec703361527046d60199bae327b8db7e784d55622897eace87b51c5909275) |
+| Swap settled inside the mandate | [`0x9408b60a…`](https://sepolia.etherscan.io/tx/0x9408b60a7bfc5345f9909153f5d5bf97feb193b5716f3c0fae21c33b89830060) |
 
 10 tokenA in, **19.743160687941225977 tokenB** out to
 [`0x8474d483…`](https://sepolia.etherscan.io/address/0x8474d483Cc4374B8a16fE2D019717b23f0a5BD83) —
@@ -614,13 +681,6 @@ refused 101000000000000000000 in, over the mandate's cap of 10000000000000000000
 `0xb9f1dc1d` is `MandateAmountInExceeded(uint256,uint256)`; the two words after it are the amount
 asked for and the cap that refused it. The refusal is a read-only call outside the broadcast, so it
 costs nothing and does not fail the script — reverting is the result being demonstrated.
-
-> Both transactions predate the current `BatasApp`. The one in the table above was deployed after
-> a fuzzer, handed the expiry to vary, found the two enforcement surfaces disagreeing on the expiry
-> second itself — so a reader following these links lands on the address that came before it. The
-> mandate they settled and the terms they prove are unchanged; only the second surface was
-> corrected. `agent/deployed.test.mjs` is what makes that statement checkable rather than
-> reassuring.
 
 Each run salts the program, because Aqua permanently burns a strategy hash once it has been used.
 `Salt` is the instruction that exists for exactly this: a no-op whose bytes change the program
@@ -676,26 +736,41 @@ intentions. A revoked name stops it acting without stopping the loop, because an
 on revocation would have to be restarted by the person who just demonstrated they can stop it
 remotely.
 
-A real run against the deployed position:
+A real run against the deployed position — read-only, so what it prints is a renewal it would
+grant, judged against the mandate the position already runs under:
 
 ```
-observed 1 mandate(s); reading the newest
-reserves 1010 A / 1980.256839312058774023 B
-spot     1.960650335952533439 B per A
+owner   0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E
+router  0xaAC338aC7776b40F0f2757B824D188f8fbe35E8E
+scanned 9000 blocks back from 11692084
+
+observed 3 mandate(s); reading the newest
+  hash   0x4ed644d49b49c00c8913b87d4af774b4cf224890674052f36218bf7bc2104921
+  block  11692042
+
+mandate name "agent": held and unexpired
+  42761 minutes of authority left
+
+reserves 1011 A / 1978.303998632220829304 B
+spot     1.95677942495768628 B per A
+  cap held at the previous mandate's 7.162902849964033514 A: renewal may tighten, never widen
+  floor held at the previous mandate's 1.941043832593008104 B per A: renewal may tighten, never loosen
 
 decision
-  budget 100bps from 1 settled trade(s) — not enough settled trades to measure; using the floor
-  floor  1.941043832593008104 B per A  (1.00% under spot)
-  cap    7.162902849964033514 A  (0.70% of reserve, the largest trade that still clears the floor)
+  budget 108bps from 2 settled trade(s) — widest gap between settled trades was 108bps
+  floor  1.941043832593008104 B per A  (0.80% under spot)
+  cap    7.162902849964033514 A  (0.70% of what ships, the largest trade that still clears the floor)
   fee    0.3%
-  expires in 719 hours
+  expires in 2 hours
 
-program  0x2121...056167656e747003007530500002080000000 (107 bytes)
+program  0x2121...056167656e74700300753050000208000000006aa5de5a (107 bytes)
 
 encoding check
-  local  0x4d113cd9c03a5ab7aebea6191fa903adf379e648c9c21911f956c09a24d9aeda
-  chain  0x4d113cd9c03a5ab7aebea6191fa903adf379e648c9c21911f956c09a24d9aeda
+  local  0x1d4fa85b488edb400ac718f4fd18612ea061c6708b300411b7e146834d8a5dd5
+  chain  0x1d4fa85b488edb400ac718f4fd18612ea061c6708b300411b7e146834d8a5dd5
   agree
+
+run again with --ship to grant this mandate
 ```
 
 Every number is read from the chain, including the slippage budget — which used to be 2% because
@@ -712,14 +787,7 @@ size caused. What it measures is how far the price has moved between one settlem
 to be exactly the quantity a floor has to survive. The widest gap rather than the average, because
 a budget set to the typical move fails on the atypical one, and with a handful of samples there is
 no percentile worth taking. A position with no history gets the 100bps floor, and the report says
-which it got:
-
-```
-decision
-  budget 108bps from 2 settled trade(s) - widest gap between settled trades was 108bps
-  floor  1.935646207168143268 B per A  (1.08% under spot)
-  cap    7.995884134408887803 A  (0.79% of reserve, the largest trade that still clears the floor)
-```
+which it got.
 
 The floor is one budget under the spot the reserves imply, and the cap is derived from the floor -
 which is what actually bounds how far one trade can walk the price.
@@ -729,8 +797,12 @@ itself, byte by byte, then asks the deployed router to hash the resulting order.
 opcode, length prefix or trait bit were wrong, the two hashes would differ and it refuses to ship.
 The chain agrees rather than being taken on trust.
 
-Mandate granted by that run:
-[`0x5226fd99…`](https://sepolia.etherscan.io/tx/0x5226fd991de5e122da66b5c6355c454add8dda1b537ad29adaff4d4bd2d97b0b).
+The mandate the position runs under was granted the same way, with `--ship`:
+[`0x8c48c7d6…`](https://sepolia.etherscan.io/tx/0x8c48c7d63ff1752ab40ac34438ecaf078ee69c4c900a1874c27adc97c8efdf99),
+published to the topic as `#13`, and the two-hour mandate it replaced was docked in the same run
+([`0xa4997129…`](https://sepolia.etherscan.io/tx/0xa4997129b77f334333289013d8fad243c38fc2e1eb731a2adaf5a4cffeef3d45)).
+Its expiry is the name's own — the agent caps a term at the authority it holds, because a mandate
+that outlives the name that gates it is one nobody can switch off.
 
 And the point of the whole design: the agent picks these numbers, but it cannot widen them once
 granted. `PolicyEnvelope` enforces whatever it proposed, inside the VM, for as long as the mandate
@@ -862,8 +934,8 @@ metadata entries keep the on-chain facts queryable without fetching the URI at a
 
 ```
 batas.chain        eip155:11155111
-batas.router       0x648a0F330f432452CF53B967fd13305528C320a6
-batas.app          0x2A06D6121Cedc9D67404bfb0Ec34BAB8d393e05e
+batas.router       0xaAC338aC7776b40F0f2757B824D188f8fbe35E8E
+batas.app          0xD2cB41A7E77af1171deb18A3c559c578f4D82146
 batas.aqua         0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a
 batas.enforcement  swapvm-opcode:0x21,0x22
 batas.x402.network hedera:testnet
@@ -931,10 +1003,10 @@ of trusting it.
 
 ```
   traded        1 A in
-  received      1.948987088535167759 B
-  leaving feedback: 143bps above the floor, tagged floor-honoured
-  feedback      success  0xc713d938…
-  reputation    2 feedback from 1 client(s), 133bps above the floor on average
+  received      1.952840679837944719 B
+  leaving feedback: 60bps above the floor, tagged floor-honoured
+  feedback      success  0x28f37ee5…
+  reputation    4 feedback from 1 client(s), 106bps above the floor on average
 ```
 
 A trade settled exactly on the floor scores zero — the mandate was honoured and nothing was given
@@ -1006,9 +1078,9 @@ enforced mandate
   kill switch "agent" in 0x945800bd6cdd60521b64a12d7b3f12fc90916a6b
               held by 0x39d2bae5eaeda9283535ddc98f1991c81ed5cd7e
 publication
-  published   2026-09-12T17:02:25.719Z  (HCS consensus, topic 0.0.10394165 #10)
+  published   2026-09-12T23:12:30.035Z  (HCS consensus, topic 0.0.10394165 #13)
   granted by  0x39d2bae5eaeda9283535ddc98f1991c81ed5cd7e
-  verify      https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/10
+  verify      https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/13
 operator
   agent #10123  Batas
   held by     0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E
@@ -1059,9 +1131,9 @@ that needs no account should not be the half that flatters us. `node agent/ens.m
 writes the note itself:
 
 ```
-"agent" on topic 0.0.10394165: 4 revocation(s)
-  #7  2026-09-11T02:55:10.617Z  registry 0x945800bd6cdd60521b64a12d7b3f12fc90916a6b
-     https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/7
+"agent" on topic 0.0.10394165: 5 revocation(s)
+  #14  2026-09-12T23:13:40.774Z  registry 0x945800bd6cdd60521b64a12d7b3f12fc90916a6b
+      https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/14
 ```
 
 It is best effort on purpose. By the time that write is attempted the name is already revoked and
@@ -1079,6 +1151,20 @@ route through us.
 **`operator`** answers *who is running this*, from the ERC-8004 registry, and `vouches` is the
 field that matters: an identity held by someone other than the address that granted the mandate is
 not evidence of anything, and the service says whose it actually is.
+
+### Every morning
+
+`GET /v1/position/health` is the report to read before anything else. It joins the live position
+to its mandate: spot now against the floor; the marginal rate after the fee (`marginalBps`); how
+much A the position can absorb before that rate falls under the floor; what one cap-sized trade
+would take out of B; every settlement since the ship with its distance above the floor; and whether
+the name, the ledger and the counterparties still agree. `status` is the worst alert or `ok`, and
+`docked` when Aqua no longer answers for the strategy. The alert codes are the questions a maker
+would otherwise ask by hand: `FLOOR_INVERTED`, `FLOOR_HEADROOM_LOW`, `TRADE_AT_FLOOR`,
+`SELF_TRADE`, `EXPIRY_SOON`, `NAME_INVALID`, `NAME_SHORTER_THAN_MANDATE`, `RESERVES_DOWN`,
+`NOT_PUBLISHED`, `LEDGER_DISAGREES`, `FLOOR_BREACH_REPORTED`. Free, behind the same brake as the
+other free routes, and remembered for a minute so a dashboard polling it does not become the load.
+The page shows the same report as its *This morning* panel.
 
 ### Two things worth knowing before building this
 
@@ -1134,7 +1220,7 @@ free evidence is good and a real doubt remains does it spend anything:
   but the grant is only 41s old, and who is behind it now matters.
 
   paying 0.001 HBAR for the operator's identity and whether it vouches …
-  settled  0.0.7162784@1789095743.757413333
+  settled  0.0.7162784@1789254970.943070760
   agent         #10123  Batas
   vouches       true — the identity is held by the address that granted the mandate
 
@@ -1146,7 +1232,7 @@ And it acts on the verdict rather than announcing one. With `--trade` and its ow
 trade it just decided was worth taking — live on Sepolia, from
 [`0x1437aF57…`](https://sepolia.etherscan.io/address/0x1437aF5722D5Dfe6BAEda25f3A7A39aeCA374614),
 one tokenA in for **1.952840679837944719 tokenB** out:
-[`0xaf84a929…`](https://sepolia.etherscan.io/tx/0xaf84a929680c9f3d585a8807b3bec57cfa46722c33e814649967c99d6ecdfeb2).
+[`0xa4fb6b83…`](https://sepolia.etherscan.io/tx/0xa4fb6b83912013cf8ba250ab2822ce5457ee129711af1a5039a5182a460bc263).
 
 Its own key, and that is the point rather than an inconvenience: a counterparty signing with the
 maker's key is the maker, and a demonstration of two agents that shares one wallet is a
@@ -1165,6 +1251,18 @@ that feed it, because it is the only part anyone would want to argue with, and l
 by calling two chains is logic nobody runs. `agent/counterparty.test.mjs` pins each refusal by
 name, including that an empty answer raises every doubt rather than reading as a clean bill of
 health.
+
+It no longer takes the maker's word for what the position permits, either. It fetches the shipped
+strategy from Aqua's own event log, decodes the program locally with the same `explain()` the
+service runs, and treats the service's `/v1/mandate/decode` answer as a claim to be checked against
+those bytes: a server describing a floor, cap, expiry or kill switch the chain does not carry is a
+doubt, and the trade is pinned to the strategy hash it read itself, never one the server supplied.
+It reads the position's live reserves too, and refuses a floor sitting more than 10% under the
+position's own spot. A counterparty with its own view of the market sets `BATAS_COUNTERPARTY_MIN_RATE`
+(B per A) and the 1 A quote is held against it; a quote the position refuses is not a pass. Paying
+for the operator's identity is a separate decision, `shouldPay`, made only after every free check is
+clean: it buys the answer when the grant is under an hour old or when told to with `--paranoid`, and
+otherwise trades without spending.
 
 ## What the service does not keep
 
@@ -1270,6 +1368,23 @@ the MCP tool both call it; the spend cap and the cold-start retry live in one pl
 injected rather than assumed, because MCP speaks JSON-RPC over stdout and the narration the CLI
 prints would corrupt the stream.
 
+Three more documents in formats other people's software already reads, all generated from one
+route table in `agent/openapi.mjs`, so none of them can describe a route the other two do not.
+`/openapi.json` is an OpenAPI 3.1 description: every route, the free/paid split as an `x-cost` on
+each operation, and the `402` documented as the interface it is. `/.well-known/agent-card.json` is
+an A2A Agent Card — the questions as skills, with pointers to the x402 manifest and the ERC-8004
+identity. `POST /mcp` is the same four tools over Streamable HTTP, stateless, behind the free brake.
+And when `BATAS_ATTEST_KEY` is set, the paid answer carries an EIP-712 attestation over its own
+canonical JSON (`agent/attest.mjs` recovers the signer; an edited body recovers nobody); unset, the
+field is absent, and no other key stands in.
+
+[`docs/INTEGRATE.md`](docs/INTEGRATE.md) is the five-minute version: `claude mcp add batas -- node
+agent/mcp.mjs` for any MCP client, `import { explain, client } from 'batas'` for Node, one-file
+adapters for the Vercel AI SDK, LangChain, the OpenAI Agents SDK, the Claude Agent SDK and Hedera
+Agent Kit v4 over a single `TOOLS` table, a `batas` CLI, and a table of which command needs which
+environment variable — for most, none. Importing the library reads no `.env` and opens no
+connection, and `agent/index.test.mjs` asserts it.
+
 ## What the mandate is worth
 
 Every other test answers *does the limit bind*. `test_WhatTheMandateIsWorth` answers the question a
@@ -1325,8 +1440,10 @@ It is a test rather than a script, so it cannot rot into a story the code stoppe
 
 ## What a mandate does not bound
 
-Three limits of this design, stated here because a mandate that is trusted for more than it
-enforces is worse than one nobody trusts.
+The limits of this design, stated here because a mandate that is trusted for more than it
+enforces is worse than one nobody trusts. Three are properties of the terms; two are economics the
+terms do not see; and three are things the table under
+[What already exists](#what-already-exists-and-what-does-not) credits to other systems.
 
 **The floor is a number, not an oracle.** `minRateE18` is struck once, against the spot the
 reserves implied when the mandate was granted, and it never moves again.
@@ -1335,7 +1452,8 @@ priced on the reserves as they stand, so working the position makes it dearer an
 refuses before the next trade breaches the floor. That is a statement about *this position's* price
 path and nothing else. If the market moves underneath a long mandate, the floor keeps refusing
 trades below a rate that stopped describing anything, while every trade that empties the position
-at that stale rate satisfies it. The default term is two hours, which is short enough that the two
+at that stale rate satisfies it. The floor protects against this position's own price being walked;
+it does not protect against A being worth less than the floor everywhere else. The default term is two hours, which is short enough that the two
 prices are still the same price; the deployed demo runs thirty days so the position stays live for
 someone to look at, and thirty days is long enough for them to part company. `explain()` now says
 so whenever a mandate has more than seven days left, because the caller paying for an answer is
@@ -1363,6 +1481,38 @@ compares it to a caller, and none should: takers are whoever arrives, and a posi
 address may trade against is not liquidity.
 `test_TheAgentNamesTheGrantAndGatesNobody` pins both halves, because a field that is part of the
 hash and read by nothing looks like an oversight until someone checks which it is.
+
+**What the cap and the floor bound together is smaller than it reads.** Under the agent's own
+derived terms — a floor one budget under spot, and a cap solved for the largest trade that still
+clears it — one cap-sized trade lands exactly on the floor and leaves the marginal rate below it.
+The floor binds a trade's *average* rate, and the marginal move on `x·y=k` is about twice the
+average, so the sequence the floor bounds is, per term, one maximum fill.
+`test_RepeatedTradingCannotWalkThePositionBelowItsFloor` is true and the sequence it proves stops at
+the second trade. Smaller trades do not get around that; they get less: 357 trades of 0.01 A drain
+6.95 B before the floor refuses, against 13.9 B for one maximum fill. What the floor does not do is
+ration volume over time.
+
+**Renewal re-strikes the floor from the position's own reserves.** A maximum fill leaves spot about
+1.4% lower, and a renewal that re-based the floor a budget under *that* would walk it down every
+cycle — a rolling put with no premium. So on renewal the floor, like the cap, may only tighten; the
+rules are under [Over time](#what-the-tests-prove). And between shipping a renewal and docking the
+mandate it replaces, both positions are live. That order is chosen — a failure there should leave
+two live positions rather than none — and a taker watching for the renewal can take one maximum fill
+from each inside that window.
+
+**And three things the table credits to others.** Per-period and cumulative caps — Coinbase's
+per-period allowance, MetaMask's period and streaming caveats, ERC-8226's `maxCumulativeValue`,
+Zodiac's allowances, Smart Sessions' usage counts: a mandate bounds one trade and one term, never a
+day's volume, and the paragraph two above is as close as it comes. Target, method, recipient and
+calldata scoping — Privy, Turnkey, MetaMask, Zodiac, Smart Sessions and Openfort all bound where a
+key may point; here the agent's key is unconstrained outside this one venue and this one direction,
+and a mandate says nothing about what the same key does at another contract. Policy that follows
+the key across venues and chains, with a human above a threshold — Turnkey, Privy, Crossmint,
+Coinbase and Circle, and Safe's or Openfort's *require a human above X*: a mandate is a property of
+one position on one chain. That last gap has a sharper form. The agent here holds the maker's key,
+so it cannot widen the mandate it granted, but it can ship a wider *new* one; the name and the dock
+end both, and nothing else does. Account-layer systems separate the owner who grants from the key
+that is bound, and this project does not.
 
 ## What the tests prove
 
@@ -1403,6 +1553,19 @@ and checks all of it: every settled trade clears the floor alone, the rate never
 taker, the average across the whole run clears the floor too, and the position stops while the
 maker still holds more than half the reserve.
 
+Renewal is not a fresh grant, and three rules keep an agent that re-ships every couple of hours
+from rewriting its own limits a little at a time. **The floor never loosens on renewal.** It is
+re-measured from the position's own reserves, but the previous mandate's floor is a floor on the
+next one — a maximum fill lands exactly on the floor and leaves spot below it, and re-striking one
+budget under *that* every hour is a ratchet with no single step that looks like anything. **The
+terms are derived from the amounts that actually ship** — `min(wallet balance, reserve)` per side,
+fixed before the decision — so a trade landing between the reserve read and the ship cannot leave a
+position whose floor refuses a tenth of a token for its whole term. **And a position that refuses
+its own cap** — one whose floor rejects even one percent of its stated maximum at its live reserves
+— is renewed at once rather than at its deadline, since a mandate that authorises nothing is not one
+worth keeping alive on schedule. Together with the cap rule already in place, only the owner can
+widen anything; the agent can only tighten, and only tell you when it has painted itself in.
+
 **Off chain** — the two encoders agree byte for byte on arbitrary terms; the decision math never
 returns a cap that its own floor would refuse; the ENSv2 role bitmaps withhold exactly the four
 rights that would break the grant; an ERC-8004 identity held by someone else does not vouch; and a
@@ -1427,8 +1590,8 @@ payload is being built, before anything is signed or sent, so an unfunded key re
 can move even if the assertion is wrong, and CI needs no secret to run it.
 
 ```
-forge test          46 passing
-npm run test:js    187 passing
+forge test          58 passing
+npm run test:js    216 passing
 npm run test:api    20 passing
 npm run test:prod    5 passing
 ```
@@ -1480,5 +1643,30 @@ stand-in proves only that the stand-in agrees with itself.
 
 ## License
 
-MIT. Dependencies keep their own licenses; Aqua and SwapVM are source-available under
-Degensoft terms.
+Two licenses apply, by file.
+
+**Derivatives of SwapVM and Aqua** — `src/BatasRouter.sol`, `src/PolicyEnvelope.sol`,
+`src/MandateName.sol`, `src/Mandate.sol` (SwapVM) and `src/BatasApp.sol` (Aqua) — extend
+`@1inch/swap-vm` and `@1inch/aqua` and are published under the same licenses those carry:
+`LicenseRef-Degensoft-SwapVM-1.1` and `LicenseRef-Degensoft-Aqua-Source-1.1`, texts in
+[`LICENSES/`](LICENSES/), as §3.1 of each requires. Nothing in the vendor tree is edited; the
+additions are two new instructions (`0x21`, `0x22`) and a router carrying them, written 6–13
+September 2026. Our own lines in those files are additionally offered under MIT to anyone who has a
+license to the SwapVM and Aqua parts. Redeploying a modified SwapVM is what §3 of that license
+provides for, and what the ETHGlobal 1inch track asks for.
+
+**Everything else** — `agent/`, `api/`, `qa/`, `script/`, `test/`, `src/IBatasCallback.sol` — is
+MIT, see [`LICENSE`](LICENSE). It calls the vendor contracts and does not incorporate them.
+
+Powered by SwapVM — © Degensoft Ltd 2025. Powered by Aqua — © Degensoft Ltd 2025. The paid answers
+and the page are analyses of SwapVM programs; they carry the same notice.
+
+The service charges 0.001 testnet HBAR per inspection. That is a demonstration on a network whose
+currency has no value; a fee-charging deployment on a mainnet would need a Commercial License from
+Degensoft under §5 of both licenses. See [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES).
+
+The SPDX line at the top of the five derivative files still reads `MIT`, and that is deliberate
+rather than an oversight: the deployed bytecode's metadata hash pins those files byte for byte, and
+`agent/deployed.test.mjs` holds the repository to the deployment. Rewriting the header would make
+`verification/` describe a contract that is not the one on Sepolia. The licenses that apply are the
+ones stated here.

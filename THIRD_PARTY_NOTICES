@@ -1,0 +1,60 @@
+Third-party notices for Batas
+
+This repository's own code is MIT (see LICENSE), except the five files under src/ that extend
+SwapVM and Aqua, which are published under the licenses those carry (see README "License").
+Nothing in the vendor tree is edited. Every dependency below is pinned in package.json.
+
+Powered by SwapVM — © Degensoft Ltd 2025.
+Powered by Aqua — © Degensoft Ltd 2025.
+
+--------------------------------------------------------------------------------
+
+@1inch/swap-vm
+  source     github:1inch/swap-vm#f09a41e689240adc645934f965c8061749397cd2
+  license    LicenseRef-Degensoft-SwapVM-1.1  (LICENSES/SwapVM-1.1.txt)
+  copyright  © 2025 Degensoft Ltd. All rights reserved.
+  used by    src/BatasRouter.sol, src/PolicyEnvelope.sol, src/MandateName.sol, src/Mandate.sol
+             (Modifications under §1.7(b): two instruction programs that run in the same EVM
+             address space as SwapVM, and a router carrying them)
+  note       the upstream file src/interfaces/IMakerHooks.sol carries the header
+             `SPDX-License-Identifier: LicenseRef-Degensoft-ARSL-1.0-Audit` while pointing its
+             @custom:license-url at LICENSES/SwapVM-1.1.txt. It is preserved here exactly as
+             received, as §3.1(B) requires; see UPSTREAM.md.
+
+@1inch/aqua
+  source     github:1inch/aqua#v1.0.0
+  license    LicenseRef-Degensoft-Aqua-Source-1.1  (LICENSES/Aqua-Source-1.1.txt)
+  copyright  © 2025 Degensoft Ltd. All rights reserved.
+  used by    src/BatasApp.sol (inherits AquaApp), src/IBatasCallback.sol (calls only)
+             The Aqua contract itself is used as deployed by 1inch on Sepolia at
+             0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a and is not redeployed.
+
+@1inch/solidity-utils 6.9.10
+  license    MIT  (LICENSES/MIT-1inch.txt)
+  copyright  © 2019, 1inch. All rights reserved.
+
+@openzeppelin/contracts 5.4.0
+  license    MIT  (LICENSES/MIT-OpenZeppelin.txt)
+  copyright  © 2016-2025 Zeppelin Group Ltd and contributors
+
+forge-std v1.11.0
+  license    Apache-2.0 OR MIT
+  used by    test/ and script/ only; nothing deployed links it.
+
+--------------------------------------------------------------------------------
+
+Changes to the Licensed Work: none in the vendor tree.
+
+Additions (6–13 September 2026), each a Modification in the §1.7 sense because it runs inside
+SwapVM's program loop or Aqua's app surface:
+  - opcode 0x21  PolicyEnvelope  (src/PolicyEnvelope.sol) — wraps the program, checks cap and floor
+                 on the settled registers
+  - opcode 0x22  MandateName     (src/MandateName.sol)    — reads an ENSv2 registry during settlement
+  - BatasRouter  (src/BatasRouter.sol)                    — SwapVM + AquaOpcodes carrying both
+  - BatasApp     (src/BatasApp.sol)                       — an AquaApp checking the same terms before pull()
+
+The SPDX line at the top of those five files still reads `MIT`. That is not a claim that they are
+MIT-only: the deployed bytecode's metadata hash pins the source byte for byte, and this repository
+proves the deployment matches the source (agent/deployed.test.mjs), so the header was left as
+deployed rather than rewritten under a contract that cannot be. The licenses that apply are the
+ones stated here and in the README.

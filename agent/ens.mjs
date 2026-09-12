@@ -23,8 +23,8 @@ import { sepolia } from 'viem/chains';
 import 'dotenv/config';
 
 import { decodeProgram, readMandate } from './swapvm.mjs';
-import { programFromStrategy } from './inspect.mjs';
-import { AQUA, ROUTER, SEPOLIA_RPC } from './deployment.mjs';
+import { programFromStrategy } from './position.mjs';
+import { AQUA, ROUTER, OWNER, ENS_REGISTRY, SEPOLIA_RPC } from './deployment.mjs';
 
 // ENSv2 beta on Sepolia. Checked for code before use; these moved once already during the beta.
 const VERIFIABLE_FACTORY = getAddress('0x10Dc6333cDfe1FCEF624c6E0A8221b91804cD7ef');
@@ -79,6 +79,15 @@ const REGISTRY_ABI = [
     { name: 'hasRoles', type: 'function', stateMutability: 'view', inputs: [{ name: 'anyId', type: 'uint256' }, { name: 'roleBitmap', type: 'uint256' }, { name: 'account', type: 'address' }], outputs: [{ type: 'bool' }] },
     { name: 'ownerOf', type: 'function', stateMutability: 'view', inputs: [{ name: 'tokenId', type: 'uint256' }], outputs: [{ type: 'address' }] },
     { name: 'findTokenId', type: 'function', stateMutability: 'view', inputs: [{ name: 'label', type: 'string' }], outputs: [{ type: 'uint256' }] },
+    // The whole state of a name in one read, keyed by the labelhash. A static struct encodes the
+    // same as its members laid out flat, so this is decoded as five values in the contract's order.
+    {
+        name: 'getState', type: 'function', stateMutability: 'view', inputs: [{ name: 'id', type: 'uint256' }],
+        outputs: [
+            { name: 'status', type: 'uint8' }, { name: 'expiry', type: 'uint64' }, { name: 'latestOwner', type: 'address' },
+            { name: 'tokenId', type: 'uint256' }, { name: 'resource', type: 'uint256' },
+        ],
+    },
 ];
 
 const AQUA_SHIPPED = {
@@ -89,7 +98,10 @@ const AQUA_SHIPPED = {
     ],
 };
 
+// Reading needs no key: the registry is public and so is the grantor. Only deploy, grant and
+// revoke sign anything, and they are the only ones that ask for one.
 const clients = () => {
+    if (!process.env.SEPOLIA_PRIVATE_KEY) throw new Error('SEPOLIA_PRIVATE_KEY missing; copy .env.example to .env');
     const account = privateKeyToAccount(process.env.SEPOLIA_PRIVATE_KEY);
     const transport = http(SEPOLIA_RPC);
     return {
@@ -99,11 +111,9 @@ const clients = () => {
     };
 };
 
-const registryAddress = () => {
-    const a = process.env.BATAS_ENS_REGISTRY;
-    if (!a) throw new Error('BATAS_ENS_REGISTRY not set; run --deploy first and put the address in .env');
-    return getAddress(a);
-};
+// The live registry is a public default like every other address in deployment.mjs; `--deploy`
+// prints the override for anyone running their own.
+const registryAddress = () => ENS_REGISTRY;
 
 /**
  * Base id for a label: the labelhash with its low 32 bits cleared.
@@ -177,12 +187,13 @@ export function classifyName({ label, registry, expiry, owner, holder, now, gran
         return { valid: false, revoked: false, reason: `no mandate name "${label}" in ${registry}`, expiry: 0, secondsLeft: 0 };
     }
 
+    // The registry clears the owner when the grantor unregisters and leaves it set when a name
+    // merely runs out, so that is the signal — the same one the chain's own MandateName check
+    // reads. The mandate's deadline is a second opinion: a name that ended before the term it was
+    // granted for was cut short by someone, even if the registry still remembers who held it.
     const burned = !owner || owner === ZERO;
     if (burned || expiry <= now) {
-        // Revoking sets the expiry to the moment of revocation, so a pulled name and a lapsed one
-        // look identical from the timestamp alone. These two signals separate them: an expiry that
-        // falls short of the granted term, or a name already burned while its term still runs.
-        const revoked = (grantedUntil !== undefined && expiry < Number(grantedUntil)) || (burned && expiry > now);
+        const revoked = burned || (grantedUntil !== undefined && expiry < Number(grantedUntil));
         return {
             valid: false,
             revoked,
@@ -208,24 +219,16 @@ export function classifyName({ label, registry, expiry, owner, holder, now, gran
  * `grantedUntil` to have a withdrawal reported as one rather than as a lapse.
  */
 export async function mandateNameStatus(pub, registry, label, holder, { grantedUntil } = {}) {
-    // Ask the registry for the current token id rather than deriving one: it carries a version
-    // counter in its low bits that only the registry knows the value of, and `unregister` bumps it.
-    const id = await pub.readContract({
-        address: registry, abi: REGISTRY_ABI, functionName: 'findTokenId', args: [label],
+    // One read, keyed by the labelhash. `ownerOf` was used before and is expiry-gated: it answers
+    // a lapsed name and a revoked one with the same zero address, and the difference between those
+    // is the one thing this function exists to report. `getState` keeps the last owner through a
+    // lapse and clears it on unregister.
+    const [, expiry, owner] = await pub.readContract({
+        address: registry, abi: REGISTRY_ABI, functionName: 'getState', args: [BigInt(keccak256(toHex(label)))],
     });
-    const expiry = Number(
-        await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'findExpiry', args: [label] }),
-    );
-
-    // This registry answers `ownerOf` for a burned name with the zero address instead of reverting,
-    // so a try/catch around it catches nothing. It is checked as a value, which is what it is.
-    let owner = ZERO;
-    try {
-        owner = await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'ownerOf', args: [id] });
-    } catch { /* some registries do revert; that is burned too */ }
 
     return classifyName({
-        label, registry, expiry, owner, holder, now: Math.floor(Date.now() / 1000), grantedUntil,
+        label, registry, expiry: Number(expiry), owner, holder, now: Math.floor(Date.now() / 1000), grantedUntil,
     });
 }
 
@@ -305,17 +308,38 @@ async function grant(label) {
     console.log(`\ntoken   ${tokenId}`);
     console.log(`tx      ${hash}`);
     console.log(`status  ${receipt.status}  gas ${receipt.gasUsed}`);
+
+    // And say so on the ledger a stranger reads — the same ledger `--revoke` writes to.
+    //
+    // Without this, every revoke-and-restore left the topic's last word about the name as
+    // "revoked" while the chain said "held", and the health report rightly called that a
+    // disagreement. Best effort for the same reason as the revocation note: the grant is already
+    // on chain, and a missing public note must not be mistaken for a missing grant.
+    if (receipt.status === 'success' && process.env.HEDERA_SERVICE_ID && process.env.BATAS_HCS_TOPIC) {
+        try {
+            const { publishNameGrant } = await import('./hcs.mjs');
+            const record = await publishNameGrant(process.env.BATAS_HCS_TOPIC, {
+                label, holder: agentAddress, registry, expiry, tx: hash, chainId: 11155111,
+            });
+            console.log(`\nrecorded on HCS topic ${record.topicId}`);
+            console.log(`  sequence ${record.sequenceNumber}  tx ${record.transactionId}`);
+        } catch (e) {
+            console.log(`\ncould not record the grant on HCS: ${String(e.message ?? e)}`);
+            console.log(`  the name is granted regardless; publish the note later with: node agent/hcs.mjs --publish-name-grant ${label}`);
+        }
+    }
 }
 
 async function read(label) {
-    const { account, pub } = clients();
+    const pub = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) });
     const registry = registryAddress();
+    const grantor = OWNER;
     const id = await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'findTokenId', args: [label] });
 
     const [expiry, holderRoles, grantorRoles] = await Promise.all([
         pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'findExpiry', args: [label] }),
-        pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'roles', args: [id, getAddress(process.env.BATAS_AGENT_ADDRESS || account.address)] }),
-        pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'roles', args: [id, account.address] }),
+        pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'roles', args: [id, getAddress(process.env.BATAS_AGENT_ADDRESS || grantor)] }),
+        pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'roles', args: [id, grantor] }),
     ]);
 
     const now = Math.floor(Date.now() / 1000);
@@ -375,8 +399,6 @@ could not record the revocation on HCS: ${String(e.message ?? e)}`);
 }
 
 async function main() {
-    if (!process.env.SEPOLIA_PRIVATE_KEY) throw new Error('SEPOLIA_PRIVATE_KEY missing; copy .env.example to .env');
-
     const argv = process.argv.slice(2);
     const at = (flag) => argv.indexOf(flag);
 

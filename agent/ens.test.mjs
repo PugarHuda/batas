@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 import {
     ROLE, admin, ROLE_CAN_TRANSFER_ADMIN, holderRoles, grantorRootRoles, isSoulbound, labelId,
-    classifyName, ZERO,
+    classifyName, mandateNameStatus, ZERO,
 } from './ens.mjs';
 
 const NOW = 1_800_000_000;
@@ -146,11 +146,46 @@ test('the zero address is treated as burned rather than as a holder', () => {
     assert.ok(!/is held by/.test(s.reason), s.reason);
 });
 
-test('without the mandate deadline the report is still correct, only less specific', () => {
+test('a cleared owner is a revocation even with no deadline to compare against', () => {
+    // The registry clears the owner on unregister and keeps it through a lapse, so the owner field
+    // alone is enough — this is the same signal the chain's own MandateName check reads.
     const s = name({ expiry: NOW - 60, owner: ZERO });
     assert.equal(s.valid, false);
-    assert.equal(s.revoked, false, 'nothing on chain distinguishes the two without the term');
+    assert.equal(s.revoked, true);
+    assert.match(s.reason, /was revoked/);
+});
+
+test('a lapsed name whose owner is still remembered simply expired', () => {
+    const s = name({ expiry: NOW - 60 });
+    assert.equal(s.valid, false);
+    assert.equal(s.revoked, false);
     assert.match(s.reason, /expired at/);
+});
+
+test('the deadline is a second opinion: a name that ended before its term was cut short', () => {
+    const s = name({ expiry: NOW - 60, grantedUntil: NOW + 7200 });
+    assert.equal(s.revoked, true, 'the owner is still set, but the term says someone ended it early');
+});
+
+test('mandateNameStatus reads getState by labelhash and hands the answer to classifyName', async () => {
+    const { keccak256, toHex } = await import('viem');
+    const asked = [];
+    const pub = {
+        readContract: async ({ functionName, args }) => {
+            asked.push([functionName, args]);
+            // (status, expiry, latestOwner, tokenId, resource), in the contract's order.
+            return [2, BigInt(NOW + 3600), HOLDER, 1n, 0n];
+        },
+    };
+    const s = await mandateNameStatus(pub, '0xReg', 'agent', HOLDER);
+    assert.deepEqual(asked, [['getState', [BigInt(keccak256(toHex('agent')))]]]);
+    assert.equal(s.expiry, NOW + 3600, 'the uint64 comes back as a number');
+    assert.equal(typeof s.valid, 'boolean');
+
+    // And the cleared owner the registry reports after unregister is read as revoked.
+    pub.readContract = async () => [0, BigInt(NOW - 60), ZERO, 0n, 0n];
+    const r = await mandateNameStatus(pub, '0xReg', 'agent', HOLDER);
+    assert.equal(r.revoked, true);
 });
 
 test('a name held by somebody else does not authorise this agent', () => {

@@ -207,6 +207,40 @@ contract BatasAppTest is Test, IBatasCallback {
         assertGt(amountOut, 0, "an ordinary taker must be able to trade against a mandated position");
     }
 
+    /// @notice There is no reverse direction on this surface: a mandate is a one-way grant, and
+    ///   asking for the other way asks about a position that was never shipped.
+    /// @dev `PolicyEnvelope` carries a direction byte because SwapVM lets the taker choose
+    ///   `isAToB`, and without the byte one program applied its cap to whichever token arrived.
+    ///   `BatasApp` has no such switch to check: `swap` takes no direction argument and sells
+    ///   `m.tokenIn` for `m.tokenOut`, full stop. The only way to ask it for B-to-A is to hand in a
+    ///   mandate with the tokens swapped, and that mandate hashes to a strategy the maker never
+    ///   shipped, so Aqua refuses before any term is read. Pinned so the two surfaces are on record
+    ///   refusing the same trade, each in its own vocabulary, and so that the exact refusal is
+    ///   known: an unknown strategy is an error, not a pair of zero balances a curve could price.
+    ///
+    ///   Fails if `BatasApp` ever grew a direction flag, or if Aqua started answering an unshipped
+    ///   strategy with zeroes instead of refusing it.
+    function test_TheReverseDirectionHasNoDoorOnTheAppSurface() public {
+        Mandate memory m = _mandate();
+        _ship(m);
+
+        Mandate memory reversed = _mandate();
+        (reversed.tokenIn, reversed.tokenOut) = (m.tokenOut, m.tokenIn);
+        assertTrue(reversed.hash() != m.hash(), "the reverse is a different position, not a flag on this one");
+
+        bytes memory err = abi.encodeWithSelector(
+            IAqua.SafeBalancesForTokenNotInActiveStrategy.selector, maker, address(app), reversed.hash(), reversed.tokenIn
+        );
+        vm.expectRevert(err);
+        app.quote(reversed, 10e18);
+        vm.expectRevert(err);
+        app.swap(reversed, 10e18, 0, address(this), "");
+
+        // And the position it was aimed at is untouched in the only direction it can move.
+        assertEq(tokenIn.balanceOf(maker), RESERVE_IN, "nothing left the maker's input reserve");
+        assertEq(tokenOut.balanceOf(maker), RESERVE_OUT, "nothing left the maker's output reserve");
+    }
+
     /// @notice The size cap binds even though the pool could serve the trade.
     function test_RevertWhenOverCap() public {
         Mandate memory m = _mandate();

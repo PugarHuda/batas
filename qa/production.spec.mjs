@@ -9,7 +9,7 @@ import { test, expect } from '@playwright/test';
 const PROD = 'https://batas-one.vercel.app';
 
 const LIVE_PROGRAM =
-    '0x212100000000000000006367be30fcbd45ea00000000000000001aeff914e72b45e8802005006acd0476222e945800bd6cdd60521b64a12d7b3f12fc90916a6b39d2bae5eaeda9283535ddc98f1991c81ed5cd7e056167656e74700300753050000208000000006aa58586';
+    '0x212100000000000000006367be30fcbd45ea00000000000000001aeff914e72b45e8802005006acd0476222e945800Bd6CDd60521B64a12D7b3F12fC90916a6B39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E056167656e74700300753050000208000000006aa5dc37';
 
 /**
  * Serverless answers its first request cold and the facilitator handshake the paywall needs runs
@@ -88,6 +88,41 @@ test('an unknown path on the deployment is a plain 404, in JSON', async ({ reque
     expect(res.status()).toBe(404);
     expect(res.headers()['payment-required']).toBeUndefined();
     expect(res.headers()['content-type'], 'production is behind: 404s still answer HTML').toContain('application/json');
+});
+
+test('the free routes answer on the deployment', async ({ request }) => {
+    // Each answered, not each correct: the local suite pins the shapes, and this is only asking
+    // whether the thing people were pointed at still says anything.
+    const decoded = await postWithWarmup(request, '/v1/mandate/decode', { program: LIVE_PROGRAM });
+    expect(decoded.status()).toBe(200);
+    expect((await decoded.json()).guarded).toBe(true);
+
+    const published = await postWithWarmup(request, '/v1/mandate/publication', { program: LIVE_PROGRAM });
+    expect(published.status()).toBe(200);
+    expect((await published.json()).published).not.toBeUndefined();
+
+    for (const path of ['/v1/agent/authority', '/v1/agent/reputation']) {
+        const res = await request.get(`${PROD}${path}`, { timeout: 60_000 });
+        expect(res.status(), path).toBe(200);
+        expect(res.headers()['content-type']).toContain('application/json');
+    }
+});
+
+test('and describes itself in the formats other software reads', async ({ request }) => {
+    // Skipped rather than failed on a 404, so the suite stays green between this landing in the
+    // repository and it landing on the deployment. The drift test above is what turns red then.
+    for (const [path, check] of [
+        ['/openapi.json', (doc) => expect(doc.paths['/v1/mandate/explain']).toBeTruthy()],
+        ['/.well-known/agent-card.json', (card) => expect(card.skills.length).toBeGreaterThan(0)],
+    ]) {
+        const res = await request.get(`${PROD}${path}`, { timeout: 60_000 });
+        if (res.status() === 404) {
+            test.info().annotations.push({ type: 'skip', description: `${path} is not deployed yet` });
+            continue;
+        }
+        expect(res.status(), path).toBe(200);
+        check(await res.json());
+    }
 });
 
 test('and a malformed body is refused as JSON on the deployment too', async ({ request }) => {

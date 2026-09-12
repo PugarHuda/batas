@@ -189,6 +189,30 @@ test('a live mandate with no deadline at all is replaced with one that has', asy
     }
 });
 
+test('a position that refuses its own cap is renewed before its time', async () => {
+    // One max fill lands on the floor and leaves spot under it; from there the mandate authorises
+    // nothing for the rest of its term. Waiting for the deadline would be keeping a dead position
+    // alive on schedule.
+    const { renewalDecision } = await import('./batas-agent.mjs');
+    const now = 1_789_000_000;
+    const reserveA = E(1000);
+    const reserveB = E(2000);
+    const { maxAmountIn, minRateE18 } = decideMandate({ reserveA, reserveB, slippageBps: 100n });
+    const healthy = { reserveA, reserveB, maxAmountIn, minRateE18, feeBps: 30_000 };
+    assert.equal(renewalDecision({ expiry: now + 10 * 3600, now, live: healthy }).act, false);
+
+    // Spot has walked 3% under the floor the mandate still carries.
+    const walked = { ...healthy, reserveB: (reserveB * 97n) / 100n };
+    const d = renewalDecision({ expiry: now + 10 * 3600, now, live: walked });
+    assert.equal(d.act, true);
+    assert.equal(d.reason, 'refuses its own cap');
+
+    // A cap of zero is a mandate permitting nothing by decision, not one that drifted there.
+    assert.equal(renewalDecision({ expiry: now + 10 * 3600, now, live: { ...walked, maxAmountIn: 0n } }).act, false);
+    // And unreadable terms are not a reason to act.
+    assert.equal(renewalDecision({ expiry: now + 10 * 3600, now, live: null }).act, false);
+});
+
 // --- where the floor comes from ----------------------------------------------
 
 test('with no history the budget sits at its floor and says why', async () => {

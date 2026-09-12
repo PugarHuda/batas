@@ -23,8 +23,13 @@ import { explain } from './swapvm.mjs';
 import { resolveAgent, vouchesFor, parseAgentId } from './erc8004.mjs';
 import { lookupMandate } from './hcs.mjs';
 import { decodeAnswer, publicationAnswer, authorityAnswer, reputationAnswer } from './free.mjs';
+import { healthAnswer } from './health.mjs';
 import { page } from './ui.mjs';
 import { HCS_TOPIC } from './deployment.mjs';
+import { openapiDocument, agentCard, ATTRIBUTION } from './openapi.mjs';
+import { attest } from './attest.mjs';
+import { createServer as createMcpServer } from './mcp.mjs';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 const PORT = Number(process.env.PORT || 4021);
 const FACILITATOR = process.env.X402_FACILITATOR_URL || 'https://api.testnet.blocky402.com';
@@ -37,6 +42,9 @@ const HBAR = '0.0.0';
 // host, so it cannot be derived from a request that may have arrived through a proxy.
 const PUBLIC_ORIGIN = process.env.BATAS_PUBLIC_ORIGIN || 'https://batas-one.vercel.app';
 const PRICE = { asset: HBAR, amount: process.env.X402_PRICE_TINYBAR || '100000' }; // 0.001 HBAR
+// The key that signs paid answers, or nothing. No fallback to any other key on purpose: a signature
+// from the trading key or the Hedera key would be a different claim than "this service said so".
+const ATTEST_KEY = process.env.BATAS_ATTEST_KEY || null;
 
 if (!PAY_TO) {
     console.error('HEDERA_SERVICE_ID missing. Create a testnet ECDSA account at https://portal.hedera.com');
@@ -124,7 +132,12 @@ app.get('/', (req, res) => {
             'POST /v1/mandate/publication': 'when those exact bytes became public, from a mirror node that is not ours',
             'GET /v1/agent/authority': 'whether the ENSv2 mandate name still holds, and if not, lapsed or revoked',
             'GET /v1/agent/reputation': 'what clients have said, from ERC-8004; the agent itself is barred from saying it',
+            'GET /v1/position/health': 'the live position against its mandate: headroom to the floor, trades, and alerts',
         },
+        openapi: `${PUBLIC_ORIGIN}/openapi.json`,
+        agentCard: `${PUBLIC_ORIGIN}/.well-known/agent-card.json`,
+        mcp: `${PUBLIC_ORIGIN}/mcp`,
+        attribution: ATTRIBUTION,
     });
 });
 
@@ -172,16 +185,16 @@ function overLimit(req) {
     return bucket.count > MAX_PER_WINDOW;
 }
 
+const refuse = (res) => res.status(429)
+    .set('Retry-After', String(Math.ceil(WINDOW_MS / 1000)))
+    .json({
+        error: `too many free requests; at most ${MAX_PER_WINDOW} per ${WINDOW_MS / 1000}s`,
+        retryAfterSeconds: Math.ceil(WINDOW_MS / 1000),
+        note: 'the paid route is not rate limited — a settled payment is the quota',
+    });
+
 const freely = (handler) => async (req, res) => {
-    if (overLimit(req)) {
-        return res.status(429)
-            .set('Retry-After', String(Math.ceil(WINDOW_MS / 1000)))
-            .json({
-                error: `too many free requests; at most ${MAX_PER_WINDOW} per ${WINDOW_MS / 1000}s`,
-                retryAfterSeconds: Math.ceil(WINDOW_MS / 1000),
-                note: 'the paid route is not rate limited — a settled payment is the quota',
-            });
-    }
+    if (overLimit(req)) return refuse(res);
     try {
         res.json(await handler(req));
     } catch (e) {
@@ -196,6 +209,7 @@ const freely = (handler) => async (req, res) => {
 app.post('/v1/mandate/decode', freely((req) => decodeAnswer(req.body?.program)));
 app.post('/v1/mandate/publication', freely((req) => publicationAnswer(req.body?.program)));
 app.get('/v1/agent/reputation', freely((req) => reputationAnswer({ agentId: req.query?.agentId })));
+app.get('/v1/position/health', freely(() => healthAnswer()));
 app.get('/v1/agent/authority', freely((req) => authorityAnswer({
     label: req.query?.label,
     grantedUntil: req.query?.grantedUntil === undefined ? undefined : Number(req.query.grantedUntil),
@@ -229,8 +243,37 @@ app.get('/.well-known/x402', (_req, res) => {
             },
         ],
         docs: 'https://github.com/PugarHuda/batas',
+        // Not in the draft's shape either; unknown fields must be ignored, and the licence asks
+        // for the line wherever the service describes itself.
+        attribution: ATTRIBUTION,
         updated: MANIFEST_UPDATED,
     });
+});
+
+// Described, so a machine can find it.
+//
+// Both documents come from one route table in openapi.mjs, and neither is rate limited: they are
+// constants, and a directory that crawls them is exactly the caller they exist for.
+const described = { origin: PUBLIC_ORIGIN, price: `${Number(PRICE.amount) / 1e8} HBAR`, network: 'hedera:testnet', payTo: PAY_TO };
+app.get('/openapi.json', (_req, res) => res.json(openapiDocument(described)));
+app.get('/.well-known/agent-card.json', (_req, res) => res.json(agentCard(described)));
+
+// The MCP server, over HTTP rather than stdio. Same factory, same four tools, one server per
+// request and no session: a Vercel function may not be the same instance twice, so there is nothing
+// a session could be kept in. Behind the free brake, above the paywall — the tools are the free
+// questions, and the one that pays does so from the server's own key, which the deployment does
+// not hold.
+app.post('/mcp', async (req, res) => {
+    if (overLimit(req)) return refuse(res);
+    const server = createMcpServer();
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    res.on('close', () => { transport.close(); server.close(); });
+    try {
+        await server.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+    } catch (e) {
+        if (!res.headersSent) res.status(500).json({ error: String(e.message ?? e) });
+    }
 });
 
 app.use(
@@ -339,6 +382,11 @@ const statusAnd = (status, payload) => ({ status, body: payload });
 
 app.post('/v1/mandate/explain', async (req, res) => {
     const { status, body } = await inspect(req.body);
+    // Signed when the service holds a key, so the answer can be shown to a third party and still
+    // mean something. Only a real answer: an error body is not a statement about a mandate.
+    if (status === 200 && ATTEST_KEY) {
+        body.attestation = await attest(body, { privateKey: ATTEST_KEY, program: req.body.program });
+    }
     res.status(status).json(body);
 });
 
@@ -361,6 +409,10 @@ app.use((req, res) => {
             'POST /v1/mandate/publication',
             'GET /v1/agent/authority',
             'GET /v1/agent/reputation',
+            'GET /v1/position/health',
+            'GET /openapi.json',
+            'GET /.well-known/agent-card.json',
+            'POST /mcp',
         ],
         paid: ['POST /v1/mandate/explain'],
     });

@@ -1,9 +1,10 @@
-# Two findings worth sending upstream
+# Findings worth sending upstream
 
-Both were found by building on these tools rather than by auditing them, and both cost this project
-real time before they were understood. Neither is a vulnerability in anyone's deployed code. They
-are written out here ready to file, rather than filed, because they go out under a person's name
-and that is the person's call.
+The first two were found by building on these tools rather than by auditing them, and both cost
+this project real time before they were understood. Neither is a vulnerability in anyone's deployed
+code. They are written out here ready to file, rather than filed, because they go out under a
+person's name and that is the person's call. The third is a one-line licensing oddity, found while
+doing the paperwork §3.1 asks for.
 
 ---
 
@@ -119,3 +120,20 @@ the cache rather than the command decides — a warm tree from a test run surviv
 Either a note in the docs — *"artifacts written by `forge test` may differ from those written by
 `forge build`; use `forge build` before consuming artifacts for deployment or verification"* — or
 separate artifact output directories for the two commands so the question cannot arise.
+
+---
+
+## 3. swap-vm — `IMakerHooks.sol` carries a license header no other file does
+
+**Repository:** [1inch/swap-vm](https://github.com/1inch/swap-vm), at `f09a41e6`
+**Type:** licensing housekeeping
+
+Every file in `src/` opens with `SPDX-License-Identifier: LicenseRef-Degensoft-SwapVM-1.1` and a
+`@custom:license-url` pointing at `LICENSES/SwapVM-1.1.txt` — except
+`src/interfaces/IMakerHooks.sol`, whose SPDX line reads `LicenseRef-Degensoft-ARSL-1.0-Audit` while
+its `@custom:license-url` still points at the SwapVM-1.1 text. No `ARSL-1.0-Audit` text ships in
+`LICENSES/`, so the identifier resolves to nothing a reader can open.
+
+It matters slightly to anyone doing what §3.1(B) asks — preserve every notice — because the notice
+being preserved names a license that is not in the box. This repository keeps the header exactly as
+received and says so in `THIRD_PARTY_NOTICES`. A one-line fix upstream, either way it is meant.

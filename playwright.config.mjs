@@ -9,7 +9,7 @@ export default defineConfig({
     // Two suites. `local` runs against a server this config starts; `production` runs against the
     // deployment the ERC-8004 registration points at, and needs no server of its own.
     projects: [
-        { name: 'local', testMatch: /service\.spec\.mjs/ },
+        { name: 'local', testMatch: /(service|ui)\.spec\.mjs/ },
         { name: 'production', testMatch: /production\.spec\.mjs/ },
     ],
     reporter: process.env.CI ? 'github' : 'list',
@@ -21,7 +21,13 @@ export default defineConfig({
         command: 'node agent/service.mjs',
         // Low on purpose: the suite asserts the free routes have a brake, and finding that out at
         // the production number would mean sixty requests to learn one fact.
-        env: { ...process.env, BATAS_FREE_RATE_LIMIT: '12' },
+        // The service exits without a HEDERA_SERVICE_ID, so a fresh clone gets the live one — it is a
+        // public account id, needed to state what a 402 promises, not to settle one.
+        env: {
+            ...process.env,
+            HEDERA_SERVICE_ID: process.env.HEDERA_SERVICE_ID || '0.0.10388560',
+            BATAS_FREE_RATE_LIMIT: '12',
+        },
         url: 'http://127.0.0.1:4021/',
         reuseExistingServer: !process.env.CI,
         timeout: 30_000,

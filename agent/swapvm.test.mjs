@@ -18,7 +18,7 @@ import {
 // the live position moves as mandates are renewed, and a fixture that chased it would test the
 // current chain state rather than the decoder.
 const LIVE_PROGRAM =
-    '0x212100000000000000006367be30fcbd45ea00000000000000001aeff914e72b45e8802005006acd0476222e945800bd6cdd60521b64a12d7b3f12fc90916a6b39d2bae5eaeda9283535ddc98f1991c81ed5cd7e056167656e74700300753050000208000000006aa58586';
+    '0x212100000000000000006367be30fcbd45ea00000000000000001aeff914e72b45e8802005006acd0476222e945800Bd6CDd60521B64a12D7b3F12fC90916a6B39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E056167656e74700300753050000208000000006aa5dc37';
 
 // And the one shipped before it, when script/Demo.s.sol chained instructions by hand and left
 // Deadline out. Kept because it is the real shape of the failure rather than a constructed one:

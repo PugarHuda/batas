@@ -24,12 +24,25 @@ import { createPublicClient, createWalletClient, http, formatUnits, decodeAbiPar
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 
-import { payForExplanation, latestProgramOnChain } from './inspect.mjs';
-import { ROUTER, TOKEN_A, TOKEN_B, SEPOLIA_RPC } from './deployment.mjs';
-import { keccak256, toHex } from 'viem';
+import { payForExplanation, latestProgramOnChain, programFromStrategy } from './inspect.mjs';
+import { explain } from './swapvm.mjs';
+import { tryQuote } from './killswitch.mjs';
+import { AQUA, OWNER, ROUTER, TOKEN_A, TOKEN_B, SEPOLIA_RPC } from './deployment.mjs';
+import { keccak256, toHex, parseUnits } from 'viem';
 import { feedbackFromTrade, giveFeedback, readReputation } from './reputation.mjs';
 
 const ORIGIN = process.env.BATAS_SERVICE_URL?.replace(/\/v1\/.*$/, '') || 'https://batas-one.vercel.app';
+const E18 = 10n ** 18n;
+
+/**
+ * The counterparty's own reference price, if it has one. `BATAS_COUNTERPARTY_MIN_RATE` is B per A:
+ * a decimal ("1.95") or, without a point, already scaled to 1e18. Absent means the counterparty
+ * has no view of the market and only holds the floor against the position's own spot.
+ */
+export function minRateFromEnv(value = process.env.BATAS_COUNTERPARTY_MIN_RATE) {
+    if (!value) return null;
+    return value.includes('.') ? parseUnits(value, 18) : BigInt(value);
+}
 
 /** What this counterparty will and will not trade against. Its rules, not the maker's. */
 export const POLICY = {
@@ -50,11 +63,16 @@ export const POLICY = {
  * chain does not get exercised. Empty means nothing free disqualified the position; it does not
  * mean trade, which is the next decision and a different one.
  */
-export function doubtsAbout({ decoded, publication, authority }, policy = POLICY) {
-    const m = decoded?.mandate ?? {};
+export function doubtsAbout({ decoded, local, publication, authority, spotE18 = null, minRateE18 = null, quoteE18 = null }, policy = POLICY) {
+    // The chain's reading wins when the counterparty has one. The server's answer is then a claim
+    // to be checked, not a source.
+    const m = (local ?? decoded)?.mandate ?? {};
     const doubts = [];
 
-    if (policy.requireGuarded && !decoded?.guarded) {
+    if (local !== undefined && terms(local) !== terms(decoded)) {
+        doubts.push('the service describes bytes the chain does not carry');
+    }
+    if (policy.requireGuarded && !(local ?? decoded)?.guarded) {
         doubts.push('the policy guard is not outermost, so later instructions could undo it');
     }
     if (!m.minRateE18) doubts.push('no floor price: this position will settle at any rate');
@@ -62,6 +80,16 @@ export function doubtsAbout({ decoded, publication, authority }, policy = POLICY
     if (!m.expiryISO) doubts.push('no deadline: this authority never ends on its own');
     if (policy.requireKillSwitch && !m.killSwitch) {
         doubts.push('no on-chain kill switch: only the expiry and the maker docking can end this');
+    }
+    // A floor is only protection if it sits near the price. The maker's own agent never strikes
+    // one more than 10% under spot, so a floor further down than that is either stale or written
+    // by someone who wanted room — and either way it bounds nothing this counterparty cares about.
+    if (m.minRateE18 && spotE18 !== null && BigInt(m.minRateE18) * 10n < spotE18 * 9n) {
+        doubts.push("the floor sits more than 10% under the position's own spot");
+    }
+    if (minRateE18 !== null) {
+        if (quoteE18 === null) doubts.push('the position gave no quote for 1 A, so the minimum rate cannot be checked');
+        else if (quoteE18 < minRateE18) doubts.push(`1 A quotes ${formatUnits(quoteE18, 18)} B, under this counterparty's minimum of ${formatUnits(minRateE18, 18)}`);
     }
     if (publication?.published === null || publication?.searched === 'incomplete') {
         // Not the same doubt as "no record". The mirror walk ran out of pages, so the honest thing
@@ -76,6 +104,43 @@ export function doubtsAbout({ decoded, publication, authority }, policy = POLICY
     }
     return doubts;
 }
+
+/** The five terms a counterparty trades on, as one comparable string. Casing is not a term. */
+function terms(d) {
+    const m = d?.mandate ?? {};
+    const k = m.killSwitch;
+    return JSON.stringify([
+        Boolean(d?.guarded), m.minRateE18 ?? null, m.maxAmountInFormatted ?? null, m.expiryISO ?? null,
+        k ? [k.registry?.toLowerCase(), k.holder?.toLowerCase(), k.label] : null,
+    ]);
+}
+
+/**
+ * Whether the paid answer is worth its price.
+ *
+ * Separate from `doubtsAbout` because it is a different decision: that one is "is anything wrong",
+ * this one is "is anything left that money would settle". With a doubt standing there is nothing
+ * to buy — the position is already declined. With none, the operator's identity only matters when
+ * the terms are too new to have earned trust on their own, or when the counterparty says so.
+ */
+export function shouldPay(doubts, { ageSeconds = null, paranoid = false } = {}, policy = POLICY) {
+    if (doubts.length > 0) return { pay: false, reason: 'declined for free; nothing left to buy' };
+    if (paranoid) return { pay: true, reason: '--paranoid: buying the full answer regardless' };
+    if (ageSeconds !== null && ageSeconds < policy.freshPublicationSeconds) {
+        return { pay: true, reason: `the grant is only ${ageSeconds}s old, and who is behind it now matters` };
+    }
+    return { pay: false, reason: "nothing is left that the operator's identity would change" };
+}
+
+const AQUA_ABI = [{
+    name: 'safeBalances', type: 'function', stateMutability: 'view',
+    inputs: [
+        { name: 'maker', type: 'address' }, { name: 'app', type: 'address' },
+        { name: 'strategyHash', type: 'bytes32' }, { name: 'token0', type: 'address' },
+        { name: 'token1', type: 'address' },
+    ],
+    outputs: [{ type: 'uint256' }, { type: 'uint256' }],
+}];
 
 const SWAP_ABI = [
     {
@@ -152,18 +217,45 @@ async function main() {
     const decoded = await getJson(`${ORIGIN}/v1/mandate/decode`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
-    const m = decoded.mandate;
-    // Which position the decision is about. The free decode says where the bytes came from, and
-    // "given" means the caller pasted them — bytes are not a position, and a verdict about bytes
-    // must not be acted on against whatever happens to be newest on chain.
-    const decidedHash = typeof decoded.source === 'string' && decoded.source.startsWith('live position ')
-        ? decoded.source.slice('live position '.length)
-        : null;
-    say('guarded', String(decoded.guarded));
+
+    // And the same reading made here, from bytes the counterparty fetched itself. The server's
+    // decode is the maker's server describing the maker's position; until this ran locally, the
+    // agent was checking terms against the word of the party it was checking. Which position the
+    // decision is about comes from the chain for the same reason — a hash the server supplied
+    // pins the trade to whatever the server said, and "given" means the caller pasted bytes,
+    // which are not a position and must not be acted on.
+    let localProgram = program;
+    let decidedHash = null;
+    let spotE18 = null;
+    let quoteE18 = null;
+    if (!program) {
+        const shipped = await latestProgramOnChain();
+        if (!shipped) throw new Error('no position shipped to the live router yet');
+        decidedHash = shipped.strategyHash;
+        localProgram = programFromStrategy(shipped.strategy);
+
+        const chain = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) });
+        const [reserveA, reserveB] = await chain.readContract({
+            address: AQUA, abi: AQUA_ABI, functionName: 'safeBalances',
+            args: [OWNER, ROUTER, shipped.strategyHash, TOKEN_A, TOKEN_B],
+        });
+        spotE18 = reserveA > 0n ? (reserveB * E18) / reserveA : null;
+        const [order] = decodeAbiParameters(parseAbiParameters('(address maker, uint256 traits, bytes data)'), shipped.strategy);
+        const quote = await tryQuote(order, E18);
+        quoteE18 = quote.ok ? quote.amountOut : null;
+    }
+    const local = explain(localProgram);
+    const m = local.mandate;
+    say('guarded', String(local.guarded));
     say('max input', m.maxAmountInFormatted ?? 'no cap');
     say('floor rate', m.minRateFormatted ?? 'no floor');
     say('expires', m.expiryISO ?? 'never');
     say('kill switch', m.killSwitch ? `"${m.killSwitch.label}" in ${m.killSwitch.registry}` : 'none');
+    say('server', terms(local) === terms(decoded) ? 'agrees with the bytes' : 'DISAGREES with the bytes');
+    if (spotE18 !== null) say('spot', `${formatUnits(spotE18, 18)} B per A, from the live reserves`);
+    if (!program) say('quote 1 A', quoteE18 === null ? 'refused' : `${formatUnits(quoteE18, 18)} B`);
+    const minRateE18 = minRateFromEnv();
+    if (minRateE18 !== null) say('my minimum', `${formatUnits(minRateE18, 18)} B per A`);
 
     head(3, 'Whether the terms have been standing — free, and not from them');
     const pub = await getJson(`${ORIGIN}/v1/mandate/publication`, {
@@ -185,7 +277,7 @@ async function main() {
     say('reason', authority.reason);
 
     head(5, 'The decision');
-    const doubts = doubtsAbout({ decoded, publication: pub, authority });
+    const doubts = doubtsAbout({ decoded, local, publication: pub, authority, spotE18, minRateE18, quoteE18 });
     if (doubts.length > 0) {
         console.log('  walking away, having spent nothing:');
         for (const d of doubts) console.log(`    · ${d}`);
@@ -195,26 +287,23 @@ async function main() {
     }
 
     console.log('  every free check passed.');
-    const freshlyPublished = ageSeconds !== null && ageSeconds < POLICY.freshPublicationSeconds;
-    if (!paranoid && !freshlyPublished) {
+    const buy = shouldPay(doubts, { ageSeconds, paranoid });
+    if (!buy.pay) {
         console.log('  the terms are sound, the grant has been standing, and the name still holds.');
-        console.log('\n  not paying: nothing is left that the operator\'s identity would change.');
+        console.log(`\n  not paying: ${buy.reason}.`);
         console.log('  run with --paranoid to buy the full answer anyway.');
         await act({ floorRateE18: m.minRateE18, feedbackURI: pub.mirror, decidedHash });
         return;
     }
 
-    console.log(
-        freshlyPublished
-            ? `  but the grant is only ${ageSeconds}s old, and who is behind it now matters.`
-            : '  --paranoid: buying the full answer regardless.',
-    );
+    console.log(`  but ${buy.reason}.`);
     console.log(`\n  paying ${service.price} HBAR for the operator's identity and whether it vouches …`);
 
     // `payForExplanation` returns the body alongside the settlement receipt, not the body itself.
     // Reading it as the body gave "agent not resolved" from an answer that had resolved the agent
     // perfectly — the paid call had worked and the reader had not.
-    const { body: answer, settlement } = await payForExplanation(decoded.program, { log: (s) => console.log(`  ${s}`) });
+    // Paid for against the bytes this agent holds, not the ones the server said it holds.
+    const { body: answer, settlement } = await payForExplanation(localProgram, { log: (s) => console.log(`  ${s}`) });
     const operator = answer.operator;
     say('agent', operator?.agentId ? `#${operator.agentId}  ${operator.registration?.name ?? '(unnamed)'}` : 'not resolved');
     say('held by', operator?.owner ?? '—');
@@ -391,7 +480,9 @@ async function review({ account, received, amountIn, floorRateE18, feedbackURI, 
 
 if (import.meta.filename === process.argv[1]) {
     main().catch((e) => {
-        console.error(String(e.shortMessage ?? e.message ?? e));
+        // An exhausted scan is a statement about how far we looked, not about the chain; it is
+        // printed as the message it already is rather than as a crash.
+        console.error(e.scanExhausted ? e.message : String(e.shortMessage ?? e.message ?? e));
         process.exitCode = 1;
     });
 }

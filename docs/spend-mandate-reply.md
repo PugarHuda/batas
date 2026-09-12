@@ -45,6 +45,14 @@ reserves twice, once with a rate floor enforced at settlement and once without:
 Both runs are inside any per-transaction cap you care to set. The difference is entirely in the
 second leg, which the first layer cannot see.
 
+To be precise about where a floor *can* live, because it is not only the venue. An account-layer
+post-execution balance check — MetaMask's `ERC20BalanceChangeEnforcer` paired with a transfer-amount
+enforcer is one — is a per-redemption rate floor, and a signed limit order is a rate floor with an
+expiry at the venue. Both are real and both are the right tool for a delegate or an order. What
+they share with the transfer hook is that they bound one party's execution: the delegate's
+redemption, the order's fill. Putting the floor inside the settlement binds every fill against the
+position, whoever the taker is, and that is the property the argument below is about.
+
 ## What I would ask of the draft
 
 Not a change of design — a sentence of scope. Something like:
@@ -118,5 +126,6 @@ separate code and what a caller may infer from each.
 
 ---
 
-*Implementation: https://github.com/PugarHuda/batas — MIT, Sepolia, and every claim above has a test
-next to it.*
+*Implementation: https://github.com/PugarHuda/batas — open source (MIT, with the SwapVM and Aqua
+derivatives under Degensoft's source licenses), on Sepolia, and every claim above has a test next
+to it.*

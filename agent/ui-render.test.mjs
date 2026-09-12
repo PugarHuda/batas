@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { esc, link, renderMandate, asBrowserSource } from './ui-render.mjs';
+import { esc, link, num, when, renderMandate, judgeAmount, renderHealth, asBrowserSource } from './ui-render.mjs';
 import { page } from './ui.mjs';
 
 test('escaping closes every hole that reaches innerHTML', () => {
@@ -69,7 +69,7 @@ test('a missing term reads as an absence, not as an empty cell', () => {
     assert.match(html, /no cap — one trade may take the whole reserve/);
     assert.match(html, /no floor — any rate the curve produces/);
     assert.match(html, /never — only revocation ends this/);
-    assert.match(html, /none — only the expiry and Aqua.dock\(\) end this grant/);
+    assert.match(html, /none — only the expiry, or the maker closing the position, ends this mandate/);
     assert.match(html, /not guarded/);
 });
 
@@ -81,6 +81,85 @@ test('a kill switch is shown by name and registry when there is one', () => {
         notes: [],
     });
     assert.match(html, /"agent" in 0x9458/);
+});
+
+test('the floor carries its unit and an ISO expiry is a <time> in UTC', () => {
+    const html = renderMandate({
+        guarded: true,
+        mandate: { minRateFormatted: '1.92', expiryISO: '2026-10-10T14:20:56.000Z' },
+        instructions: [],
+        notes: [],
+    });
+    assert.match(html, /<dt>floor<\/dt><dd class="mono">1\.<span class="frac">92<\/span> <span class="muted">B per A<\/span>/);
+    assert.match(html, /<dt>cap<\/dt>/);
+    assert.match(html, /<time datetime="2026-10-10T14:20:56.000Z">2026-10-10T14:20:56.000Z UTC<\/time>/);
+    // A consensus timestamp is seconds, not ISO; it is not a <time> and gets no zone.
+    assert.equal(when('1757000000.123456789'), '1757000000.123456789');
+    assert.equal(when('<b>'), '&lt;b&gt;');
+});
+
+test('the morning report renders every field it is given and a dash for each it is not', () => {
+    const html = renderHealth({
+        status: 'warn',
+        headroom: { marginalBps: 12.5, worstCaseOutflowB: '3.417000000000000000', worstCaseOutflowPctB: 0.17 },
+        mandate: { hoursLeft: 41.3 },
+        authority: { agentLastActedAt: '2026-09-13T06:00:00.000Z' },
+        alerts: [
+            { code: 'FLOOR_HEADROOM_LOW', severity: 'warn', message: 'only 12.5bps between spot after fee and the floor' },
+            { code: '<b>x</b>', severity: 'critical', message: '<script>alert(1)</script>' },
+        ],
+        trades: { rows: [
+            { tx: '0x' + 'ab'.repeat(32), taker: '0x' + 'cd'.repeat(20), amountIn: '5', amountOut: '9.8', bpsAboveFloor: 34.2, selfTrade: true },
+            { tx: 'not a hash', taker: null, amountIn: null, amountOut: null, bpsAboveFloor: -3, selfTrade: false },
+        ] },
+    });
+    assert.match(html, /<dt>status<\/dt><dd><span class="tag">warn<\/span>/);
+    assert.match(html, /<dt>headroom<\/dt><dd class="mono">12\.5 bps/);
+    assert.match(html, /<dt>worst case<\/dt><dd class="mono">3\.<span class="frac">417000000000000000<\/span> B .*0\.17% of the reserve/);
+    assert.match(html, /<dt>hours left<\/dt><dd class="mono">41\.3 h/);
+    assert.match(html, /<dt>agent last acted<\/dt><dd class="mono"><time datetime="2026-09-13T06:00:00.000Z">/);
+    assert.match(html, /<li><span class="tag">warn<\/span> <code>FLOOR_HEADROOM_LOW<\/code> only 12\.5bps/);
+    assert.ok(!html.includes('<script>') && !html.includes('<b>'), 'an alert injected markup');
+    assert.match(html, /2 trades since the ship/);
+    assert.match(html, /<a href="https:\/\/sepolia\.etherscan\.io\/tx\/0xabab[a-f0-9]+" rel="noopener">0xababab…abab<\/a>/);
+    assert.match(html, /0xcdcdcd…cdcd <span class="tag muted">maker<\/span>/);
+    assert.match(html, /<td class="mono yes">34\.2 bps<\/td>/);
+    assert.match(html, /<td class="mono no">-3 bps<\/td>/);
+    assert.match(html, /<th scope="col">tx<\/th>/);
+
+    // The empty answer: nothing throws, every cell is a dash or an absence said out loud.
+    const bare = renderHealth({ status: 'docked', alerts: [], trades: [] });
+    assert.match(bare, /<span class="tag no">docked<\/span>/);
+    assert.equal((bare.match(/<dd class="mono">—<\/dd>/g) || []).length, 3);
+    assert.match(bare, /never<\/span>/);
+    assert.match(bare, /no alerts/);
+    assert.match(bare, /no trades since the ship/);
+    assert.doesNotThrow(() => renderHealth(null));
+    assert.doesNotThrow(() => renderHealth({}));
+});
+
+test('a long decimal keeps every digit and dims the tail', () => {
+    assert.equal(num('7.162902849964033514'), '7.<span class="frac">162902849964033514</span>');
+    assert.equal(num('7'), '7');
+    // Escaped before it is split, so a non-number is inert text rather than markup.
+    assert.equal(num('<b>1.5</b>'), '&lt;b&gt;1.<span class="frac">5&lt;/b&gt;</span>');
+});
+
+test('the amount box is arithmetic against the cap, and says so when there is none', () => {
+    const m = { maxAmountInFormatted: '7.162902849964033514', expiry: 1791820918 };
+    const now = 1789000000000; // before the expiry
+    assert.equal(judgeAmount(m, '', now), null);
+    assert.equal(judgeAmount(m, 'abc', now), null);
+    assert.equal(judgeAmount(m, '-1', now), null);
+    assert.equal(judgeAmount(m, '5', now).verdict, 'inside');
+    assert.match(judgeAmount(m, '5', now).text, /inside the cap — 69\.8/);
+    assert.equal(judgeAmount(m, '10', now).verdict, 'over');
+    assert.match(judgeAmount(m, '10', now).text, /over the cap by 2\.8371/);
+    // Inside the cap but past the expiry: nothing settles, and the box must not say "inside".
+    assert.equal(judgeAmount(m, '5', 1800000000000).verdict, 'over');
+    assert.match(judgeAmount(m, '5', 1800000000000).text, /expired/);
+    assert.equal(judgeAmount({}, '5', now).verdict, 'uncapped');
+    assert.equal(judgeAmount(null, '5', now).verdict, 'uncapped');
 });
 
 test('only an https destination becomes a link', () => {
@@ -106,7 +185,7 @@ test('the page ships exactly this source, and only one copy of it', () => {
         network: 'hedera:testnet',
     });
 
-    for (const fn of ['esc', 'link', 'renderMandate']) {
+    for (const fn of ['esc', 'link', 'num', 'when', 'facts', 'renderMandate', 'judgeAmount', 'renderHealth']) {
         const copies = html.split(`function ${fn}(`).length - 1;
         assert.equal(copies, 1, `the page carries ${copies} copies of ${fn}`);
     }

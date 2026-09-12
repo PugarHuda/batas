@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { doubtsAbout, POLICY } from './counterparty.mjs';
+import { doubtsAbout, shouldPay, minRateFromEnv, POLICY } from './counterparty.mjs';
 
 /** A position this counterparty is happy with, which every case below spoils in one way. */
 const sound = () => ({
@@ -102,4 +102,88 @@ test('an answer missing altogether is refused rather than read as consent', () =
     // must not arrive here looking like a clean bill of health. Every doubt fires.
     const doubts = doubtsAbout({});
     assert.ok(doubts.length >= 6, `an empty answer must not read as a sound position: ${JSON.stringify(doubts)}`);
+});
+
+// --- what the counterparty now checks for itself ------------------------------
+
+test('a server that agrees with the chain adds nothing', () => {
+    const p = sound();
+    p.local = structuredClone(p.decoded);
+    p.local.mandate.killSwitch.registry = p.local.mandate.killSwitch.registry.toUpperCase();
+    assert.deepEqual(doubtsAbout(p), [], 'checksum casing is not a disagreement');
+});
+
+test('a server that describes different bytes than the chain carries is a doubt', () => {
+    // The maker's server decoding the maker's position is the party under review grading its own
+    // paper. The chain's bytes are the terms; the server's answer is a claim about them.
+    for (const spoil of [
+        (d) => { d.mandate.minRateE18 = '1'; },
+        (d) => { d.mandate.maxAmountInFormatted = '1000'; },
+        (d) => { d.mandate.expiryISO = '2030-01-01T00:00:00.000Z'; },
+        (d) => { d.mandate.killSwitch = null; },
+        (d) => { d.guarded = false; },
+    ]) {
+        const p = sound();
+        p.local = structuredClone(p.decoded);
+        spoil(p.decoded);
+        assert.match(doubtsAbout(p).join(' '), /bytes the chain does not carry/);
+    }
+});
+
+test('the chain is the source of the terms, and the server only a witness', () => {
+    // A server claiming a kill switch the bytes lack must not be believed about the kill switch.
+    const p = sound();
+    p.local = structuredClone(p.decoded);
+    delete p.local.mandate.killSwitch;
+    const doubts = doubtsAbout(p);
+    assert.match(doubts.join(' '), /no on-chain kill switch/);
+    assert.match(doubts.join(' '), /bytes the chain does not carry/);
+});
+
+test('a floor more than 10% under the position\'s own spot is a doubt', () => {
+    const floor = 1921437329233482770n; // what sound() carries
+    const tight = sound();
+    tight.spotE18 = (floor * 100n) / 95n; // floor is 5% under spot
+    assert.deepEqual(doubtsAbout(tight), []);
+
+    const loose = sound();
+    loose.spotE18 = (floor * 100n) / 85n; // floor is 15% under spot
+    assert.match(doubtsAbout(loose).join(' '), /more than 10% under the position's own spot/);
+});
+
+test('a quote under the counterparty\'s own minimum is a doubt, and no quote is not a pass', () => {
+    const minRateE18 = 2n * 10n ** 18n;
+    const fine = sound();
+    Object.assign(fine, { minRateE18, quoteE18: minRateE18 + 1n });
+    assert.deepEqual(doubtsAbout(fine), []);
+
+    const low = sound();
+    Object.assign(low, { minRateE18, quoteE18: minRateE18 - 1n });
+    assert.match(doubtsAbout(low).join(' '), /under this counterparty's minimum/);
+
+    const refused = sound();
+    Object.assign(refused, { minRateE18, quoteE18: null });
+    assert.match(doubtsAbout(refused).join(' '), /gave no quote/);
+
+    // Without a minimum of its own, the counterparty has no opinion to hold the quote against.
+    const silent = sound();
+    Object.assign(silent, { quoteE18: null });
+    assert.deepEqual(doubtsAbout(silent), []);
+});
+
+test('the minimum rate reads a decimal as B per A and a bare integer as already scaled', () => {
+    assert.equal(minRateFromEnv('1.95'), 1950000000000000000n);
+    assert.equal(minRateFromEnv('1950000000000000000'), 1950000000000000000n);
+    assert.equal(minRateFromEnv(undefined), null);
+    assert.equal(minRateFromEnv(''), null);
+});
+
+test('paying is a separate decision from declining, and only follows a clean bill', () => {
+    assert.equal(shouldPay(['anything']).pay, false, 'a doubt is a free refusal; buying an answer after it is spending on a closed question');
+    assert.equal(shouldPay(['anything'], { paranoid: true }).pay, false, 'even --paranoid does not buy an answer to a position already declined');
+    assert.equal(shouldPay([], { ageSeconds: 86400 }).pay, false, 'a grant that has been standing needs no identity check');
+    assert.equal(shouldPay([], { ageSeconds: null }).pay, false, 'no publication age at all is not "fresh"');
+    assert.equal(shouldPay([], { ageSeconds: 60 }).pay, true, 'terms written a minute ago are worth a tenth of a cent');
+    assert.equal(shouldPay([], { ageSeconds: 86400, paranoid: true }).pay, true);
+    assert.equal(shouldPay([], { ageSeconds: 60 }, { ...POLICY, freshPublicationSeconds: 30 }).pay, false, 'the bar is the counterparty\'s to set');
 });
