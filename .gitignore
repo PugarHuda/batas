@@ -16,3 +16,4 @@ blob-report/
 .github/agents/
 .github/hooks/
 .github/skills/
+.playwright-mcp/
