@@ -85,7 +85,7 @@ the interpreter, and inspects the settled registers when it returns. Two propert
 sequential check cannot offer: in exact-output mode the input is only final after the curve has
 run, so placement stops being something an author can get wrong; and later instructions execute
 *inside* the wrapper, so a fee appended behind the curve cannot push the amounts back out of bounds
-after the guard has passed. It costs 933 gas.
+after the guard has passed. It costs 975 gas.
 
 The rate check itself is one line, and it is the line a transfer hook cannot write:
 

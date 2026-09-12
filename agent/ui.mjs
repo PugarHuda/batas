@@ -221,7 +221,7 @@ export function page({ origin, price, payTo, topic, facilitator, network }) {
   </table>
   <p class="note">
     Every one of the sixty-four was an ordinary constant-product swap that no application-layer
-    check was there to stop. The guard that stopped the other run costs 933 gas, measured with
+    check was there to stop. The guard that stopped the other run costs 975 gas, measured with
     both positions warm. Reproducible:
     <code>forge test --match-test test_WhatTheMandateIsWorth -vv</code>.
   </p>

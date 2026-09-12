@@ -165,7 +165,7 @@ Two properties follow that a plain sequential guard cannot offer:
 
 And it is close to free. `test_TheGuardCostsAlmostNothing` settles the same trade twice over
 identical reserves, once with the envelope wrapped around the program and once without it, and the
-difference is **933 gas** — about 0.8% of a settlement. Both positions are warmed first, because
+difference is **975 gas** — about 0.8% of a settlement. Both positions are warmed first, because
 the first version of that test read the guard as costing 14,590, which was mostly the price of
 being the first swap against a fresh position rather than the price of the guard. A policy nobody
 can afford to enforce is a policy nobody enforces, so the number is measured rather than asserted
@@ -520,7 +520,12 @@ forge clean && forge test    →  BatasRouter runtime 20,596 bytes
 ```
 
 The deployed contract is the first, because that is what `forge create` produces. CI ran only
-`forge test`, so it compared the chain against an artifact no deployment ever came from. **The
+`forge test`, so it compared the chain against an artifact no deployment ever came from. The cause
+took a second look to pin down and was not the tests: `forge test` compiles without `script/`, and
+under via-IR the presence of any one of the three deployment scripts in the compilation unit — even
+one that never imports the router — moves a few bytes of the router's optimised output. Adding or
+removing files under `test/` leaves the hash alone. So the rule is about `script/`, and the fix is
+the same either way: build first, test after. **The
 bytecode a Foundry project deploys is not the bytecode its tests exercise**, which is worth knowing
 independently of this check — and which nothing here would have surfaced without it.
 
