@@ -10,3 +10,9 @@ blob-report/
 
 .vercel
 .env*
+
+# Impeccable design tooling: local agent skills and binaries, not part of the project
+.claude/
+.github/agents/
+.github/hooks/
+.github/skills/

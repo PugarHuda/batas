@@ -50,12 +50,14 @@ export function page({ origin, price, payTo, topic, facilitator, network }) {
     }
   }
   * { box-sizing: border-box; }
+  ::selection { background: var(--accent); color: var(--bg); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   main { max-width: 62rem; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
-  h1 { font-size: 2.1rem; letter-spacing: -0.02em; margin: 0 0 .35rem; }
+  h1 { font-size: 2.1rem; letter-spacing: -0.02em; margin: 0 0 .35rem; text-wrap: balance; }
   h2 { font-size: 1.05rem; letter-spacing: .04em; text-transform: uppercase; color: var(--dim);
        margin: 2.75rem 0 .9rem; font-weight: 600; }
   p { margin: 0 0 1rem; max-width: 46rem; }
@@ -63,19 +65,24 @@ export function page({ origin, price, payTo, topic, facilitator, network }) {
   .lede { font-size: 1.12rem; color: var(--dim); max-width: 44rem; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1.25rem 1.35rem; }
   .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); }
-  code, pre, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  code, pre, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+                     font-variant-numeric: tabular-nums; }
   pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px;
         padding: .85rem 1rem; overflow-x: auto; font-size: .82rem; margin: 0; }
   textarea {
     width: 100%; min-height: 5.5rem; resize: vertical; padding: .8rem .9rem;
     background: var(--code); color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .82rem;
+    caret-color: var(--accent);
   }
+  textarea:focus { border-color: var(--accent); outline: none; }
   button {
     font: inherit; font-weight: 600; cursor: pointer; padding: .55rem 1.1rem; border-radius: 8px;
     border: 1px solid var(--accent); background: var(--accent); color: var(--bg);
   }
   button.ghost { background: transparent; color: var(--accent); }
+  button:hover:not(:disabled) { filter: brightness(1.08); }
+  button:active:not(:disabled) { transform: translateY(1px); }
   button:disabled { opacity: .55; cursor: progress; }
   .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin-top: .8rem; }
   dl { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1.1rem; margin: 0; }
@@ -86,7 +93,7 @@ export function page({ origin, price, payTo, topic, facilitator, network }) {
          font-weight: 600; border: 1px solid currentColor; }
   .yes { color: var(--ok); }
   .no  { color: var(--no); }
-  .note { border-left: 3px solid var(--accent); padding: .5rem 0 .5rem .9rem; margin: .7rem 0 0;
+  .note { border-left: 1px solid var(--line); padding: .4rem 0 .4rem 1rem; margin: .9rem 0 0;
           color: var(--dim); font-size: .92rem; }
   table { border-collapse: collapse; width: 100%; font-size: .92rem; }
   th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -95,11 +102,15 @@ export function page({ origin, price, payTo, topic, facilitator, network }) {
            color: var(--dim); font-size: .88rem; }
   .muted { color: var(--dim); }
   .spin::after { content: "…"; }
-  .stats { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
-           margin: 1.6rem 0 .4rem; }
-  .stat { border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1.1rem; background: var(--panel); }
-  .stat b { display: block; font-size: 1.6rem; letter-spacing: -0.02em; line-height: 1.15; }
-  .stat span { color: var(--dim); font-size: .85rem; }
+  .cols { display: grid; gap: 0 2rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+  .cols > section { padding: .2rem 0 1rem; border-top: 1px solid var(--line); }
+  .cols > section > strong { display: block; margin: .9rem 0 .25rem; }
+  .cols .lead { color: var(--dim); font-size: .9rem; margin: 0 0 .8rem; }
+  .reach { display: grid; gap: .5rem 1.5rem; grid-template-columns: max-content 1fr; margin: 0; }
+  .reach dt { font-weight: 600; }
+  .reach dd { margin: 0; color: var(--dim); font-size: .92rem; }
+  .reach dd code { color: var(--ink); font-size: .82rem; }
+  .scroll { overflow-x: auto; }
   .bars { display: grid; gap: .9rem; margin-top: 1rem; }
   .bar { display: grid; grid-template-columns: 9rem 1fr 6rem; gap: .8rem; align-items: center; font-size: .9rem; }
   .bar .track { height: 1.1rem; background: var(--code); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
@@ -112,6 +123,9 @@ export function page({ origin, price, payTo, topic, facilitator, network }) {
     .bar { grid-template-columns: 1fr; gap: .3rem; }
     .bar .n { text-align: left; }
     h1 { font-size: 1.7rem; }
+    .reach { grid-template-columns: 1fr; gap: .1rem 0; }
+    .reach dd { margin-bottom: .7rem; }
+    th, td { padding: .5rem .5rem; }
   }
 </style>
 </head>
@@ -124,13 +138,6 @@ export function page({ origin, price, payTo, topic, facilitator, network }) {
     exceed the terms it was granted, because the only contract allowed to touch the maker's tokens
     refuses to settle a swap that breaks them.
   </p>
-
-  <div class="stats">
-    <div class="stat"><b>933 gas</b><span>what the guard costs, measured with both positions warm</span></div>
-    <div class="stat"><b>83% vs 14%</b><span>reserve left after the same attacker, with and without a mandate</span></div>
-    <div class="stat"><b>2 instructions</b><span>added to SwapVM: a wrapping guard, and a name the settlement obeys</span></div>
-    <div class="stat"><b>${price} HBAR</b><span>for the one answer a stranger cannot compute alone</span></div>
-  </div>
 
   <h2>What a mandate is worth</h2>
   <p>
@@ -150,6 +157,7 @@ export function page({ origin, price, payTo, topic, facilitator, network }) {
         <div class="n">271.86 left</div>
       </div>
     </div>
+    <div class="scroll">
     <table style="margin-top:1.1rem">
       <thead><tr><th></th><th>trades before it stopped</th><th>average rate</th><th>of 2000 tokenB</th></tr></thead>
       <tbody>
@@ -157,9 +165,11 @@ export function page({ origin, price, payTo, topic, facilitator, network }) {
         <tr><td>with none</td><td class="mono">64</td><td class="mono no">0.270</td><td class="mono">14%</td></tr>
       </tbody>
     </table>
+    </div>
     <p class="note">
       Every one of the sixty-four was an ordinary constant-product swap that no application-layer
-      check was there to stop. Reproducible:
+      check was there to stop. The guard that stopped the other run costs 933 gas, measured with
+      both positions warm. Reproducible:
       <code>forge test --match-test test_WhatTheMandateIsWorth -vv</code>.
     </p>
   </div>
@@ -175,10 +185,10 @@ export function page({ origin, price, payTo, topic, facilitator, network }) {
     <textarea id="prog" spellcheck="false" placeholder="0x2120…  — leave empty to read the live position on Sepolia"></textarea>
     <div class="row">
       <button id="go">Decode</button>
-      <button id="live" class="ghost">Use the live position</button>
+      <button id="live" class="ghost">Back to the live position</button>
       <span id="status" class="muted"></span>
     </div>
-    <div id="out" hidden style="margin-top:1.2rem"></div>
+    <div id="out" hidden style="margin-top:1.2rem" aria-live="polite"></div>
   </div>
   <p class="live-hint">The live position decodes as the page loads. Paste anything else to read that instead.</p>
 
@@ -188,30 +198,22 @@ export function page({ origin, price, payTo, topic, facilitator, network }) {
     below is stored here; every value is fetched from a chain or a public mirror node when you ask
     for it.
   </p>
-  <div class="grid">
-    <div class="panel">
+  <div class="cols">
+    <section>
       <strong>Publication</strong>
-      <p class="muted" style="font-size:.9rem;margin:.4rem 0 .8rem">
-        When these exact bytes became public, from an ordering service none of the parties runs.
-      </p>
-      <div id="pub" class="spin muted">reading the mirror node</div>
-    </div>
-    <div class="panel">
+      <p class="lead">When these exact bytes became public, from an ordering service none of the parties runs.</p>
+      <div id="pub" class="spin muted" aria-live="polite">reading the mirror node</div>
+    </section>
+    <section>
       <strong>Authority</strong>
-      <p class="muted" style="font-size:.9rem;margin:.4rem 0 .8rem">
-        The agent's ENSv2 subname: expiring, revocable, soulbound. Compiled into the program, so the
-        settlement itself refuses when it is gone.
-      </p>
-      <div id="auth" class="spin muted">reading the registry</div>
-    </div>
-    <div class="panel">
+      <p class="lead">The agent's ENSv2 subname: expiring, revocable, soulbound. Compiled into the program, so the settlement itself refuses when it is gone.</p>
+      <div id="auth" class="spin muted" aria-live="polite">reading the registry</div>
+    </section>
+    <section>
       <strong>Reputation</strong>
-      <p class="muted" style="font-size:.9rem;margin:.4rem 0 .8rem">
-        What counterparties wrote after trading, from ERC-8004. The registry refuses feedback from
-        the agent itself.
-      </p>
-      <div id="rep" class="spin muted">reading the registry</div>
-    </div>
+      <p class="lead">What counterparties wrote after trading, from ERC-8004. The registry refuses feedback from the agent itself.</p>
+      <div id="rep" class="spin muted" aria-live="polite">reading the registry</div>
+    </section>
   </div>
 
   <h2>What costs money, and why</h2>
@@ -246,29 +248,17 @@ npm run walkthrough
 npm run walkthrough -- --paid</pre>
 
   <h2>Reachable by software that has never heard of it</h2>
-  <div class="grid">
-    <div class="panel">
-      <strong>x402 discovery</strong>
-      <p class="muted" style="font-size:.9rem;margin:.4rem 0 .6rem">
-        An indexer learns what this host sells and what it costs without being told the paid URL.
-      </p>
-      <a class="mono" href="/.well-known/x402">/.well-known/x402</a>
-    </div>
-    <div class="panel">
-      <strong>MCP</strong>
-      <p class="muted" style="font-size:.9rem;margin:.4rem 0 .6rem">
-        Four tools for an assistant; three free, one that says <code>THIS SPENDS MONEY</code>.
-      </p>
-      <code style="font-size:.8rem">claude mcp add batas -- node agent/mcp.mjs</code>
-    </div>
-    <div class="panel">
-      <strong>HTTP, free</strong>
-      <p class="muted" style="font-size:.9rem;margin:.4rem 0 .6rem">
-        The same questions, at parity with the MCP tools, plus reputation.
-      </p>
-      <code style="font-size:.8rem">POST /v1/mandate/decode<br>POST /v1/mandate/publication<br>GET&nbsp; /v1/agent/authority<br>GET&nbsp; /v1/agent/reputation</code>
-    </div>
-  </div>
+  <dl class="reach">
+    <dt>x402 discovery</dt>
+    <dd>An indexer learns what this host sells and what it costs without being told the paid URL.
+      <a class="mono" href="/.well-known/x402">/.well-known/x402</a></dd>
+    <dt>MCP</dt>
+    <dd>Four tools for an assistant; three free, one that says <code>THIS SPENDS MONEY</code>.
+      <code>claude mcp add batas -- node agent/mcp.mjs</code></dd>
+    <dt>HTTP, free</dt>
+    <dd>The same questions, at parity with the MCP tools, plus reputation.
+      <code>POST /v1/mandate/decode · POST /v1/mandate/publication · GET /v1/agent/authority · GET /v1/agent/reputation</code></dd>
+  </dl>
 
   <footer>
     <a href="https://github.com/PugarHuda/batas">source</a> ·
