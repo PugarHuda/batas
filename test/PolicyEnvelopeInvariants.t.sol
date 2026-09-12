@@ -61,7 +61,7 @@ contract PolicyEnvelopeInvariantsTest is Test, CoreInvariants {
         tokenB.approve(address(swapVM), type(uint256).max);
 
         bytes memory program = bytes.concat(
-            PolicyEnvelope.build(MAX_AMOUNT_IN, MIN_RATE), FeeFlatIn.build(0.003e7), XYCSwap.build()
+            PolicyEnvelope.build(MAX_AMOUNT_IN, MIN_RATE, true), FeeFlatIn.build(0.003e7), XYCSwap.build()
         );
         order = _order(program);
 

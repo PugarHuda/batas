@@ -1,7 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
-    { "source": "/.well-known/:path*", "destination": "/api/index" },
-    { "source": "/(.*)", "destination": "/api/index" }
-  ]
+    {
+      "source": "/.well-known/:path*",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
+  ],
+  "outputDirectory": "public"
 }

@@ -19,8 +19,8 @@ export const AQUA = getAddress('0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a');
 /** Same address on Ethereum Sepolia and Hedera testnet; both checked for code before use. */
 export const IDENTITY_REGISTRY = getAddress('0x8004A818BFB912233c491871b3d84c89A494BD9e');
 
-export const ROUTER = getAddress(env('BATAS_ROUTER', '0x1cFA88652B9e1ccCd7cc132c6344099C2ad10FC2'));
-export const APP = getAddress(env('BATAS_APP', '0xdF8120EbA65408832fC35BD1f1fd92fC1d892e91'));
+export const ROUTER = getAddress(env('BATAS_ROUTER', '0x648a0F330f432452CF53B967fd13305528C320a6'));
+export const APP = getAddress(env('BATAS_APP', '0x2A06D6121Cedc9D67404bfb0Ec34BAB8d393e05e'));
 export const TOKEN_A = getAddress(env('BATAS_TOKEN_A', '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B'));
 export const TOKEN_B = getAddress(env('BATAS_TOKEN_B', '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81'));
 
@@ -57,6 +57,16 @@ export const HCS_TOPIC = env('BATAS_HCS_TOPIC', '0.0.10394165');
 export const SEPOLIA_RPC = env('SEPOLIA_RPC_URL', 'https://rpc.sepolia.ethpandaops.io');
 
 export const AGENT_ID = env('BATAS_AGENT_ID', '10123');
+/**
+ * The Hedera account whose messages count on the publication topic.
+ *
+ * The topic was created with no submit key, so anyone can write to it — and until now the lookups
+ * matched on message content alone. Anyone could post `{"kind":"batas.mandate","program":"0x…"}`
+ * and the paid answer would report those bytes as published, with a consensus timestamp, under
+ * this project's name. A record is only ours if this account paid for it, and the mirror node says
+ * who paid on every message.
+ */
+export const PUBLISHER = env('HEDERA_SERVICE_ID', '0.0.10388560');
 /**
  * ERC-8004's reputation registry, paired with the identity registry above.
  *

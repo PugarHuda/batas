@@ -76,7 +76,16 @@ export async function resolveAgent(agentId, { client, rpcUrl } = {}) {
     let owner;
     try {
         owner = await pub.readContract({ address: IDENTITY_REGISTRY, abi: REGISTRY_ABI, functionName: 'ownerOf', args: [id] });
-    } catch {
+    } catch (e) {
+        // Only a revert means "no such agent". A transport that would not answer used to land here
+        // too and come out as `registered: false` — a statement about somebody else's identity made
+        // out of our own failure to ask, which the paid route then wrapped as `checked: true`.
+        // Anything that is not the contract refusing is rethrown so the caller can say "not
+        // checked" instead of "not registered".
+        const reverted = typeof e?.walk === 'function'
+            ? e.walk((x) => x?.name === 'ContractFunctionRevertedError' || x?.name === 'ContractFunctionExecutionError' && /revert/i.test(x.shortMessage ?? '')) !== null
+            : /revert/i.test(String(e?.shortMessage ?? e?.message ?? ''));
+        if (!reverted) throw e;
         return { registered: false, agentId: id.toString(), registry: IDENTITY_REGISTRY };
     }
 

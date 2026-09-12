@@ -60,7 +60,7 @@ contract PolicyEnvelopeTest is Test {
         returns (bytes memory)
     {
         return bytes.concat(
-            PolicyEnvelope.build(maxAmountIn, minRateE18), FeeFlatIn.build(feeBps), XYCSwap.build()
+            PolicyEnvelope.build(maxAmountIn, minRateE18, true), FeeFlatIn.build(feeBps), XYCSwap.build()
         );
     }
 
@@ -373,7 +373,7 @@ contract PolicyEnvelopeTest is Test {
     function test_DeadlineComposesWithTheEnvelope() public {
         uint40 expiry = uint40(block.timestamp + 2 hours);
         bytes memory program = bytes.concat(
-            PolicyEnvelope.build(100e18, 1.9e18),
+            PolicyEnvelope.build(100e18, 1.9e18, true),
             Deadline.build(expiry),
             FeeFlatIn.build(0.003e7),
             XYCSwap.build()
@@ -412,6 +412,7 @@ contract PolicyEnvelopeTest is Test {
     function test_RevertWhenEnvelopeArgsAreTruncated() public {
         // Hand-built on purpose: PolicyEnvelope.build cannot express this, which is the point.
         // [opcode 0x21][len 16][16 bytes of maxAmountIn] then the rest of an ordinary program.
+        // (A full envelope is 33 bytes now; this one stops after the cap.)
         bytes memory truncated = bytes.concat(
             bytes1(0x21), bytes1(0x10), bytes16(uint128(100e18)),
             FeeFlatIn.build(0.003e7),

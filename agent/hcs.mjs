@@ -20,6 +20,7 @@
 //   node agent/hcs.mjs --revocations agent  every time that name was taken back
 
 import 'dotenv/config';
+import { PUBLISHER } from './deployment.mjs';
 
 // Mirror nodes are public and unauthenticated: anyone verifying a mandate reads the record without
 // an account, a key, or our permission. That is the property that makes this worth doing.
@@ -81,9 +82,11 @@ export function revocationMessage({ label, registry, program, chainId, at }) {
 /**
  * Read a mirror-node message back into a record.
  *
- * Anything that is not one of ours comes back as null rather than as a half-parsed object: a topic
- * is public and writable by anyone holding its submit key, so foreign traffic on it is expected and
- * must not be mistaken for a mandate.
+ * Anything that is not one of ours comes back as null rather than as a half-parsed object. The
+ * topic has no submit key at all — an earlier version of this comment said it did — so foreign
+ * traffic is not merely expected, it is free to send, and the parse is only half the filter. The
+ * other half is the payer check in the walkers: a well-formed record from an account that is not
+ * ours is somebody else's claim, however good it looks.
  */
 export function parseMandateMessage(base64) {
     let text;
@@ -192,7 +195,7 @@ async function publishMessage(topicId, message) {
  * the latest, because a name that was revoked, re-granted and revoked again has a history that a
  * single row would misrepresent.
  */
-export async function lookupRevocations(topicId, label, { fetchImpl = fetch, maxPages = 10 } = {}) {
+export async function lookupRevocations(topicId, label, { fetchImpl = fetch, maxPages = 10, publisher = PUBLISHER } = {}) {
     const id = topicId || process.env.BATAS_HCS_TOPIC;
     if (!id) return { topic: null, revocations: [], reason: 'no topic configured' };
 
@@ -203,10 +206,12 @@ export async function lookupRevocations(topicId, label, { fetchImpl = fetch, max
         if (!res.ok) throw new Error(`mirror node ${res.status}`);
         const body = await res.json();
         for (const m of body.messages ?? []) {
+            if (m.payer_account_id !== publisher) continue;
             const record = parseRevocationMessage(m.message);
             if (record?.label === label) {
                 found.push({
                     ...record,
+                    payer: m.payer_account_id,
                     consensusTimestamp: m.consensus_timestamp,
                     revokedAt: consensusToISO(m.consensus_timestamp),
                     sequenceNumber: m.sequence_number,
@@ -236,7 +241,7 @@ export async function lookupRevocations(topicId, label, { fetchImpl = fetch, max
  * walk — at 100 messages a page a hackathon-scale topic is one or two requests, and a topic large
  * enough to exceed the cap needs an index rather than a longer loop.
  */
-export async function lookupMandate(topicId, program, { fetchImpl = fetch, maxPages = 10 } = {}) {
+export async function lookupMandate(topicId, program, { fetchImpl = fetch, maxPages = 10, publisher = PUBLISHER } = {}) {
     const id = topicId || process.env.BATAS_HCS_TOPIC;
     if (!id) return { topic: null, published: false, reason: 'no topic configured' };
     const wanted = String(program).toLowerCase();
@@ -250,11 +255,16 @@ export async function lookupMandate(topicId, program, { fetchImpl = fetch, maxPa
         if (!res.ok) throw new Error(`mirror node ${res.status}`);
         const body = await res.json();
         for (const m of body.messages ?? []) {
+            // Ours only. The topic has no submit key, so a message on it proves that somebody
+            // paid a fraction of a cent, not that this project said anything. The payer is the
+            // signature.
+            if (m.payer_account_id !== publisher) continue;
             const record = parseMandateMessage(m.message);
             if (record?.program === wanted) {
                 return {
                     topic: String(id),
                     published: true,
+                    payer: m.payer_account_id,
                     consensusTimestamp: m.consensus_timestamp,
                     publishedAt: consensusToISO(m.consensus_timestamp),
                     sequenceNumber: m.sequence_number,

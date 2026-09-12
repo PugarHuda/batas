@@ -77,8 +77,7 @@ Two implementation notes on reading chains that cost real time. Aqua's Shipped e
 tracks both require that.
 
 **The rules the form restates, and where this stands on each:** started from scratch — first
-commit 6 September, the event opened on the 4th; version control with frequent commits — 60-odd
-across the event, each one a single argued change; public repository — yes; video under four
+commit 6 September, the event opened on the 4th; version control with frequent commits — 70-odd across the event, each one a single argued change; public repository — yes; video under four
 minutes with no speed-ups — the script below targets 3:45 and says which two beats to cut rather
 than accelerate.
 
@@ -110,7 +109,7 @@ negotiation, scheduled transactions.
 | Official Aqua/SwapVM contracts | Aqua used as-is at `0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`; nothing in `node_modules/@1inch/**` edited |
 | Redeployed modified SwapVM (permitted, and scored higher) | `BatasRouter` carries two new instructions: `PolicyEnvelope` at `0x21` and `MandateName` at `0x22` |
 | On-chain execution of token transfers, demoed | `script/Demo.s.sol` ships, settles and refuses in one run — real ERC-20 transfers, no mocked settlement |
-| Proper git commit history | 47+ commits across the event, each one a single argued change |
+| Proper git commit history | 70-odd commits across the event, each one a single argued change |
 
 ### 3. ENS — Best Use of ENSv2 ($4,500)
 
@@ -222,7 +221,7 @@ quotes are eth_calls and return instantly, so cut on the two waits and keep the 
 **2:35–3:20 — the other agent pays** *(the Hedera requirement)*
 
 ```bash
-node agent/counterparty.mjs --paranoid
+node agent/counterparty.mjs --paranoid --trade
 ```
 
 > This is a different agent, with its own money and its own rules, arriving at a position it did not

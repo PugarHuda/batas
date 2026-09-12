@@ -18,13 +18,13 @@ that breaks them, and both refuse before any token moves.
 flowchart TB
     subgraph OFF["off chain"]
         AG["<b>Agent</b><br/>reads the position, picks the terms,<br/>compiles the program itself"]
-        EN["<b>ENSv2 subname</b><br/>expiring · revocable · soulbound<br/><i>the agent asks before it acts</i>"]
+        EN["<b>ENSv2 subname</b><br/>expiring · revocable · soulbound<br/><i>the settlement asks, every time</i>"]
         AG -. "may I act?" .-> EN
     end
 
     subgraph SEP["Sepolia"]
-        MD["<b>Mandate</b><br/>cap · floor · expiry · fee · salt"]
-        RT["<b>BatasRouter</b><br/>SwapVM + PolicyEnvelope at slot 0x21"]
+        MD["<b>Mandate</b><br/>cap · floor · direction · expiry<br/>fee · salt · name"]
+        RT["<b>BatasRouter</b><br/>SwapVM + PolicyEnvelope 0x21<br/>+ MandateName 0x22"]
         AP["<b>BatasApp</b><br/>Aqua application"]
         AQ["<b>Aqua.pull</b><br/><i>checks only msg.sender</i>"]
         WL["<b>Maker's wallet</b><br/>tokens never left it"]
@@ -39,6 +39,8 @@ flowchart TB
     MD -- "Aqua.ship hashes it" --> RT
     MD --> AP
     AG -- "publishes the bytes" --> HC
+    RT -. "still held?" .-> EN
+    AP -. "still held?" .-> EN
     RT -- "guard passes, then" --> AQ
     AP -- "guard passes, then" --> AQ
     AQ -- "transferFrom" --> WL
@@ -51,7 +53,7 @@ flowchart TB
 | trade larger than the cap | `PolicyEnvelope` inside the VM, and `BatasApp` before `pull()` | nothing — it reverts |
 | price under the floor | same two surfaces, on the settled registers | nothing |
 | a mandate past its expiry | `Deadline` in the program, and `BatasApp` | nothing |
-| the maker changing their mind | the ENSv2 name the agent consults, or `Aqua.dock()` | one transaction |
+| the maker changing their mind | the ENSv2 name the *settlement* consults (`MandateName`, slot `0x22`), or `Aqua.dock()` | one transaction |
 | *"was this grant ever public?"* | Hedera Consensus Service, read from a public mirror node | nothing, and it does not route through us |
 
 ## See it work
@@ -136,7 +138,7 @@ sequenceDiagram
     T->>R: swap(order, amountIn)
     R->>P: outermost instruction
     P->>I: runLoop()
-    Note over I: Deadline · FeeFlatIn · XYCSwap · Salt
+    Note over I: Deadline · MandateName · FeeFlatIn · XYCSwap · Salt
     I-->>P: settled amountIn / amountOut
     P->>P: amountIn within the cap?
     P->>P: rate at or above the floor?
@@ -269,13 +271,21 @@ places policy at the account layer. All of it runs before a signature and off-ch
 counterparty has to trust the operator's server, and a judgement made from a prompt can be argued
 with. `PolicyEnvelope` runs during settlement, has no prompt, and reverts.
 
-**In 1inch's own ecosystem, nobody has written a policy instruction.** The two Aqua winners went
-deep into the VM in other directions: [Aqua0](https://ethglobal.com/showcase/aqua0-u2krx) (Buenos
-Aires 2025, 1inch 4th, since incubated by 1inch) built new AMM curves as AquaApps across chains,
-and [KSwap-VM](https://ethglobal.com/showcase/kswap-vm-aix5n) (Lisbon 2026, 1inch 3rd) wrote
+**1inch has a wrapping rate guard of its own, and this document used to say otherwise.** An
+earlier version of this paragraph claimed nobody had written a policy instruction for SwapVM. That
+was wrong: `RequireMinRate` in the vendor tree (`instructions/MinRate.sol`) delegates to `runLoop`
+and refuses when the settled rate is worse than a floor — the floor half of `PolicyEnvelope`, in
+the 0xb0 rates bank. It is not in `AquaOpcodes`, so it was never reachable on the Aqua router
+without the same redeployment this project makes, and it carries no size cap, no direction, no
+kill switch and no length check on its own arguments. What is new here is the rest: a per-trade cap
+and a direction in the same frame, an app-surface twin compiled from one struct so the two cannot
+drift, a name the settlement obeys, and a guard that refuses to read its limits out of the
+instruction that follows it. The two Aqua winners went deep into the VM in other directions:
+[Aqua0](https://ethglobal.com/showcase/aqua0-u2krx) (Buenos Aires 2025, 1inch 4th, since incubated
+by 1inch) built new AMM curves as AquaApps across chains, and
+[KSwap-VM](https://ethglobal.com/showcase/kswap-vm-aix5n) (Lisbon 2026, 1inch 3rd) wrote
 K-framework semantics and proofs for the *existing* swap-vm instructions, filing real bug reports
-against them. Market structure and verification. No new constraint opcode, and no wrapping
-instruction outside 1inch's own fee family.
+against them. Market structure and verification.
 
 **Naming an agent is not the novel part, and this repo does not claim it is.**
 [HumanENS](https://ethglobal.com/showcase/humanens-9qp31) issues per-agent subnames behind World ID,
@@ -310,7 +320,7 @@ conditions and access guards bank, beside `Deadline` and the taker gates, which 
 for both: one bounds what a settlement may do, the other bounds who may still cause one. The router is a redeployment, which
 the 1inch track permits.
 
-Two things about which base class to extend, both learned the hard way:
+Two things about which base class to extend, both learned the hard way (the sizes below are from the first deployment; the router carrying both instructions is 21,178 bytes):
 
 > **`AquaOpcodes`, not `Opcodes`.** The full set carries 24 instructions an Aqua strategy never
 > reaches for, including every balance instruction, because in Aqua mode balances come from Aqua
@@ -327,7 +337,7 @@ npm install
 npm test          # contracts, decoder, and the paid API surface
 ```
 
-Three suites, run separately if you prefer:
+Four suites, run separately if you prefer:
 
 | Suite | Command | What it covers |
 |---|---|---|
@@ -359,7 +369,7 @@ still clears the floor, after the fee, gives
 amountIn ≤ reserveA · (slippage − fee) / ((1 − slippage)(1 − fee))
 ```
 
-which at a 2% budget and a 0.3% fee is about **1.73% of the reserve**, not 10%. The cap is derived
+which at a 2% budget and a 0.3% fee is about **1.74% of the reserve**, not 10%. The cap is derived
 from the floor now, and `capBps` only ever tightens it further.
 
 The closed form is exact over the rationals and lands a hair under the floor once every step
@@ -533,8 +543,8 @@ than taken from this repo on trust.
 | Contract | Address |
 |---|---|
 | Aqua (canonical, not ours) | [`0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`](https://sepolia.etherscan.io/address/0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a) |
-| `BatasRouter` (SwapVM + PolicyEnvelope) | [`0x1cFA88652B9e1ccCd7cc132c6344099C2ad10FC2`](https://sepolia.etherscan.io/address/0x1cFA88652B9e1ccCd7cc132c6344099C2ad10FC2) |
-| `BatasApp` | [`0xdF8120EbA65408832fC35BD1f1fd92fC1d892e91`](https://sepolia.etherscan.io/address/0xdF8120EbA65408832fC35BD1f1fd92fC1d892e91) |
+| `BatasRouter` (SwapVM + PolicyEnvelope + MandateName) | [`0x648a0F330f432452CF53B967fd13305528C320a6`](https://sepolia.etherscan.io/address/0x648a0F330f432452CF53B967fd13305528C320a6) |
+| `BatasApp` | [`0x2A06D6121Cedc9D67404bfb0Ec34BAB8d393e05e`](https://sepolia.etherscan.io/address/0x2A06D6121Cedc9D67404bfb0Ec34BAB8d393e05e) |
 | Demo token A | [`0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B`](https://sepolia.etherscan.io/address/0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B) |
 | Demo token B | [`0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81`](https://sepolia.etherscan.io/address/0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81) |
 | ERC-8004 identity registry (canonical) | [`0x8004A818BFB912233c491871b3d84c89A494BD9e`](https://sepolia.etherscan.io/address/0x8004A818BFB912233c491871b3d84c89A494BD9e) |
@@ -581,8 +591,8 @@ transfers, no mocked settlement:
 
 | Step | Transaction |
 |---|---|
-| Ship liquidity under the mandate | [`0x3e2174e5…`](https://sepolia.etherscan.io/tx/0x3e2174e5a460e2def8ba48004361140e969b3176d8738d3c218c0e81653db780) |
-| Swap settled inside the mandate | [`0xb5bec3dc…`](https://sepolia.etherscan.io/tx/0xb5bec3dce9a9077ca84dc540e77eb6a1d442c634c8bf86c923603851430dd5f4) |
+| Ship liquidity under the mandate | [`0x46d3822b…`](https://sepolia.etherscan.io/tx/0x46d3822bb6096432f02d1ac29aa07e737cc7f048d2ecc2e984792526ae3694b1) |
+| Swap settled inside the mandate | [`0x6fe65721…`](https://sepolia.etherscan.io/tx/0x6fe6572134ae5a67248a08ec5bb193a0ef2be70e5a5f0d6ba155ae1e9106be40) |
 
 10 tokenA in, **19.743160687941225977 tokenB** out to
 [`0x8474d483…`](https://sepolia.etherscan.io/address/0x8474d483Cc4374B8a16fE2D019717b23f0a5BD83) —
@@ -674,10 +684,13 @@ reserves 1010 A / 1980.256839312058774023 B
 spot     1.960650335952533439 B per A
 
 decision
-  floor  1.92143732923348277 B per A  (2.00% under spot)
-  cap    101 A                        (10.00% of reserve)
+  budget 100bps from 1 settled trade(s) — not enough settled trades to measure; using the floor
+  floor  1.941043832593008104 B per A  (1.00% under spot)
+  cap    7.162902849964033514 A  (0.70% of reserve, the largest trade that still clears the floor)
+  fee    0.3%
+  expires in 719 hours
 
-program  0x2120...056167656e747003007530500002080000000 (106 bytes)
+program  0x2121...056167656e747003007530500002080000000 (107 bytes)
 
 encoding check
   local  0x4d113cd9c03a5ab7aebea6191fa903adf379e648c9c21911f956c09a24d9aeda
@@ -717,7 +730,7 @@ opcode, length prefix or trait bit were wrong, the two hashes would differ and i
 The chain agrees rather than being taken on trust.
 
 Mandate granted by that run:
-[`0xc86e804a…`](https://sepolia.etherscan.io/tx/0xc86e804a3690d6fc409f7b79f7833b58fbc1021ea7f94fdfd2470390400285ea).
+[`0x5226fd99…`](https://sepolia.etherscan.io/tx/0x5226fd991de5e122da66b5c6355c454add8dda1b537ad29adaff4d4bd2d97b0b).
 
 And the point of the whole design: the agent picks these numbers, but it cannot widen them once
 granted. `PolicyEnvelope` enforces whatever it proposed, inside the VM, for as long as the mandate
@@ -753,7 +766,7 @@ Reading the granted name back off chain:
 
 ```
 name          agent
-expiry        2026-10-10T14:20:56.000Z
+expiry        2026-10-12T16:01:58.000Z
 holder        0x1100000        SET_RESOLVER | SET_SUBREGISTRY
 transferable  false
 ```
@@ -849,10 +862,10 @@ metadata entries keep the on-chain facts queryable without fetching the URI at a
 
 ```
 batas.chain        eip155:11155111
-batas.router       0x1cFA88652B9e1ccCd7cc132c6344099C2ad10FC2
-batas.app          0xdF8120EbA65408832fC35BD1f1fd92fC1d892e91
+batas.router       0x648a0F330f432452CF53B967fd13305528C320a6
+batas.app          0x2A06D6121Cedc9D67404bfb0Ec34BAB8d393e05e
 batas.aqua         0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a
-batas.enforcement  swapvm-opcode:0x21
+batas.enforcement  swapvm-opcode:0x21,0x22
 batas.x402.network hedera:testnet
 batas.x402.payTo   0.0.10388560
 batas.hcs.topic    0.0.10394165
@@ -921,7 +934,7 @@ of trusting it.
   received      1.948987088535167759 B
   leaving feedback: 143bps above the floor, tagged floor-honoured
   feedback      success  0xc713d938…
-  reputation    1 client(s), summary 143
+  reputation    2 feedback from 1 client(s), 133bps above the floor on average
 ```
 
 A trade settled exactly on the floor scores zero — the mandate was honoured and nothing was given
@@ -972,36 +985,37 @@ result       SUCCESS
 No API key, no account, no subscription. The first request returns `402`, the client settles and
 retries, and the payment is the authentication.
 
-Decoded from the program the agent actually shipped, on a run of 2026-09-10 — the countdown in
+Decoded from the program the agent actually shipped, on a run of 2026-09-13 — the countdown in
 the last line is why this is dated:
 
 ```
 guarded by PolicyEnvelope: true
   @ 0 POLICY_ENVELOPE
-  @34 DEADLINE
-  @41 MANDATE_NAME
-  @89 FEE_FLAT_IN
-  @94 XYC_SWAP
-  @96 SALT
+  @35 DEADLINE
+  @42 MANDATE_NAME
+  @90 FEE_FLAT_IN
+  @95 XYC_SWAP
+  @97 SALT
 enforced mandate
-  max input   17.573127545903015167
-  floor rate  1.92143732923348277
+  max input   7.162902849964033514
+  floor rate  1.941043832593008104
+  direction   aToB
   fee         0.3%
   curve       constant product (x*y=k)
-  expires     2026-10-10T14:20:56.000Z
+  expires     2026-10-12T16:01:58.000Z
   kill switch "agent" in 0x945800bd6cdd60521b64a12d7b3f12fc90916a6b
               held by 0x39d2bae5eaeda9283535ddc98f1991c81ed5cd7e
 publication
-  published   2026-09-10T15:21:07.442Z  (HCS consensus, topic 0.0.10394165 #6)
+  published   2026-09-12T17:02:25.719Z  (HCS consensus, topic 0.0.10394165 #10)
   granted by  0x39d2bae5eaeda9283535ddc98f1991c81ed5cd7e
-  verify      https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/6
+  verify      https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/10
 operator
   agent #10123  Batas
   held by     0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E
   vouches     yes — the identity is held by the address that granted the mandate
 notes
   - The floor is a fixed rate chosen when this mandate was granted, not a reading of any
-    market, and the mandate has 27 days left — past the 7 days this report treats as short.
+    market, and the mandate has 29 days left — past the 7 days this report treats as short.
     It bounds how far trading can walk this position's own price. If the market moves under
     it, trades that empty the position at a rate the maker would no longer accept still
     satisfy the mandate.
@@ -1045,7 +1059,7 @@ that needs no account should not be the half that flatters us. `node agent/ens.m
 writes the note itself:
 
 ```
-"agent" on topic 0.0.10394165: 1 revocation(s)
+"agent" on topic 0.0.10394165: 4 revocation(s)
   #7  2026-09-11T02:55:10.617Z  registry 0x945800bd6cdd60521b64a12d7b3f12fc90916a6b
      https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/7
 ```
@@ -1159,8 +1173,8 @@ position rather than an omission.
 
 The argument for keeping one is a receipt trail. But the receipt already exists somewhere better:
 the x402 settlement is a Hedera transaction, public and permanent, and the client is handed its id
-in the `PAYMENT-RESPONSE` header. And the answer itself is reproducible — three of its four parts
-are free routes anyone can call, and the fourth is one read of a public registry. A payer who loses
+in the `PAYMENT-RESPONSE` header. And the answer itself is reproducible — four of its five parts
+are free routes anyone can call, and the fifth is one read of a public registry. A payer who loses
 the response can rebuild it from public data without our permission, which is a stronger guarantee
 than a row in a table we control.
 
@@ -1200,7 +1214,7 @@ have given away the decode, the publication lookup and the authority check since
 | `GET /v1/agent/authority` | whether the ENSv2 name still holds, and if not, lapsed or revoked | `check_agent_authority` |
 | `GET /v1/agent/reputation` | what clients have said, from ERC-8004 | — |
 
-All six of those call `agent/free.mjs` rather than each implementing the question. Two encoders for
+All seven of those call `agent/free.mjs` rather than each implementing the question. Two encoders for
 one format is how this project once shipped mandates with no expiry, and two answers to one
 question would be the same mistake wearing a different hat.
 
@@ -1222,8 +1236,9 @@ Two additions, both to standards other people already read.
 **`/.well-known/x402`** — a discovery manifest, per
 [draft-hawkins-x402-dns-discovery](https://datatracker.ietf.org/doc/draft-hawkins-x402-dns-discovery/).
 An indexer or a stranger's agent learns that this host takes payment, what it sells, and what it
-costs, without first being told the URL of the paid route. Several facilitators already read this
-path. It sits *outside* the paywall, because putting discovery behind it would mean only someone
+costs, without first being told the URL of the paid route. It is a draft, and honestly: the surfaces that crawl x402 resources today are CDP's Bazaar
+(facilitator-gated, no Hedera) and x402scan (self-registered); nothing was found that crawls this
+path yet. It sits *outside* the paywall, because putting discovery behind it would mean only someone
 who already knows the price can learn the price — and `qa/service.spec.mjs` cross-checks the
 advertised price against the `402` the route actually returns, so the manifest cannot drift into
 advertising terms nobody honours.
@@ -1412,9 +1427,9 @@ payload is being built, before anything is signed or sent, so an unfunded key re
 can move even if the assertion is wrong, and CI needs no secret to run it.
 
 ```
-forge test          45 passing
-npm run test:js    185 passing
-npm run test:api    19 passing
+forge test          46 passing
+npm run test:js    187 passing
+npm run test:api    20 passing
 npm run test:prod    5 passing
 ```
 

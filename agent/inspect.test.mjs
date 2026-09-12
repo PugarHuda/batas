@@ -24,6 +24,8 @@ const strategyFor = (program) =>
 
 test('recovers the exact program that was shipped', () => {
     const program = toProgram({
+        tokenIn: '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B',
+        tokenOut: '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81',
         maxAmountIn: 101n * 10n ** 18n,
         minRateE18: 1921437329233482770n,
         expiry: 1788706874n,
@@ -35,7 +37,9 @@ test('recovers the exact program that was shipped', () => {
 
 test('works for a program of any length', () => {
     for (const salt of [0n, 1n, 2n ** 63n]) {
-        const program = toProgram({ maxAmountIn: 1n, minRateE18: 1n, expiry: 1n, feeBps: 0, salt });
+        const program = toProgram({
+        tokenIn: '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B',
+        tokenOut: '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81', maxAmountIn: 1n, minRateE18: 1n, expiry: 1n, feeBps: 0, salt });
         assert.equal(programFromStrategy(strategyFor(program)).toLowerCase(), program.toLowerCase());
     }
 });
@@ -56,6 +60,8 @@ test('the recovered program still decodes to the terms it was built from', async
     const { explain } = await import('./swapvm.mjs');
     const expiry = 1788706874n;
     const program = toProgram({
+        tokenIn: '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B',
+        tokenOut: '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81',
         maxAmountIn: 500n * 10n ** 18n,
         minRateE18: 2n * 10n ** 18n,
         expiry,

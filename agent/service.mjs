@@ -221,6 +221,12 @@ app.use(
                 accepts: [{ scheme: 'exact', price: PRICE, network: 'hedera:testnet', payTo: PAY_TO }],
                 description: 'Decode a SwapVM program into the mandate it enforces',
                 mimeType: 'application/json',
+                // Stated, not derived. Left to itself the middleware builds the resource identity
+                // from `req.protocol` + `Host`, and behind Vercel's proxy Express reports `http`, so
+                // the live 402 advertised `http://batas-one.vercel.app/…` while the discovery
+                // manifest said `https://` — two names for one resource, and the discovery draft
+                // says resources must be HTTPS. The manifest and the 402 now come from one string.
+                resource: `${PUBLIC_ORIGIN}/v1/mandate/explain`,
             },
         },
         resourceServer,

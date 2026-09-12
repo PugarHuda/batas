@@ -198,3 +198,36 @@ test('a finished walk that found nothing does say so', async () => {
     assert.equal(res.searched, 'complete');
     assert.equal(res.topicExists, true);
 });
+
+test('a perfect-looking record from the wrong account is not a publication', async () => {
+    // The topic has no submit key. Anyone can post a message that parses as one of ours, and
+    // before this check the paid answer would have reported those bytes as published — with a
+    // consensus timestamp — under this project's name. The payer is the only signature.
+    const { lookupMandate, mandateMessage } = await import('./hcs.mjs');
+    const forged = Buffer.from(mandateMessage({ program: '0x2120' }), 'utf8').toString('base64');
+    const mirror = async (url) => (String(url).includes('/messages')
+        ? { ok: true, status: 200, json: async () => ({
+            messages: [
+                { message: forged, payer_account_id: '0.0.999999', consensus_timestamp: '1.0', sequence_number: 1 },
+            ],
+            links: {},
+        }) }
+        : { ok: true, status: 200, json: async () => ({}) });
+
+    const res = await lookupMandate('0.0.1', '0x2120', { fetchImpl: mirror, maxPages: 3, publisher: '0.0.10388560' });
+    assert.equal(res.published, false, 'a stranger\'s message must not count as ours');
+    assert.equal(res.searched, 'complete');
+
+    // And the same bytes from our own account do count.
+    const ours = async (url) => (String(url).includes('/messages')
+        ? { ok: true, status: 200, json: async () => ({
+            messages: [
+                { message: forged, payer_account_id: '0.0.10388560', consensus_timestamp: '1.0', sequence_number: 1 },
+            ],
+            links: {},
+        }) }
+        : { ok: true, status: 200, json: async () => ({}) });
+    const yes = await lookupMandate('0.0.1', '0x2120', { fetchImpl: ours, maxPages: 3, publisher: '0.0.10388560' });
+    assert.equal(yes.published, true);
+    assert.equal(yes.payer, '0.0.10388560');
+});

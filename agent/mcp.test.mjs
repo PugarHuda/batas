@@ -19,7 +19,7 @@ import { createServer } from './mcp.mjs';
 import { xycSwap, salt } from './swapvm.mjs';
 
 const LIVE_PROGRAM =
-    '0x21200000000000000000f3e04a65862e64ff00000000000000001aaa51121b2314122005006ac5c427700300753050000208000000006a9e3727';
+    '0x212100000000000000006367be30fcbd45ea00000000000000001aeff914e72b45e8802005006acd0476222e945800bd6cdd60521b64a12d7b3f12fc90916a6b39d2bae5eaeda9283535ddc98f1991c81ed5cd7e056167656e74700300753050000208000000006aa58586';
 
 async function connected() {
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
@@ -53,9 +53,9 @@ test('read_mandate decodes a program without touching the network', async () => 
     const out = parse(await client.callTool({ name: 'read_mandate', arguments: { program: LIVE_PROGRAM } }));
 
     assert.equal(out.guarded, true);
-    assert.equal(out.mandate.minRateFormatted, '1.92143732923348277');
+    assert.equal(out.mandate.minRateFormatted, '1.941043832593008104');
     assert.equal(out.mandate.curve, 'constant product (x*y=k)');
-    assert.deepEqual(out.instructions.map((i) => i.name), ['POLICY_ENVELOPE', 'DEADLINE', 'FEE_FLAT_IN', 'XYC_SWAP', 'SALT']);
+    assert.deepEqual(out.instructions.map((i) => i.name), ['POLICY_ENVELOPE', 'DEADLINE', 'MANDATE_NAME', 'FEE_FLAT_IN', 'XYC_SWAP', 'SALT']);
 });
 
 test('a program that is not a program comes back as an error, not as an empty mandate', async () => {

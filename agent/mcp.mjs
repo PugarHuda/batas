@@ -3,7 +3,7 @@
 // The premise of this project is that anyone about to trade against a position, or about to let an
 // agent run one, needs to know what its bytes actually permit. Until now the only ways to ask were
 // a shell and a curl. MCP is how the software people actually delegate to — Claude, Cursor,
-// Windsurf — reaches an outside service, so this exposes the same three questions there.
+// Windsurf — reaches an outside service, so this exposes the same questions there.
 //
 //   node agent/mcp.mjs        speaks JSON-RPC over stdin/stdout
 //
@@ -11,7 +11,7 @@
 //
 //   claude mcp add batas -- node /path/to/agent/mcp.mjs
 //
-// Two of the three tools cost nothing and one settles a payment on Hedera. That split is
+// Three of the four tools cost nothing and one settles a payment on Hedera. That split is
 // deliberate: an assistant can establish whether a mandate was ever published, and whether the
 // agent behind it is still authorised, before deciding the full decode is worth 0.001 HBAR. That
 // is the shape of the thing the payment is for — not a subscription, a decision.

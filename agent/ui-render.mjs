@@ -58,7 +58,7 @@ export function renderMandate(a) {
     let html = '<dl>' + rows.map(([k, v]) => '<dt>' + k + '</dt><dd class="mono">' + v + '</dd>').join('') + '</dl>';
     if (a && a.instructions && a.instructions.length) {
         html += '<pre style="margin-top:1rem">' + a.instructions
-            .map((i) => String(i.offset).padStart(3, ' ') + '  ' + esc(i.name))
+            .map((i) => esc(String(i.offset).padStart(3, ' ')) + '  ' + esc(i.name))
             .join('\n') + '</pre>';
     }
     for (const n of (a && a.notes) || []) html += '<p class="note">' + esc(n) + '</p>';

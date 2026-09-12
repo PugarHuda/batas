@@ -17,7 +17,7 @@ import { inspect } from './service.mjs';
 import { OWNER, AGENT_ID } from './deployment.mjs';
 
 const LIVE_PROGRAM =
-    '0x21200000000000000000f3e04a65862e64ff00000000000000001aaa51121b2314122005006ac5c427700300753050000208000000006a9e3727';
+    '0x212100000000000000006367be30fcbd45ea00000000000000001aeff914e72b45e8802005006acd0476222e945800bd6cdd60521b64a12d7b3f12fc90916a6b39d2bae5eaeda9283535ddc98f1991c81ed5cd7e056167656e74700300753050000208000000006aa58586';
 
 test('a program that is not hex is refused before anything is looked up', async () => {
     for (const program of [undefined, null, 42, {}, 'not hex', '0xZZ']) {
@@ -30,7 +30,7 @@ test('a well formed request returns the terms and the publication', async () => 
     const { status, body } = await inspect({ program: LIVE_PROGRAM });
     assert.equal(status, 200);
     assert.equal(body.guarded, true);
-    assert.equal(body.instructionCount, 5);
+    assert.equal(body.instructionCount, 6);
     assert.equal(body.publication.published, true);
     assert.equal(body.operator, undefined, 'the operator lookup is opt-in and was not asked for');
 });

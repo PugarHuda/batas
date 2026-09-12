@@ -14,9 +14,15 @@ import { InstructionArgs } from "@1inch/swap-vm/src/libs/InstructionArgs.sol";
 ///   that does not exist, and a registry answers that with the zero address — which reads as
 ///   *revoked* rather than as a wrong question. The registry knows the number; we ask it.
 interface IMandateNameRegistry {
-    function findExpiry(string calldata label) external view returns (uint64);
-    function findTokenId(string calldata label) external view returns (uint256);
-    function ownerOf(uint256 tokenId) external view returns (address);
+    /// @dev `latestOwner` is the raw owner, not gated on expiry. That distinction is the whole
+    ///   reason this is the call: `ownerOf` answers the zero address for an *expired* name as well
+    ///   as a burned one, so a check built on `ownerOf` could never tell a lapse from a
+    ///   revocation — every lapse presented as `MandateNameNotHeld`, and the error this library
+    ///   named for it was unreachable on the registry it was written for.
+    function getState(uint256 anyId)
+        external
+        view
+        returns (uint64 expiry, uint256 tokenId, uint256 resource, address latestOwner, uint8 status);
 }
 
 /// @title MandateName
@@ -69,10 +75,17 @@ library MandateName {
         returns (MemoryPtr ptr)
     {
         bytes memory raw = bytes(label);
-        // One byte holds the length, so a label longer than 255 cannot be expressed. Refusing beats
-        // truncating: a program carrying half a label asks about a different name, and a different
-        // name is a different grant.
-        require(raw.length <= type(uint8).max, MandateNameArgsTruncated(raw.length));
+        // One byte holds the whole instruction's argument length, and the header already takes 41
+        // of the 255 it can count — so the label has 214, not 255. The first version allowed 255
+        // and let `InstructionBuilder.patchLength` refuse the last forty-one with its own error,
+        // which is the right refusal wearing the wrong name. Refusing beats truncating either way:
+        // a program carrying half a label asks about a different name, and a different name is a
+        // different grant.
+        require(raw.length <= type(uint8).max - HEADER, MandateNameArgsTruncated(raw.length));
+        // A zero holder would match a burned name — `ownerOf` answers zero for one — and leave the
+        // refusal resting on the registry setting expiry to "now" on unregister. That is this
+        // registry's behaviour and it need not be every registry's.
+        require(holder != address(0), MandateNameNotHeld(address(0), holder));
 
         ptr = ptrStart.pushHeader(opcode);
         ptr = ptr.push(registry);
@@ -114,26 +127,23 @@ library MandateName {
     ///   name is expired at its expiry and `classifyName` off chain says so too. Making them agree
     ///   with each other would put both out of step with the thing they mirror.
     function check(address registry, address holder, string memory label) internal view {
-        IMandateNameRegistry reg = IMandateNameRegistry(registry);
-
-        // Ownership first, and the order is the whole point.
+        // One call, and the right one. The registry accepts any id form and strips the version
+        // bits itself, so the labelhash is enough — no `findTokenId` round trip.
         //
-        // `unregister` does not zero a name's expiry — it sets it to the moment of revocation — so
-        // a name the owner pulled and one that simply ran out are indistinguishable by timestamp.
-        // Checking the expiry first made every revocation report `MandateNameLapsed`, which is the
-        // same wrong answer this project already fixed once off chain: the operator of a stopped
-        // agent was told it had run out of time when in fact its authority had been taken away.
+        // Ownership first, and the order is the whole point. `unregister` does not zero a name's
+        // expiry — it sets it to the moment of revocation — so a name the owner pulled and one that
+        // ran out are indistinguishable by timestamp. Burning clears `latestOwner` and lapsing does
+        // not, so asking who holds it first separates them: a revoked name fails here, a lapsed one
+        // gets past this and fails below.
         //
-        // Burning clears the owner and lapsing does not, so asking who holds it first separates
-        // them: a revoked name fails here, a lapsed one gets past this and fails below.
-        //
-        // A revoked name reads as the zero address on this registry rather than reverting, so it is
-        // compared as a value. A registry that does revert instead reverts the settlement, which is
+        // The first version asked `ownerOf`, which this registry gates on expiry: it answers zero
+        // for a lapsed name too, so every lapse presented as a revocation and `MandateNameLapsed`
+        // could not be reached at all. `latestOwner` is the raw owner, which is the one the
+        // distinction needs. A registry that reverts on the call reverts the settlement, which is
         // the safe direction: no answer about the name means no trade.
-        address owner = reg.ownerOf(reg.findTokenId(label));
+        (uint64 expiry,,, address owner,) =
+            IMandateNameRegistry(registry).getState(uint256(keccak256(bytes(label))));
         require(owner == holder, MandateNameNotHeld(owner, holder));
-
-        uint64 expiry = reg.findExpiry(label);
         require(expiry > block.timestamp, MandateNameLapsed(expiry, block.timestamp));
     }
 }

@@ -9,7 +9,7 @@ import { test, expect } from '@playwright/test';
 const PROD = 'https://batas-one.vercel.app';
 
 const LIVE_PROGRAM =
-    '0x2120000000000000000579a814e10a74000000000000000000001aaa51121b231412700300753050000208000000006a9d5ef4';
+    '0x212100000000000000006367be30fcbd45ea00000000000000001aeff914e72b45e8802005006acd0476222e945800bd6cdd60521b64a12d7b3f12fc90916a6b39d2bae5eaeda9283535ddc98f1991c81ed5cd7e056167656e74700300753050000208000000006aa58586';
 
 /**
  * Serverless answers its first request cold and the facilitator handshake the paywall needs runs

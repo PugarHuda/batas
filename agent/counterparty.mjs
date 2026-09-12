@@ -152,6 +152,12 @@ async function main() {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     const m = decoded.mandate;
+    // Which position the decision is about. The free decode says where the bytes came from, and
+    // "given" means the caller pasted them — bytes are not a position, and a verdict about bytes
+    // must not be acted on against whatever happens to be newest on chain.
+    const decidedHash = typeof decoded.source === 'string' && decoded.source.startsWith('live position ')
+        ? decoded.source.slice('live position '.length)
+        : null;
     say('guarded', String(decoded.guarded));
     say('max input', m.maxAmountInFormatted ?? 'no cap');
     say('floor rate', m.minRateFormatted ?? 'no floor');
@@ -193,7 +199,7 @@ async function main() {
         console.log('  the terms are sound, the grant has been standing, and the name still holds.');
         console.log('\n  not paying: nothing is left that the operator\'s identity would change.');
         console.log('  run with --paranoid to buy the full answer anyway.');
-        await act({ floorRateE18: m.minRateE18, feedbackURI: pub.mirror });
+        await act({ floorRateE18: m.minRateE18, feedbackURI: pub.mirror, decidedHash });
         return;
     }
 
@@ -218,7 +224,7 @@ async function main() {
     console.log('');
     if (operator?.check?.vouched) {
         console.log('  the identity operating this position is held by the address that granted it.');
-        await act({ floorRateE18: m.minRateE18, feedbackURI: pub.mirror, agentId: operator?.agentId });
+        await act({ floorRateE18: m.minRateE18, feedbackURI: pub.mirror, agentId: operator?.agentId, decidedHash });
     } else {
         console.log('  the identity does not vouch for the maker. declining, and the tenth of a cent');
         console.log('  that established it was the cheapest part of this decision.');
@@ -237,7 +243,7 @@ async function main() {
  * with the maker's key is the maker, and a demonstration of two agents that shares one wallet is a
  * demonstration of one. Without `BATAS_COUNTERPARTY_KEY` it advises and says so.
  */
-async function act({ floorRateE18, feedbackURI, agentId } = {}) {
+async function act({ floorRateE18, feedbackURI, agentId, decidedHash } = {}) {
     if (!process.argv.includes('--trade')) {
         console.log('  it would trade. run with --trade to let it.');
         return;
@@ -256,6 +262,20 @@ async function act({ floorRateE18, feedbackURI, agentId } = {}) {
 
     const shipped = await latestProgramOnChain();
     if (!shipped) throw new Error('the position went away between deciding and acting');
+    // The trade goes to the position the verdict was about, or nowhere. `act` used to swap against
+    // whatever `latestProgramOnChain` returned — a renewal between deciding and acting, or a
+    // `--program` decision about pasted bytes, sent the trade to a position nobody had judged, and
+    // scored it against the wrong floor.
+    if (!decidedHash) {
+        console.log('  not trading: the verdict was about pasted bytes, not a shipped position.');
+        console.log('  run without --program to decide about the live position and act on it.');
+        return;
+    }
+    if (shipped.strategyHash.toLowerCase() !== decidedHash.toLowerCase()) {
+        console.log(`  not trading: the live position is now ${shipped.strategyHash}`);
+        console.log(`  and the verdict was about ${decidedHash}. decide again.`);
+        return;
+    }
     const [order] = decodeAbiParameters(
         parseAbiParameters('(address maker, uint256 traits, bytes data)'),
         shipped.strategy,

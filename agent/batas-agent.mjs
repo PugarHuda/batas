@@ -22,7 +22,7 @@ import { toProgram, decideMandate, decodeProgram, readMandate, volatilityBudget 
 import { programFromStrategy } from './inspect.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { publishMandate } from './hcs.mjs';
-import { AQUA, ROUTER, TOKENS, ENS_REGISTRY, MANDATE_NAME, SEPOLIA_RPC } from './deployment.mjs';
+import { AQUA, ROUTER, TOKENS, ENS_REGISTRY, MANDATE_NAME, SEPOLIA_RPC, HCS_TOPIC } from './deployment.mjs';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import 'dotenv/config';
@@ -213,8 +213,13 @@ async function tick({ watching = false, mayShip = true } = {}) {
             const batch = await pub.getLogs({ address: ROUTER, event: swappedEvent, fromBlock: from, toBlock: to });
             for (const l of batch) {
                 if (l.args.maker?.toLowerCase() !== account.address.toLowerCase()) continue;
+                // The mandate's own direction only. A trade the other way reports its rate in the
+                // other unit — A per B — and one of them among A-per-B rates read as a 7400bps move
+                // and pinned the budget at its ceiling. The router refuses that direction now, so
+                // this is belt and braces; belts are cheap.
+                if (l.args.tokenIn?.toLowerCase() !== TOKEN_A.toLowerCase()) continue;
                 if (!l.args.amountIn || l.args.amountIn === 0n) continue;
-                settledRates.push({ block: l.blockNumber, rate: (l.args.amountOut * E18) / l.args.amountIn });
+                settledRates.push({ block: l.blockNumber, index: l.logIndex ?? 0, rate: (l.args.amountOut * E18) / l.args.amountIn });
             }
             to = from - 1n;
             if (from === 0n) break;
@@ -223,7 +228,7 @@ async function tick({ watching = false, mayShip = true } = {}) {
         // History is an input to a better number, not a precondition for acting. A node that will
         // not serve the range leaves the budget at its floor rather than stopping the agent.
     }
-    settledRates.sort((a, b) => (a.block < b.block ? -1 : 1));
+    settledRates.sort((a, b) => (a.block === b.block ? a.index - b.index : (a.block < b.block ? -1 : 1)));
 
     const [reserveA, reserveB] = await pub.readContract({
         address: AQUA, abi: AQUA_ABI, functionName: 'safeBalances',
@@ -237,6 +242,7 @@ async function tick({ watching = false, mayShip = true } = {}) {
     // agent that does not consult it turns that control into decoration, so the check runs before
     // the transaction rather than after.
     let liveExpiry = null;
+    let nameExpiry = null;
     const ensRegistry = ENS_REGISTRY;
     if (ensRegistry) {
         const label = MANDATE_NAME;
@@ -260,6 +266,7 @@ async function tick({ watching = false, mayShip = true } = {}) {
             return { shipped: false, stopped: 'authority', reason: status.reason };
         }
         console.log(`  ${Math.floor(status.secondsLeft / 60)} minutes of authority left`);
+        nameExpiry = BigInt(status.expiry);
     } else {
         console.log('');
         console.log('no BATAS_ENS_REGISTRY set; skipping the mandate-name check');
@@ -298,7 +305,16 @@ async function tick({ watching = false, mayShip = true } = {}) {
     // Expiry is part of the grant, not decoration: a mandate with no deadline is authority with
     // no end. How long is the maker's call, not ours — an agent that picks its own term is
     // choosing the one limit it is least entitled to. Two hours is the default the demo shares.
-    const expiry = BigInt(Math.floor(Date.now() / 1000)) + MANDATE_HOURS * 3600n;
+    // No later than the name. The mandate compiles the name in, so a mandate that outlives the
+    // name is a position that becomes untradeable the moment the name lapses — and until the owner
+    // re-grants, `classifyName` reports that lapse as a revocation, because the name ended before
+    // the term it was granted for. The watch loop shipped exactly that on its second cycle. The
+    // agent may not extend its own authority, so the name's expiry is a ceiling, not a suggestion.
+    let expiry = BigInt(Math.floor(Date.now() / 1000)) + MANDATE_HOURS * 3600n;
+    if (nameExpiry !== null && nameExpiry < expiry) {
+        console.log(`  capped at the name's own expiry, ${new Date(Number(nameExpiry) * 1000).toISOString()}`);
+        expiry = nameExpiry;
+    }
     // The kill switch, compiled in rather than merely consulted.
     //
     // The check above is the agent choosing to obey; this is the settlement refusing without it.
@@ -314,6 +330,8 @@ async function tick({ watching = false, mayShip = true } = {}) {
         expiry,
         feeBps: FEE_BPS,
         salt: BigInt(Math.floor(Date.now() / 1000)),
+        tokenIn: TOKEN_A,
+        tokenOut: TOKEN_B,
         ...(ensRegistry
             ? { nameRegistry: getAddress(ensRegistry), nameHolder: account.address, nameLabel: MANDATE_NAME }
             : {}),
@@ -373,13 +391,19 @@ async function tick({ watching = false, mayShip = true } = {}) {
     //
     //    This runs after settlement on purpose: publishing a mandate that failed to ship would
     //    advertise authority that was never granted.
-    if (receipt.status !== 'success') return;
-    if (!process.env.BATAS_HCS_TOPIC) {
-        console.log('\nno BATAS_HCS_TOPIC set; the mandate was not published to Hedera');
-        return;
+    // Two early returns used to live here, and both were wrong in the same way: they left before
+    // the dock below ran and before the loop learned a ship had happened. With `BATAS_HCS_TOPIC`
+    // unset — the shape of a fresh clone, since deployment.mjs supplies a default this file was
+    // ignoring — every renewal left the previous position live and the ship budget never counted.
+    // A reverted ship returned undefined too, and the run reported success.
+    const ok = receipt.status === 'success';
+    if (!ok) {
+        console.error('\nthe ship reverted; nothing was granted and nothing will be docked');
+        if (!watching) process.exitCode = 1;
+        return { shipped: false, stopped: 'reverted' };
     }
     try {
-        const published = await publishMandate(null, {
+        const published = await publishMandate(HCS_TOPIC, {
             program, maker: account.address, app: ROUTER, chainId: sepolia.id, strategyHash: chainHash,
         });
         console.log(`\npublished to HCS topic ${published.topicId}`);
@@ -427,7 +451,12 @@ const argValue = (flag, fallback) => {
     return i === -1 ? fallback : process.argv[i + 1];
 };
 
-const RENEW_BEFORE = Number(process.env.BATAS_RENEW_BEFORE_SECONDS || argValue('--renew-before', 3600));
+const numberOr = (value, fallback, what) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) throw new Error(`${what} must be a non-negative number, got ${JSON.stringify(value)}`);
+    return n;
+};
+const RENEW_BEFORE = numberOr(process.env.BATAS_RENEW_BEFORE_SECONDS || argValue('--renew-before', 3600), 3600, '--renew-before');
 
 /**
  * The part that makes "an agent runs your position" true rather than aspirational.
@@ -442,8 +471,10 @@ const RENEW_BEFORE = Number(process.env.BATAS_RENEW_BEFORE_SECONDS || argValue('
  * polling two chains every second is not attentive, it is a denial of service with good intentions.
  */
 async function watch() {
-    const interval = Math.max(30, Number(argValue('--interval', 300)));
-    const budget = Number(argValue('--max-ships', 3));
+    // `--interval` as the last word on the line is Number(undefined) = NaN, and setTimeout(NaN)
+    // fires at once: a tight loop against two chains. Refused rather than defaulted.
+    const interval = Math.max(30, numberOr(argValue('--interval', 300), 300, '--interval'));
+    const budget = numberOr(argValue('--max-ships', 3), 3, '--max-ships');
     const willShip = process.argv.includes('--ship');
     console.log(`watching every ${interval}s; renewing inside ${RENEW_BEFORE}s of expiry`);
     console.log(willShip ? `ship budget ${budget}` : 'observing only; add --ship to let it act');

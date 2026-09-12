@@ -18,26 +18,31 @@ import {
 // the live position moves as mandates are renewed, and a fixture that chased it would test the
 // current chain state rather than the decoder.
 const LIVE_PROGRAM =
-    '0x212000000000000000056bc75e2d6310000000000000000000001a5e27eef13e00002005006a9da768700300753050000208000000006a9d8b48';
+    '0x212100000000000000006367be30fcbd45ea00000000000000001aeff914e72b45e8802005006acd0476222e945800bd6cdd60521b64a12d7b3f12fc90916a6b39d2bae5eaeda9283535ddc98f1991c81ed5cd7e056167656e74700300753050000208000000006aa58586';
 
 // And the one shipped before it, when script/Demo.s.sol chained instructions by hand and left
 // Deadline out. Kept because it is the real shape of the failure rather than a constructed one:
 // five terms look right, nothing errors, and the grant is permanent.
-const UNBOUNDED_PROGRAM =
-    '0x2120000000000000000579a814e10a74000000000000000000001aaa51121b231412700300753050000208000000006a9d5ef4';
+// The shape script/Demo.s.sol once shipped: every instruction but Deadline. Rebuilt with the
+// encoder rather than kept as the historical bytes, because those carried the 32-byte envelope the
+// router now refuses as truncated — the omission being pinned is the deadline, not the direction.
+const UNBOUNDED_PROGRAM = policyEnvelope(101n * 10n ** 18n, 1_920_000_000_000_000_000n, true)
+    + feeFlatIn(30_000).slice(2) + xycSwap().slice(2) + salt(7n).slice(2);
 
 test('decodes a program exactly as it was shipped', () => {
     const r = explain(LIVE_PROGRAM);
     assert.equal(r.guarded, true);
     assert.deepEqual(
         r.instructions.map((i) => i.name),
-        ['POLICY_ENVELOPE', 'DEADLINE', 'FEE_FLAT_IN', 'XYC_SWAP', 'SALT'],
+        ['POLICY_ENVELOPE', 'DEADLINE', 'MANDATE_NAME', 'FEE_FLAT_IN', 'XYC_SWAP', 'SALT'],
     );
-    assert.equal(r.mandate.maxAmountInFormatted, '100');
-    assert.equal(r.mandate.minRateFormatted, '1.9');
+    assert.equal(r.mandate.maxAmountInFormatted, '7.162902849964033514');
+    assert.equal(r.mandate.minRateFormatted, '1.941043832593008104');
     assert.equal(r.mandate.feePercent, 0.3);
     assert.equal(r.mandate.curve, 'constant product (x*y=k)');
-    assert.equal(r.mandate.expiryISO, '2026-09-06T17:48:24.000Z');
+    assert.equal(r.mandate.expiryISO, '2026-10-12T16:01:58.000Z');
+    assert.equal(r.mandate.direction, 'aToB');
+    assert.equal(r.mandate.killSwitch.label, 'agent');
 });
 
 test('the mandate that shipped without a deadline is reported as permanent', () => {
@@ -51,7 +56,7 @@ test('the mandate that shipped without a deadline is reported as permanent', () 
 
 test('round-trips every term it encodes', () => {
     const expiry = 1893456000; // 2030-01-01
-    const program = policyEnvelope(500n * 10n ** 18n, 1750000000000000000n)
+    const program = policyEnvelope(500n * 10n ** 18n, 1750000000000000000n, true)
         + deadline(expiry).slice(2)
         + feeFlatIn(30000).slice(2)
         + xycSwap().slice(2)
@@ -93,7 +98,7 @@ test('an unknown opcode is surfaced by number instead of being dropped', () => {
 test('PolicyEnvelope anywhere but first is reported as unguarded', () => {
     // The limits are present and correct, and still worthless: FeeFlatIn wraps what follows it,
     // so the envelope no longer contains the rest of the program.
-    const program = feeFlatIn(30000) + policyEnvelope(1n, 1n).slice(2) + xycSwap().slice(2);
+    const program = feeFlatIn(30000) + policyEnvelope(1n, 1n, true).slice(2) + xycSwap().slice(2);
     const r = explain(program);
     assert.equal(r.guarded, false);
     assert.equal(r.mandate.maxAmountIn, '1', 'the limit is still read');
@@ -110,30 +115,32 @@ test('a program with no envelope at all is called out on both limits', () => {
 });
 
 test('an expired deadline is called out', () => {
-    const program = policyEnvelope(1n, 1n) + deadline(1000000000).slice(2) + xycSwap().slice(2);
+    const program = policyEnvelope(1n, 1n, true) + deadline(1000000000).slice(2) + xycSwap().slice(2);
     const r = explain(program);
     assert.match(r.notes.join(' '), /already passed/);
 });
 
 test('a live deadline is not called out', () => {
     const future = Math.floor(Date.now() / 1000) + 3600;
-    const program = policyEnvelope(1n, 1n) + deadline(future).slice(2) + xycSwap().slice(2);
+    const program = policyEnvelope(1n, 1n, true) + deadline(future).slice(2) + xycSwap().slice(2);
     const r = explain(program);
     assert.equal(r.notes.length, 0);
     assert.equal(r.mandate.expiry, future);
 });
 
-test('PolicyEnvelope args are exactly 32 bytes', () => {
-    const built = policyEnvelope(1n, 1n);
-    // 1 opcode + 1 length + 32 args
-    assert.equal((built.length - 2) / 2, 34);
+test('PolicyEnvelope args are exactly 33 bytes', () => {
+    const built = policyEnvelope(1n, 1n, true);
+    // 1 opcode + 1 length + 32 args + 1 direction byte
+    assert.equal((built.length - 2) / 2, 35);
     assert.equal(built.slice(2, 4), '21');
-    assert.equal(built.slice(4, 6), '20');
+    assert.equal(built.slice(4, 6), '21');
+    assert.equal(built.slice(-2), '80', 'direction packs into the top bit, as LimitSwap packs its bool');
+    assert.equal(policyEnvelope(1n, 1n, false).slice(-2), '00');
 });
 
 test('a malformed PolicyEnvelope is refused rather than half-read', () => {
-    const bad = instruction(OP.POLICY_ENVELOPE, '0x0011'); // 2 arg bytes, not 32
-    assert.throws(() => readMandate(decodeProgram(bad)), /must carry 32 arg bytes/);
+    const bad = instruction(OP.POLICY_ENVELOPE, '0x0011'); // 2 arg bytes, not 33
+    assert.throws(() => readMandate(decodeProgram(bad)), /must carry 33 arg bytes/);
 });
 
 test('curves are named individually', () => {
@@ -153,7 +160,7 @@ test('a mandate with no deadline is called out, not passed over in silence', () 
     // instruction and left out Deadline, so every mandate it granted was permanent. The bytes
     // decoded perfectly and the report said nothing, which is worse than an error — a caller
     // paying for an explanation saw a bounded-looking position that could never be timed out.
-    const forever = policyEnvelope(100n * 10n ** 18n, 1_900_000_000_000_000_000n)
+    const forever = policyEnvelope(100n * 10n ** 18n, 1_900_000_000_000_000_000n, true)
         + feeFlatIn(30_000).slice(2) + xycSwap().slice(2) + salt(1n).slice(2);
     const { mandate, notes } = explain(forever);
 
@@ -166,7 +173,7 @@ test('a mandate with no deadline is called out, not passed over in silence', () 
 
 test('a live deadline draws neither the expired note nor the missing one', () => {
     const future = BigInt(Math.floor(Date.now() / 1000) + 3600);
-    const program = policyEnvelope(100n * 10n ** 18n, 1_900_000_000_000_000_000n)
+    const program = policyEnvelope(100n * 10n ** 18n, 1_900_000_000_000_000_000n, true)
         + deadline(future).slice(2) + feeFlatIn(30_000).slice(2) + xycSwap().slice(2) + salt(1n).slice(2);
     const { notes } = explain(program);
     assert.ok(!notes.some((n) => /never expires|already passed/.test(n)), JSON.stringify(notes));
@@ -180,7 +187,7 @@ test('a live deadline draws neither the expired note nor the missing one', () =>
 
 const live = (over = {}) => {
     const { fee = 30_000, seconds = 3600 } = over;
-    return policyEnvelope(100n * 10n ** 18n, 1_900_000_000_000_000_000n)
+    return policyEnvelope(100n * 10n ** 18n, 1_900_000_000_000_000_000n, true)
         + deadline(Math.floor(Date.now() / 1000) + seconds).slice(2)
         + feeFlatIn(fee).slice(2) + xycSwap().slice(2) + salt(1n).slice(2);
 };
@@ -248,6 +255,8 @@ test('a mandate carrying a kill switch reports who may end it, and where', () =>
     const registry = '0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B';
     const holder = '0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E';
     const program = toProgram({
+        tokenIn: '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B',
+        tokenOut: '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81',
         maxAmountIn: 100n * 10n ** 18n,
         minRateE18: 1_900_000_000_000_000_000n,
         expiry: Math.floor(Date.now() / 1000) + 3600,
@@ -295,6 +304,8 @@ test('every mandate the encoder can build, the decoder reads back unchanged', ()
 
     for (let i = 0; i < 500; i++) {
         const terms = {
+            tokenIn: '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B',
+            tokenOut: '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81',
             maxAmountIn: pick(10n ** 24n),
             minRateE18: pick(10n ** 22n),
             expiry: Math.floor(rand() * MAX_ENCODABLE_EXPIRY),
@@ -309,6 +320,8 @@ test('every mandate the encoder can build, the decoder reads back unchanged', ()
         assert.equal(back.feeBps, terms.feeBps, `fee survived? ${shown}`);
         assert.equal(back.salt, terms.salt.toString(), `salt survived? ${shown}`);
         assert.equal(back.curve, 'constant product (x*y=k)', `curve survived? ${shown}`);
+        assert.equal(back.direction, 'aToB', `direction survived? ${shown}`);
+        assert.equal(back.direction, 'aToB', `direction survived? ${shown}`);
     }
 });
 
@@ -317,6 +330,8 @@ test('the encoder refuses terms the program cannot carry', () => {
     // fence and the two must decline the same inputs, or the agent can ship what the contracts
     // would never emit.
     const terms = {
+        tokenIn: '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B',
+        tokenOut: '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81',
         maxAmountIn: 100n * 10n ** 18n,
         minRateE18: 1_900_000_000_000_000_000n,
         expiry: Math.floor(Date.now() / 1000) + 3600,
@@ -333,4 +348,23 @@ test('the encoder refuses terms the program cannot carry', () => {
 
     assert.throws(() => toProgram({ ...terms, feeBps: Number(BPS) }), /takes the whole input/);
     assert.ok(toProgram({ ...terms, feeBps: Number(BPS) - 1 }), 'a fee just under the basis compiles');
+});
+
+test('the direction is a term, read back and refused when missing', () => {
+    // The envelope shipped without it once, and three readers found the hole the same afternoon.
+    const aToB = policyEnvelope(1n, 1n, true) + xycSwap().slice(2);
+    const bToA = policyEnvelope(1n, 1n, false) + xycSwap().slice(2);
+    assert.equal(explain(aToB).mandate.direction, 'aToB');
+    assert.equal(explain(bToA).mandate.direction, 'bToA');
+
+    // An encoder that is not told the direction must not guess it.
+    assert.throws(() => policyEnvelope(1n, 1n), /needs a direction/);
+    assert.throws(
+        () => toProgram({ maxAmountIn: 1n, minRateE18: 1n, expiry: 1_800_000_000, feeBps: 0, salt: 1n }),
+        /needs tokenIn and tokenOut/,
+    );
+
+    // And the 32-byte shape it used to ship in is refused, exactly as the router refuses it.
+    const legacy = instruction(OP.POLICY_ENVELOPE, '0x' + '00'.repeat(32)) + xycSwap().slice(2);
+    assert.throws(() => explain(legacy), /33 arg bytes/);
 });

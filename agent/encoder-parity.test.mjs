@@ -64,6 +64,9 @@ test('the Solidity dumper produced cases to compare against', () => {
 for (const c of cases) {
     test(`encoders agree byte for byte: ${c.label}`, () => {
         const fromJs = toProgram({
+            // DumpPrograms.s.sol builds every case with tokenIn 0x1111 and tokenOut 0x2222.
+            tokenIn: '0x0000000000000000000000000000000000001111',
+            tokenOut: '0x0000000000000000000000000000000000002222',
             maxAmountIn: c.maxAmountIn,
             minRateE18: c.minRateE18,
             expiry: c.expiry,

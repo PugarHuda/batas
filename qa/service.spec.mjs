@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 // still see a plausible response.
 
 const LIVE_PROGRAM =
-    '0x2120000000000000000579a814e10a74000000000000000000001aaa51121b2314122005006a9d899a700300753050000208000000006a9d6d7a';
+    '0x212100000000000000006367be30fcbd45ea00000000000000001aeff914e72b45e8802005006acd0476222e945800bd6cdd60521b64a12d7b3f12fc90916a6b39d2bae5eaeda9283535ddc98f1991c81ed5cd7e056167656e74700300753050000208000000006aa58586';
 
 const decodeRequirement = (header) => JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
 
@@ -83,6 +83,17 @@ test('the payment requirement is stable across calls', async ({ request }) => {
     const a = decodeRequirement(first.headers()['payment-required']);
     const b = decodeRequirement(second.headers()['payment-required']);
     expect(a.accepts[0]).toEqual(b.accepts[0]);
+});
+
+test('the 402 names the resource the manifest names, scheme included', async ({ request }) => {
+    // The middleware derives `resource.url` from req.protocol unless told otherwise, and behind a
+    // proxy that is `http`. Two names for one resource is what an indexer would have stored.
+    const res = await request.post('/v1/mandate/explain', { data: { program: LIVE_PROGRAM } });
+    expect(res.status()).toBe(402);
+    const requirement = decodeRequirement(res.headers()['payment-required']);
+    const manifest = await (await request.get('/.well-known/x402')).json();
+    expect(requirement.resource.url).toBe(manifest.resources[0].url);
+    expect(requirement.resource.url).toMatch(/^https:\/\//);
 });
 
 test('the discovery manifest is free, well formed, and outside the paywall', async ({ request }) => {

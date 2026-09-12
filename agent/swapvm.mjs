@@ -62,8 +62,22 @@ export const instruction = (opcode, args = '0x') => {
     return concat([toHex(opcode, { size: 1 }), toHex(len, { size: 1 }), args]);
 };
 
-export const policyEnvelope = (maxAmountIn, minRateE18) =>
-    instruction(OP.POLICY_ENVELOPE, concat([pad(toHex(maxAmountIn), { size: 16 }), pad(toHex(minRateE18), { size: 16 })]));
+/**
+ * Cap, floor, and the direction the terms are denominated in.
+ *
+ * `direction` is `tokenIn < tokenOut` for the mandate's own tokens, packed the way `LimitSwap`
+ * packs its bool: top bit of one byte. It is required, not defaulted — the envelope shipped without
+ * it once, and a default of `true` would let a caller who forgot the tokens compile the same hole
+ * back in with no error to notice.
+ */
+export const policyEnvelope = (maxAmountIn, minRateE18, direction) => {
+    if (typeof direction !== 'boolean') throw new Error('policyEnvelope needs a direction: tokenIn < tokenOut');
+    return instruction(OP.POLICY_ENVELOPE, concat([
+        pad(toHex(maxAmountIn), { size: 16 }),
+        pad(toHex(minRateE18), { size: 16 }),
+        direction ? '0x80' : '0x00',
+    ]));
+};
 export const deadline = (unixTs) => instruction(OP.DEADLINE, pad(toHex(unixTs), { size: 5 }));
 export const feeFlatIn = (feeBps) => instruction(OP.FEE_FLAT_IN, pad(toHex(feeBps), { size: 3 }));
 export const xycSwap = () => instruction(OP.XYC_SWAP);
@@ -99,7 +113,9 @@ export const mandateName = (registry, holder, label) => {
  * after it, Deadline for the expiry term, then the fee ahead of the curve so the swap prices the
  * amount actually being exchanged, then Salt so identical terms can be shipped again.
  */
-export const toProgram = ({ maxAmountIn, minRateE18, expiry, feeBps, salt: saltValue, nameRegistry, nameHolder, nameLabel }) => {
+export const toProgram = ({ maxAmountIn, minRateE18, expiry, feeBps, salt: saltValue, tokenIn, tokenOut, nameRegistry, nameHolder, nameLabel }) => {
+    if (!tokenIn || !tokenOut) throw new Error('toProgram needs tokenIn and tokenOut; the direction is a term of the mandate');
+    const direction = BigInt(tokenIn) < BigInt(tokenOut);
     // The same two refusals MandateLib.toProgram makes, for the same reason: a term the program
     // cannot carry must not be quietly turned into a different one. Without these, viem would
     // still refuse the oversized expiry — but as a padding error about byte widths, which sends a
@@ -111,7 +127,7 @@ export const toProgram = ({ maxAmountIn, minRateE18, expiry, feeBps, salt: saltV
         throw new Error(`fee ${feeBps} takes the whole input; it must be under the ${BPS} basis`);
     }
     return concat([
-        policyEnvelope(maxAmountIn, minRateE18),
+        policyEnvelope(maxAmountIn, minRateE18, direction),
         deadline(expiry),
         // Same position as MandateLib puts it: after the deadline, so a lapsed mandate fails on
         // arithmetic before anything pays for three external calls, and before the curve.
@@ -295,14 +311,18 @@ export function decodeProgram(program) {
  * null rather than as a default, because "no cap" and "a cap of zero" are very different claims.
  */
 export function readMandate(instructions) {
-    const terms = { maxAmountIn: null, minRateE18: null, expiry: null, feeBps: null, curve: null, salt: null, name: null };
+    const terms = { maxAmountIn: null, minRateE18: null, expiry: null, feeBps: null, curve: null, salt: null, name: null, direction: null };
 
     for (const ins of instructions) {
         switch (ins.opcode) {
             case OP.POLICY_ENVELOPE:
-                if (ins.args.length !== 64) throw new Error('PolicyEnvelope must carry 32 arg bytes');
+                // 33 bytes: cap, floor, and one byte of direction. A 32-byte envelope is the shape
+                // this instruction shipped in before the direction was a term, and the router now
+                // refuses it as truncated; so does this.
+                if (ins.args.length !== 66) throw new Error('PolicyEnvelope must carry 33 arg bytes');
                 terms.maxAmountIn = hexToBig(ins.args.slice(0, 32));
                 terms.minRateE18 = hexToBig(ins.args.slice(32, 64));
+                terms.direction = (parseInt(ins.args.slice(64, 66), 16) & 0x80) !== 0 ? 'aToB' : 'bToA';
                 break;
             case OP.DEADLINE:
                 terms.expiry = Number(hexToBig(ins.args));
@@ -437,6 +457,10 @@ export function explain(program) {
             feePercent: t.feeBps === null ? null : (t.feeBps / Number(BPS)) * 100,
             curve: t.curve,
             salt: t.salt,
+            // Which way the terms are denominated. The other direction is refused outright; a
+            // report that showed a cap without saying which token it is a cap on would be showing
+            // half a number.
+            direction: t.direction,
             // Reported as a fact rather than remarked on.
             //
             // The notes above are for terms that are present and do not limit, and a reader could

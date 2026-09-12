@@ -115,7 +115,7 @@ library MandateLib {
             : MandateName.build(m.nameRegistry, m.nameHolder, m.nameLabel);
 
         return bytes.concat(
-            PolicyEnvelope.build(m.maxAmountIn, m.minRateE18),
+            PolicyEnvelope.build(m.maxAmountIn, m.minRateE18, m.tokenIn < m.tokenOut),
             Deadline.build(uint40(m.expiry)),
             nameCheck,
             FeeFlatIn.build(m.feeBps),

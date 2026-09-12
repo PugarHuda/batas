@@ -16,6 +16,7 @@ import { BatasRouter } from "../src/BatasRouter.sol";
 import { IBatasCallback } from "../src/IBatasCallback.sol";
 import { Mandate, MandateLib } from "../src/Mandate.sol";
 import { MandateName } from "../src/MandateName.sol";
+import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
 
 /// @notice The three questions `MandateName` asks an ENSv2 registry, and nothing else.
 /// @dev Modelled on the real one's behaviour rather than on a convenient one: `unregister` sets the
@@ -29,6 +30,9 @@ contract MandateRegistryMock {
 
     function grant(string memory label, address owner, uint64 expiry) external {
         bytes32 k = keccak256(bytes(label));
+        bool known;
+        for (uint256 i; i < _labels.length; i++) if (keccak256(bytes(_labels[i])) == k) known = true;
+        if (!known) _labels.push(label);
         // Low 32 bits cleared, exactly as the real registry does, and a version counter in them
         // that re-registration bumps — which is what makes deriving the id from the label alone
         // wrong, and asking the registry right.
@@ -49,7 +53,34 @@ contract MandateRegistryMock {
 
     function findExpiry(string calldata label) external view returns (uint64) { return _expiry[keccak256(bytes(label))]; }
     function findTokenId(string calldata label) external view returns (uint256) { return _id[keccak256(bytes(label))]; }
-    function ownerOf(uint256 tokenId) external view returns (address) { return _owner[tokenId]; }
+
+    /// @dev What the real registry does and the earlier check ignored: `ownerOf` is gated on
+    ///   expiry and answers zero for a lapsed name; `getState`'s `latestOwner` is the raw owner.
+    ///   Mirroring that here is what makes the lapsed test below reach `MandateNameLapsed`.
+    function ownerOf(uint256 tokenId) external view returns (address) {
+        for (uint256 i; i < _labels.length; i++) {
+            bytes32 k = keccak256(bytes(_labels[i]));
+            if (_id[k] == tokenId) return _expiry[k] <= block.timestamp ? address(0) : _owner[tokenId];
+        }
+        return address(0);
+    }
+
+    function getState(uint256 anyId)
+        external
+        view
+        returns (uint64 expiry, uint256 tokenId, uint256 resource, address latestOwner, uint8 status)
+    {
+        bytes32 k = bytes32(anyId & ~uint256(0xffffffff));
+        for (uint256 i; i < _labels.length; i++) {
+            bytes32 lk = keccak256(bytes(_labels[i]));
+            if ((uint256(lk) & ~uint256(0xffffffff)) == uint256(k)) {
+                return (_expiry[lk], _id[lk], 0, _owner[_id[lk]], 0);
+            }
+        }
+        return (0, 0, 0, address(0), 0);
+    }
+
+    string[] private _labels;
 }
 
 /// @notice Proves the two enforcement surfaces are one system.
@@ -238,6 +269,12 @@ contract MandateAgreementTest is Test, IBatasCallback {
     }
 
     function _takerData() internal view returns (bytes memory) {
+        return _takerData(true);
+    }
+
+    /// @dev `isAToB` is the taker's choice, and the one dimension every test here used to hold
+    ///   fixed. A mandate is denominated in one direction; the VM has to refuse the other.
+    function _takerData(bool aToB) internal view returns (bytes memory) {
         return TakerTraitsLib.build(
             TakerTraitsLib.Args({
                 taker: address(this),
@@ -246,7 +283,7 @@ contract MandateAgreementTest is Test, IBatasCallback {
                 isStrictThresholdAmount: false,
                 isFirstTransferFromTaker: true,
                 useTransferFromAndAquaPush: true,
-                isAToB: true,
+                isAToB: aToB,
                 allowPartialFill: false,
                 threshold: "",
                 to: address(this),
@@ -465,6 +502,26 @@ contract MandateAgreementTest is Test, IBatasCallback {
         assertGt(app.quote(m, 10e18), 0);
         (, uint256 fromVm,) = router.quote(order, 10e18, _takerData());
         assertGt(fromVm, 0);
+    }
+
+    /// @notice The reverse direction is refused by the VM, because the app cannot even express it.
+    /// @dev Three independent readers found this the same afternoon, with a probe: a mandate "sell
+    ///   A for B, cap 100 A, floor 0.4" let a taker send 90 B and take 42.94 A, the cap applied to
+    ///   the wrong token and the floor reduced to a comparison between two units. On the demo pair
+    ///   the reverse trade was refused by luck of the numbers (1/2.0 is under 1.9), which is not
+    ///   the same as being refused. `BatasApp.swap` sells `m.tokenIn` and nothing else, so on the
+    ///   app surface the reverse trade does not exist; the VM surface has to say the same.
+    function testFuzz_TheReverseDirectionIsRefused(uint128 rawCap, uint128 rawFloor, uint96 rawAmount) public {
+        uint128 cap = uint128(bound(rawCap, 1, 800e18));
+        uint128 floorRate = uint128(bound(rawFloor, 0, 3e18));
+        uint256 amountIn = bound(rawAmount, 1, 800e18);
+
+        Mandate memory m = _mandate(cap, floorRate);
+        ISwapVM.Order memory order = _shipBoth(m);
+
+        bytes memory reverse = _takerData(false);
+        vm.expectPartialRevert(PolicyEnvelope.MandateDirectionMismatch.selector);
+        router.quote(order, amountIn, reverse);
     }
 
     /// @notice A mandate whose floor is unreachable must be refused by both, never by one.
