@@ -5,86 +5,82 @@ commit here is 6 September, so this is a **Classic (from scratch)** project, not
 
 ---
 
-## The form
+## The form, field by field
 
-**Title**
+These are the fields the Hacker Dashboard actually asks for, in its order. Paste as-is.
+
+**Project name**
 
 ```
 Batas
 ```
 
-**Short description**
+**Category** — `DeFi`
+
+**Emoji** — `🛑` (the mandate refuses; the field defaults to a placeholder that should not stay)
+
+**Demonstration link**
 
 ```
-Scoped, expiring authority for an autonomous market maker — enforced by the only contract
-allowed to touch the maker's tokens, not by the app that shipped it.
+https://batas-one.vercel.app
 ```
 
-**Description**
+**Short description** — 87 of the 100 characters allowed
 
 ```
-1inch Aqua is a shared liquidity layer where the maker never deposits anything. Tokens stay in
-their wallet and Aqua pulls from it at settlement. Aqua.pull() checks nothing beyond msg.sender,
-so whichever app you ship to may take your tokens: the entire security model is "you trust the
-app you ship to". Hand that app to an autonomous agent and the question gets sharp — what stops
-it, and where is the stop enforced?
-
-Batas answers with a mandate: a size cap, a floor price and an expiry, enforced in the two places
-that actually gate the money.
-
-The mandate IS the Aqua strategy. Aqua.ship() hashes the strategy bytes, and Batas passes the
-encoded mandate as those bytes, so the mandate hash and the strategy hash are the same value. The
-terms are not metadata attached to the position, they are its identity — and Aqua refuses to
-re-ship a hash it has seen, so they cannot be rewritten afterwards.
-
-The limits are checked twice. BatasApp validates them before AQUA.pull(), because after pull() the
-tokens have already left. And PolicyEnvelope, a new SwapVM instruction in the third-party opcode
-slot 0x21, wraps the rest of the program: it delegates to runLoop() and inspects the settled
-registers when that returns, the same way 1inch's own fee instructions are built. Placed first it
-is the outermost frame, so a fee appended behind the curve cannot push the amounts back out of
-bounds after the guard has passed. A 2000-run fuzz proves the two surfaces price and refuse
-identically across all five terms — it found a one-second disagreement on the expiry boundary,
-which is fixed and pinned.
-
-The agent reads the live position, derives a floor from observed spot, compiles the SwapVM program
-itself and checks its own bytes against the deployed router's hash before shipping. Its authority
-is an ENSv2 subname: expiring, revocable, soulbound, and scoped by a role bitmap that withholds
-transfer, unregister, renew and registrar. The agent consults it before acting, so revoking the
-name stops it without touching the position or spending gas.
-
-Every grant is published to Hedera Consensus Service, and a paid x402 endpoint on Hedera sells the
-one answer a counterparty cannot compute alone: what a program's bytes actually permit, when those
-exact bytes became public, and whether the ERC-8004 identity claiming to operate the position is
-held by the address that granted it. Decoding is free arithmetic; provenance and identity are not.
-The service is reachable from MCP, and three of its four tools are free — an assistant can
-establish for nothing whether a mandate was published and whether the agent is still authorised,
-then decide the full answer is worth 0.001 HBAR.
-
-Everything is live on Sepolia and Hedera testnet. A README suite walks the document and asks the
-chain about every address, transaction, topic and timestamp it points at, and a deployment check
-compares the bytecode on Sepolia against this repository's build byte for byte.
+An autonomous market maker on 1inch Aqua that cannot exceed the mandate it was granted.
 ```
 
-**Repository**
+**Description** — 4,629 characters against a 280 minimum
 
 ```
-https://github.com/PugarHuda/batas
+1inch Aqua is a shared liquidity layer where the maker never deposits anything. Tokens stay in their own wallet, Aqua keeps a ledger of allowances, and it pulls directly from that wallet at settlement. That removes custody risk and concentrates a different one, because Aqua.pull() checks nothing beyond msg.sender. Whichever app the maker ships to may take their tokens. The entire security model is one sentence: you trust the app you ship to. Hand that app to an autonomous agent and the question gets sharp — what stops it, and where is the stop enforced? Most agent tooling answers "in the application layer", which means nowhere, because anyone can call the contract directly and skip your checks.
+
+Batas answers with a mandate: a size cap, a floor price, and an expiry.
+
+The mandate IS the Aqua strategy. Aqua.ship() hashes the strategy bytes you hand it, and Batas passes the encoded mandate as those bytes, so the mandate hash and the strategy hash are the same value. The terms are not metadata attached to the position — they are its identity. An attacker can compile a program with the limits removed, but that is a different strategy hash, and the maker never shipped a token to it.
+
+The limits are checked in the two places that gate the money. BatasApp validates them before AQUA.pull(), because after pull() the tokens have already left. And PolicyEnvelope, a new SwapVM instruction at third-party opcode slot 0x21, wraps the rest of the program: it delegates to runLoop() and inspects the settled registers when that returns. Placed first it is the outermost frame, so a fee appended behind the curve cannot push the amounts back out of bounds after the guard has passed, and in exactOut mode — where the input is only final once the curve has run — placement stops being something a program author can silently get wrong. It costs 933 gas.
+
+What that is worth, measured rather than asserted: the same attacker against the same reserves, twice. Under a mandate, two trades at an average rate of 1.662 and 83% of the position still there. With no mandate, sixty-four trades at 0.270 — a seventh of where the pool opened — and it is gutted. Every one of those was an ordinary constant-product swap that no application-layer check was there to stop.
+
+A second instruction at slot 0x22 makes the kill switch binding. The agent's authority is an ENSv2 subname: expiring, with the expiry compiled into the program's own deadline; revocable, because the grantor keeps ROLE_UNREGISTER; soulbound, because ROLE_CAN_TRANSFER_ADMIN is withheld. MandateName reads that registry during settlement, so revoking the name reverts the swap for every caller rather than only stopping an agent polite enough to ask. agent/killswitch.mjs --prove demonstrates it live: quote the position, revoke, quote again and get MandateNameNotHeld from a caller that has never heard of ENS, re-grant, and the position comes back at the same price.
+
+The agent reads the live position, derives its floor from measured price movement rather than a constant, compiles the SwapVM program itself, checks its bytes against the deployed router's hash before shipping, and publishes the grant to Hedera Consensus Service. Run with --watch it keeps running the position: it renews inside the expiry window, docks the mandate it replaces, and stops acting the moment the name is revoked without needing to be restarted by the person who just stopped it.
+
+A paid x402 endpoint on Hedera sells the one answer a counterparty cannot assemble alone: the decoded terms, the consensus timestamp on which those exact bytes became public, and the ERC-8004 identity behind the position with a check that it is held by the address that granted the mandate. Three of the four questions are free, deliberately — an agent should be able to refuse a position for nothing. agent/counterparty.mjs is that second agent: it finds the service through the host's own x402 discovery manifest, asks the free questions, walks away for free from a position it does not like, and pays a tenth of a cent only when a real doubt remains. Then it trades, and writes what it saw into ERC-8004's reputation registry — 143 basis points above the floor the mandate advertised. The registry refuses feedback from the agent's own owner, which is what makes that number worth reading.
+
+Everything is live on Sepolia and Hedera testnet, and the repository is held to it: a README suite walks the document and asks the chain about every address, transaction, topic and timestamp it points at, and a deployment check compares the bytecode on Sepolia against this repository's build byte for byte.
 ```
 
-**How it's made** — the three things worth telling a judge that the description does not:
+**How it's made** — 4,890 characters against a 280 minimum
 
-- `AquaOpcodes`, not `Opcodes`: the full instruction set puts the router at 28,618 bytes against
-  EIP-170's 24,576 and it cannot be deployed at all. Not `OpcodesDebug` either — it overrides
-  `_runOpcode` without re-declaring it `virtual`, so custom opcodes and debug opcodes are mutually
-  exclusive.
-- The official Hedera x402 proof of concept points its *testnet* config at x402.org and reaches for
-  Blocky402 only on mainnet. Copy it as-is and you settle through the wrong facilitator with
-  everything appearing to work.
-- ENSv2's `UserRegistry` token id is the labelhash with its low 32 bits cleared — a version counter
-  it bumps on re-registration. A plain `keccak256(label)` asks about a token that does not exist,
-  and the zero address that comes back reads as *revoked* rather than as a wrong question.
+```
+Solidity 0.8.30 with Foundry, via_ir, pinned to forge 1.8.0. Contracts: a Mandate struct and library, BatasApp (an Aqua application), PolicyEnvelope and MandateName (two new SwapVM instructions), and BatasRouter, a redeployment of SwapVM carrying both. Nothing in node_modules/@1inch/** is edited; the 1inch track permits redeploying a modified SwapVM. Off chain it is Node 24 and viem, an Express service on Vercel Functions, and an MCP server over stdio.
 
----
+Two things about extending SwapVM that were learned the hard way. Extend AquaOpcodes, not Opcodes: the full set carries 24 instructions an Aqua strategy never reaches for, including every balance instruction, because in Aqua mode balances come from Aqua rather than from bytecode — carrying them puts the router at 28,618 bytes against EIP-170's 24,576 and it cannot be deployed at all. And not OpcodesDebug either, which overrides _runOpcode without re-declaring it virtual, so it is terminal: you can have custom opcodes or debug opcodes, not both.
+
+The hacky part worth mentioning is the guard's own argument handling. InstructionArgs.at is a raw calldataload and 1inch documents plainly that the library does no bounds validation. For a fee or a curve that is a fair trade, because a misparse produces a visibly wrong price. For an instruction whose job is to refuse it produces a guard that passes, which is silent by construction: a PolicyEnvelope declaring sixteen argument bytes instead of thirty-two reads its floor out of the next instruction's bytes, and one that is last in the program reads past order.data entirely. Both instructions check their length. That finding is written up in UPSTREAM.md as a documentation suggestion for swap-vm.
+
+A fuzz of 2000 runs compares the two enforcement surfaces on all five terms — it used to hold expiry and feeBps fixed, which excused the two most able to disagree, and unfixing them found a real one-second disagreement at the expiry boundary: SwapVM's Deadline is block.timestamp <= deadline and BatasApp was <, so for one second a mandate authorised a trade through the VM and refused it through the app.
+
+Hedera: x402 through the Blocky402 facilitator, priced in HBAR rather than USDC because an HTS token must be associated with an account before it can be received, and that is one more step between a caller and an answer. Note that the official Hedera x402 proof of concept points its testnet config at x402.org and reaches for Blocky402 only on mainnet; Blocky402 does serve hedera:testnet, at api.testnet.blocky402.com, whose /supported sits at the root rather than under /v1. Copy the PoC as-is and you settle through the wrong facilitator with everything appearing to work. Grants and revocations are both published to a Hedera Consensus Service topic, readable by anyone with no account, because a ledger carrying only grants is the optimistic half of the story.
+
+ENSv2 on Sepolia, through a UserRegistry proxy deployed by ENS's own VerifiableFactory. The registry's token id is the labelhash with its low 32 bits cleared — those hold a version counter it bumps on re-registration — so a plain keccak256(label) asks about a token that does not exist, and the zero address that comes back reads as revoked rather than as a wrong question. Both the off-chain reader and the on-chain instruction call findTokenId instead. Revocation also sets a name's expiry to the moment it happened rather than zeroing it, so a name the owner pulled and one that ran out are indistinguishable by timestamp; ownership is checked before expiry, because burning clears the owner and lapsing does not.
+
+ERC-8004 identity and reputation, both on Sepolia. Two addresses circulate for these registries and the ones in most write-ups hold code on mainnet only, reading as empty on Sepolia — which looks exactly like a correct address for an unregistered agent. The reputation registry needed the same care: the address that circulates begins 0x8004B663056e9e57 and the live one begins 0x8004B663056A597D. What settles it is that getIdentityRegistry() on it answers with the identity registry this project already uses. The registration is a data: URI rather than a hosted link, because the point of an identity registry is that the answer survives.
+
+Two implementation notes on reading chains that cost real time. Aqua's Shipped event indexes nothing at all — maker, app, strategy hash and strategy bytes all sit in the data — so a node cannot filter it and every consumer sifts client-side. And ethereum-sepolia-rpc.publicnode.com fronts a pool whose backends do not all hold the same receipts: asked eight times for a transaction demonstrably on the canonical chain, it answered seven, which turned the README suite red with a false claim about the chain. Measured five calls each before switching to rpc.sepolia.ethpandaops.io, which was 5/5 up at 532ms against publicnode's 4/5 at 1680ms.
+```
+
+**GitHub repository** — `PugarHuda/batas`, marked Primary. It is public, and the Hedera and 1inch
+tracks both require that.
+
+**The rules the form restates, and where this stands on each:** started from scratch — first
+commit 6 September, the event opened on the 4th; version control with frequent commits — 60-odd
+across the event, each one a single argued change; public repository — yes; video under four
+minutes with no speed-ups — the script below targets 3:45 and says which two beats to cut rather
+than accelerate.
 
 ## Partner prizes — pick these three
 
