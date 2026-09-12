@@ -44,6 +44,9 @@ export function createServer() {
         'read_mandate',
         {
             title: 'Read a mandate from its bytes',
+            // Unannotated, a tool is presumed destructive and non-idempotent by clients that honour
+            // hints — the spec's defaults — so a free read looked like a write until this was said.
+            annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
             description:
                 'Decode a SwapVM program into the limits it enforces: the size cap, the floor price, the'
                 + ' expiry, the fee and the curve. Free — this is arithmetic on bytes you already hold.'
@@ -64,6 +67,9 @@ export function createServer() {
         'check_publication',
         {
             title: 'Check when a mandate was published',
+            // Unannotated, a tool is presumed destructive and non-idempotent by clients that honour
+            // hints — the spec's defaults — so a free read looked like a write until this was said.
+            annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
             description:
                 'Ask Hedera Consensus Service when these exact bytes were first published, and by whom.'
                 + ' Free, and read from a public mirror node rather than from us. A program that decodes'
@@ -85,6 +91,9 @@ export function createServer() {
         'check_agent_authority',
         {
             title: 'Check whether the agent is still authorised',
+            // Unannotated, a tool is presumed destructive and non-idempotent by clients that honour
+            // hints — the spec's defaults — so a free read looked like a write until this was said.
+            annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
             description:
                 'Read the ENSv2 mandate name that gates the agent. Free. Returns whether the name is held'
                 + ' and unexpired, and if not, whether it lapsed or was revoked ahead of its term — the'
@@ -115,7 +124,7 @@ export function createServer() {
                 + ' THIS SPENDS MONEY — one payment per call, capped at 0.01 HBAR by the client. Prefer'
                 + ' the free tools first and reach for this when the operator behind a position matters.',
             inputSchema: { program: z.string().optional().describe('0x SwapVM instruction stream') },
-            annotations: { readOnlyHint: false, openWorldHint: true },
+            annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
         },
         async ({ program }) => {
             try {

@@ -249,6 +249,40 @@ contract PolicyEnvelopeTest is Test {
         swapVM.swap(order, 10e18, takerData);
     }
 
+    /// @notice Two envelopes compose, and the tighter one wins whichever is outer.
+    /// @dev This is what a wrapping instruction buys that a sequential check cannot: a delegation
+    ///   chain for free. A DAO's terms outside, the agent's tighter terms inside — or the other way
+    ///   round — and the inner can never exceed the outer, because both frames judge the same
+    ///   settled registers. Nothing in the contracts was written for this; it falls out.
+    function test_NestedEnvelopesCanOnlyTighten() public {
+        // Outer wide, inner tight: the inner cap binds.
+        bytes memory innerTight = bytes.concat(
+            PolicyEnvelope.build(1_000e18, 0, true),
+            PolicyEnvelope.build(100e18, 1.9e18, true),
+            FeeFlatIn.build(0.003e7),
+            XYCSwap.build()
+        );
+        ISwapVM.Order memory a = _order(innerTight);
+        _ship(a);
+        (, uint256 out,) = swapVM.quote(a, 10e18, _takerData());
+        assertGt(out, 19e18, "inside both limits settles");
+        bytes memory td = _takerData();
+        vm.expectPartialRevert(PolicyEnvelope.MandateAmountInExceeded.selector);
+        swapVM.quote(a, 150e18, td);
+
+        // Outer tight, inner wide: the outer cap binds, and the inner cannot loosen it.
+        bytes memory outerTight = bytes.concat(
+            PolicyEnvelope.build(100e18, 1.9e18, true),
+            PolicyEnvelope.build(1_000e18, 0, true),
+            FeeFlatIn.build(0.003e7),
+            XYCSwap.build()
+        );
+        ISwapVM.Order memory b = _order(outerTight);
+        _ship(b);
+        vm.expectPartialRevert(PolicyEnvelope.MandateAmountInExceeded.selector);
+        swapVM.quote(b, 150e18, td);
+    }
+
     /// @notice What the guard costs, measured rather than asserted to be small.
     /// @dev A policy nobody can afford to enforce is a policy nobody enforces. Two settlements over
     ///   the same reserves and the same trade, one with the envelope wrapped around the program and

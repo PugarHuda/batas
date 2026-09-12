@@ -47,6 +47,14 @@ const resourceServer = new x402ResourceServer(new HTTPFacilitatorClient({ url: F
     .register('hedera:*', new ExactHederaScheme({}));
 
 const app = express();
+app.disable('x-powered-by');
+app.use((_req, res, next) => {
+    // The parts nobody draws. A JSON API has no scripts to protect, but a page is served from the
+    // same origin, and these cost nothing to state.
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Referrer-Policy', 'no-referrer');
+    next();
+});
 app.use(express.json({ limit: '256kb' }));
 
 // Body parsing fails before any route sees the request, and Express answers those with an HTML
@@ -59,6 +67,11 @@ app.use((err, _req, res, next) => {
     }
     if (err?.type === 'entity.too.large') {
         return res.status(413).json({ error: 'body must be under 256kb', limit: err.limit });
+    }
+    // Every other body-parser failure — a Content-Encoding it cannot decode, a charset it does not
+    // know — carried an HTTP status and answered as Express's HTML page. Same rule as the two above.
+    if (Number.isInteger(err?.status) && err.status >= 400 && err.status < 500) {
+        return res.status(err.status).json({ error: err.type ?? 'bad request' });
     }
     return next(err);
 });
@@ -79,6 +92,8 @@ const wantsHtml = (req) =>
     req.query?.format !== 'json' && String(req.headers.accept || '').includes('text/html');
 
 app.get('/', (req, res) => {
+    // One URL, two representations: a shared cache must key on Accept or hand a machine the page.
+    res.vary('Accept');
     if (wantsHtml(req)) {
         return res.type('html').send(page({
             origin: PUBLIC_ORIGIN,
@@ -170,7 +185,11 @@ const freely = (handler) => async (req, res) => {
     try {
         res.json(await handler(req));
     } catch (e) {
-        res.status(400).json({ error: String(e.shortMessage ?? e.message ?? e) });
+        // Whose fault. A program that is not hex is the caller's; a chain that would not answer is
+        // not, and reporting it as 400 told the caller to fix a request that was fine.
+        const message = String(e.shortMessage ?? e.message ?? e);
+        const theirs = /must be|needs|not a valid|hex string|non-negative/i.test(message) && !e.scanExhausted;
+        res.status(theirs ? 400 : 502).json({ error: message, ...(theirs ? {} : { upstream: true }) });
     }
 };
 
@@ -325,6 +344,13 @@ app.post('/v1/mandate/explain', async (req, res) => {
 
 // Express's default 404 is an HTML page, for the same non-existent browser. A machine that reached
 // the wrong path is told the right ones rather than handed markup it cannot read.
+// Last, and only for what nothing above caught: a thrown error inside a route must not become the
+// HTML page Express prints by default, with a stack trace when NODE_ENV is unset.
+// eslint-disable-next-line no-unused-vars
+app.use((err, _req, res, _next) => {
+    res.status(500).json({ error: 'internal error' });
+});
+
 app.use((req, res) => {
     res.status(404).json({
         error: `no route for ${req.method} ${req.path}`,

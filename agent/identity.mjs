@@ -18,7 +18,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import 'dotenv/config';
 
-import { AQUA, ROUTER, APP, IDENTITY_REGISTRY, HCS_TOPIC, ENS_REGISTRY, SEPOLIA_RPC } from './deployment.mjs';
+import { AQUA, ROUTER, APP, IDENTITY_REGISTRY, HCS_TOPIC, ENS_REGISTRY, AGENT_ID, SEPOLIA_RPC } from './deployment.mjs';
 
 const REGISTRY_ABI = [
     {
@@ -75,16 +75,26 @@ const MIRROR_TOPIC = `https://testnet.mirrornode.hedera.com/api/v1/topics/${HCS_
  * cannot be verified — in particular no endpoint is advertised that this repo does not actually
  * serve, because an identity registry full of dead links is worse than an empty one.
  */
-function registrationFile(operator) {
+function registrationFile(operator, agentId = AGENT_ID) {
+    // The spec's shape, not an approximation of it. 8004scan already indexes this agent and was
+    // reading the file — and rendering every service as "custom, protocol unknown", because the
+    // names were ours rather than the standard's, and `registrations` carried an address and a
+    // chain id where the spec asks for the agent id and a CAIP-10 registry. The custom services
+    // stay; the spec-named ones join them.
     return {
-        type: 'https://eips.ethereum.org/EIPS/eip-8004',
+        type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
         name: 'Batas',
         description:
             'An autonomous market maker on 1inch Aqua that cannot exceed the mandate it was granted. '
             + 'It reads the live position, derives a floor price from the observed spot, compiles a SwapVM '
             + 'program, and ships it. PolicyEnvelope enforces the size cap and floor inside the VM, so the '
             + 'limits hold no matter which caller reaches the position.',
+        image: 'https://batas-one.vercel.app/docs/web-ui.png',
+        active: true,
+        x402Support: true,
+        supportedTrust: ['reputation'],
         services: [
+            { name: 'web', endpoint: 'https://batas-one.vercel.app', version: '1' },
             { name: 'source', endpoint: 'https://github.com/PugarHuda/batas', version: '1' },
             // Live and paid for per call. Listed because it answers, not because it is planned.
             { name: 'x402', endpoint: 'https://batas-one.vercel.app/v1/mandate/explain', version: '2' },
@@ -94,7 +104,9 @@ function registrationFile(operator) {
             { name: 'mandates', endpoint: MIRROR_TOPIC, version: '1' },
         ],
         operator,
-        registrations: [{ agentAddress: operator, chainId: sepolia.id }],
+        registrations: [
+            { agentId: Number(agentId), agentRegistry: `eip155:${sepolia.id}:${IDENTITY_REGISTRY}` },
+        ],
     };
 }
 

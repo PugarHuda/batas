@@ -26,6 +26,7 @@ import { sepolia } from 'viem/chains';
 
 import { payForExplanation, latestProgramOnChain } from './inspect.mjs';
 import { ROUTER, TOKEN_A, TOKEN_B, SEPOLIA_RPC } from './deployment.mjs';
+import { keccak256, toHex } from 'viem';
 import { feedbackFromTrade, giveFeedback, readReputation } from './reputation.mjs';
 
 const ORIGIN = process.env.BATAS_SERVICE_URL?.replace(/\/v1\/.*$/, '') || 'https://batas-one.vercel.app';
@@ -340,6 +341,17 @@ async function review({ account, received, amountIn, floorRateE18, feedbackURI, 
 
     console.log(`\n  leaving feedback: ${score.bps}bps above the floor, tagged ${score.tag2}`);
     try {
+        // The hash commits to what the URI serves. ERC-8004 says feedbackHash is the keccak of the
+        // content at feedbackURI; the first version hashed a string of its own, which committed to
+        // nothing a reader could fetch. Fetched once, hashed as bytes, or zero if unreachable —
+        // a wrong hash is worse than none.
+        let feedbackHash = `0x${'00'.repeat(32)}`;
+        if (feedbackURI) {
+            try {
+                const body = await (await fetch(feedbackURI)).text();
+                feedbackHash = keccak256(toHex(body));
+            } catch { /* leave it zero: a URI we could not read is not one we can vouch for */ }
+        }
         const written = await giveFeedback({
             ...(agentId ? { agentId } : {}),
             value: score.value,
@@ -348,8 +360,25 @@ async function review({ account, received, amountIn, floorRateE18, feedbackURI, 
             tag2: score.tag2,
             endpoint: ORIGIN,
             feedbackURI: feedbackURI ?? '',
+            feedbackHash,
         });
         say('feedback', `${written.status}  https://sepolia.etherscan.io/tx/${written.hash}`);
+
+        // And once more in the vocabulary explorers aggregate. `batas.mandate` is the honest
+        // signal and it is what this counterparty actually measured; `starred` is what 8004scan
+        // reads for its average, and an agent with real trades behind it should not show "no
+        // ratings" because its reviewer used precise words.
+        const starred = await giveFeedback({
+            ...(agentId ? { agentId } : {}),
+            value: score.bps >= 0n ? 100n : 0n,
+            valueDecimals: 0,
+            tag1: 'starred',
+            tag2: score.tag2,
+            endpoint: ORIGIN,
+            feedbackURI: feedbackURI ?? '',
+            feedbackHash,
+        });
+        say('starred', `${starred.status}  ${score.bps >= 0n ? 100 : 0}/100`);
         const now = await readReputation(agentId);
         say('reputation', `${now.feedbackCount} feedback from ${now.clientCount} client(s), `
             + `${now.summaryValue}bps above the floor on average`);

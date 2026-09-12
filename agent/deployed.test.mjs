@@ -113,9 +113,15 @@ test('the verification inputs describe the contracts as they are now', async () 
         const input = JSON.parse(
             await readFile(new URL(`../verification/${name}.standard-input.json`, import.meta.url), 'utf8'),
         );
-        for (const path of ['src/BatasApp.sol', 'src/PolicyEnvelope.sol', 'src/Mandate.sol', 'src/BatasRouter.sol']) {
-            const key = Object.keys(input.sources).find((k) => k.endsWith(path));
-            if (!key) continue;
+        // Every source of ours the input carries, derived from the input rather than typed here.
+        // A typed list skipped `MandateName.sol` — the most recently changed contract — with a
+        // silent `continue`, so a stale copy of the kill switch passed as fresh.
+        const ours = Object.keys(input.sources).filter((k) => k.startsWith('src/'));
+        // The router imports three of our files and the app four; a list shorter than that means the
+        // input was generated from something other than this tree.
+        assert.ok(ours.length >= 3, `${name}'s input carries only ${ours.length} of our sources`);
+        for (const key of ours) {
+            const path = key;
             const onDisk = await readFile(new URL(`../${path}`, import.meta.url), 'utf8');
             assert.equal(
                 input.sources[key].content,

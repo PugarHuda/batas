@@ -38,12 +38,24 @@ const TTL_MS = 60_000;
 let cached = { at: 0, value: null };
 
 export async function liveProgram() {
-    if (cached.value && Date.now() - cached.at < TTL_MS) return cached.value;
-    const found = await latestProgramOnChain();
-    if (!found) return null;
-    const value = { program: programFromStrategy(found.strategy), strategyHash: found.strategyHash };
-    cached = { at: Date.now(), value };
-    return value;
+    if (Date.now() - cached.at < TTL_MS) {
+        if (cached.error) throw cached.error;
+        if ('value' in cached && cached.value !== undefined) return cached.value;
+    }
+    // A miss is remembered for the same minute a hit is. Only hits were cached before, so the day
+    // the last position aged out of the scan window every free request — and both of the page's
+    // parallel loads — re-ran seven `eth_getLogs` calls against a public node to learn nothing.
+    try {
+        const found = await latestProgramOnChain();
+        const value = found
+            ? { program: programFromStrategy(found.strategy), strategyHash: found.strategyHash }
+            : null;
+        cached = { at: Date.now(), value };
+        return value;
+    } catch (error) {
+        cached = { at: Date.now(), error };
+        throw error;
+    }
 }
 
 /** Only for tests that need the next call to actually go to the chain. */

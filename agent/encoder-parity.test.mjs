@@ -18,7 +18,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
-import { toProgram } from './swapvm.mjs';
+import { toProgram, decodeProgram } from './swapvm.mjs';
 
 /** forge is not always on PATH in a fresh shell; fall back to foundryup's install location. */
 function forgeBinary() {
@@ -92,7 +92,10 @@ test('the kill switch is among the cases, and survives the round trip', () => {
     const named = cases.filter((c) => c.nameLabel !== '');
     assert.ok(named.length >= 2, `expected cases carrying a mandate name; found ${named.length}`);
     for (const c of named) {
-        assert.ok(c.program.includes('22'), `"${c.label}" should carry a MandateName instruction`);
+        // Decoded, not grepped: '22' appears in almost any hex string, and a substring check would
+        // have passed on a program that carried no such instruction at all.
+        const names = decodeProgram(c.program).map((i) => i.name);
+        assert.ok(names.includes('MANDATE_NAME'), `"${c.label}" should carry a MandateName instruction`);
         assert.ok(
             c.program.includes(Buffer.from(c.nameLabel, 'utf8').toString('hex')),
             `"${c.label}" should carry the label bytes themselves`,
@@ -103,6 +106,7 @@ test('the kill switch is among the cases, and survives the round trip', () => {
 test('every compiled mandate carries an expiry', () => {
     // The bug this file exists for: a program without Deadline is a grant that never ends.
     for (const c of cases) {
-        assert.ok(c.program.includes('2005'), `"${c.label}" has no Deadline instruction`);
+        const names = decodeProgram(c.program).map((i) => i.name);
+        assert.ok(names.includes('DEADLINE'), `"${c.label}" has no Deadline instruction`);
     }
 });

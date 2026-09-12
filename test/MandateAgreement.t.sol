@@ -494,6 +494,53 @@ contract MandateAgreementTest is Test, IBatasCallback {
         router.quote(order, 10e18, takerData);
     }
 
+    /// @notice Docking is the maker's instant stop, and it stops both surfaces.
+    /// @dev The README's controls table lists `Aqua.dock()` as enforced by Aqua; nothing had
+    ///   asked. `safeBalances` on a docked strategy reverts rather than answering zero, so the
+    ///   replaced mandate is not merely empty — it is gone.
+    function test_DockingStopsBothSurfaces() public {
+        Mandate memory m = _mandate(500e18, 1e18);
+        ISwapVM.Order memory order = _shipBoth(m);
+        assertGt(app.quote(m, 10e18), 0, "must work before it is docked");
+
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(tokenA);
+        tokens[1] = address(tokenB);
+        vm.startPrank(maker);
+        aqua.dock(address(app), m.hash(), tokens);
+        aqua.dock(address(router), router.hash(order), tokens);
+        vm.stopPrank();
+
+        vm.expectRevert();
+        app.quote(m, 10e18);
+        bytes memory takerData = _takerData();
+        vm.expectRevert();
+        router.quote(order, 10e18, takerData);
+    }
+
+    /// @notice Revoke, then grant again: the position comes back at the same price, under a new id.
+    /// @dev The mock bumps the version counter on re-registration the way the real registry does,
+    ///   and until now no test re-granted. Had `MandateName.check` derived the id from the label
+    ///   instead of asking the registry, every existing test would still pass and this one would
+    ///   not: the re-granted name lives at a different token id.
+    function test_ReGrantingTheNameRestoresBothSurfaces() public {
+        Mandate memory m = _named("agent", agent);
+        names.grant("agent", agent, uint64(block.timestamp + 1 days));
+        uint256 firstId = names.findTokenId("agent");
+        ISwapVM.Order memory order = _shipBoth(m);
+        uint256 before = app.quote(m, 10e18);
+
+        names.revoke("agent", uint64(block.timestamp));
+        vm.expectPartialRevert(MandateName.MandateNameNotHeld.selector);
+        app.quote(m, 10e18);
+
+        names.grant("agent", agent, uint64(block.timestamp + 1 days));
+        assertTrue(names.findTokenId("agent") != firstId, "a re-grant must be a new token id");
+        assertEq(app.quote(m, 10e18), before, "the app surface must come back at the same price");
+        (, uint256 fromVm,) = router.quote(order, 10e18, _takerData());
+        assertEq(fromVm, before, "and so must the VM surface");
+    }
+
     /// @notice A mandate that names no registry is unchanged, and that is a choice, not a default.
     function test_WithoutARegistryNothingIsAsked() public {
         Mandate memory m = _mandate(500e18, 1e18);

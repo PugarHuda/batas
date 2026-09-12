@@ -243,6 +243,7 @@ async function tick({ watching = false, mayShip = true } = {}) {
     // the transaction rather than after.
     let liveExpiry = null;
     let nameExpiry = null;
+    let liveCap = null;
     const ensRegistry = ENS_REGISTRY;
     if (ensRegistry) {
         const label = MANDATE_NAME;
@@ -254,6 +255,9 @@ async function tick({ watching = false, mayShip = true } = {}) {
             grantedUntil = readMandate(decodeProgram(programFromStrategy(latest.args.strategy))).expiry ?? undefined;
         } catch { /* an undecodable strategy is not a reason to skip the authority check */ }
         liveExpiry = grantedUntil ?? null;
+        try {
+            liveCap = readMandate(decodeProgram(programFromStrategy(latest.args.strategy))).maxAmountIn ?? null;
+        } catch { /* an undecodable strategy caps nothing; the fresh mandate starts from measurement */ }
         const status = await mandateNameStatus(pub, getAddress(ensRegistry), label, account.address, { grantedUntil });
         console.log('');
         console.log(`mandate name "${label}": ${status.reason}`);
@@ -288,9 +292,20 @@ async function tick({ watching = false, mayShip = true } = {}) {
     const CAP_BPS = 1000n;
     const FEE_BPS = 30_000n; // 0.3% of SwapVM's 1e7 base
 
-    const { minRateE18, maxAmountIn } = decideMandate({
+    const decided = decideMandate({
         reserveA, reserveB, slippageBps: SLIPPAGE_BPS, capBps: CAP_BPS,
     });
+    const { minRateE18 } = decided;
+    // Renewal may not widen the cap. The floor follows the measurement — it is derived from a
+    // price the agent does not choose — but the cap is the one term an agent holding the maker's
+    // key could grow for itself, one renewal at a time, and the chain would let it: every mandate
+    // is valid on its own. So the previous mandate's cap is a ceiling on the next one. Tightening
+    // is the maker's to undo, by granting a wider mandate by hand.
+    let { maxAmountIn } = decided;
+    if (liveCap !== null && maxAmountIn > liveCap) {
+        console.log(`  cap held at the previous mandate's ${formatUnits(liveCap, 18)} A: renewal may tighten, never widen`);
+        maxAmountIn = liveCap;
+    }
 
     console.log('\ndecision');
     console.log(`  budget ${SLIPPAGE_BPS}bps from ${budget.samples} settled trade(s) — ${budget.reason}`);

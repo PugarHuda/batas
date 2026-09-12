@@ -10,6 +10,7 @@ import { IAqua } from "@1inch/aqua/src/interfaces/IAqua.sol";
 import { BatasApp } from "../src/BatasApp.sol";
 import { Mandate, MandateLib } from "../src/Mandate.sol";
 import { IBatasCallback } from "../src/IBatasCallback.sol";
+import { AquaApp } from "@1inch/aqua/src/AquaApp.sol";
 import { TransientLockLib } from "@1inch/solidity-utils/contracts/libraries/TransientLock.sol";
 
 /// @dev The test contract is the taker: it receives the callback and pays for the swap there.
@@ -80,6 +81,9 @@ contract BatasAppTest is Test, IBatasCallback {
     ///   for the first swap. Stored rather than passed so the re-entry uses the ordinary path.
     Mandate internal _reenterWith;
     bool internal _reenter;
+    /// @dev When set, the callback pushes this much less than it owes. The only thing that stops
+    ///   it is `_safeCheckAquaPush`, and nothing here had ever tried to get past it.
+    uint256 internal _shortBy;
 
     function batasSwapCallback(
         address tokenIn_,
@@ -97,7 +101,55 @@ contract BatasAppTest is Test, IBatasCallback {
             app.swap(_reenterWith, 1e18, 0, address(this), "");
         }
         TokenMock(tokenIn_).mint(address(this), amountIn);
-        aqua.push(maker_, address(app), mandateHash, tokenIn_, amountIn);
+        aqua.push(maker_, address(app), mandateHash, tokenIn_, amountIn - _shortBy);
+    }
+
+    /// @notice The output has already left when the taker is asked to pay; underpaying is refused.
+    /// @dev `swap` hands control to `msg.sender` after `pull` and before payment is checked — the
+    ///   shape of a flash swap — and the check at the end is the only thing that makes it a swap
+    ///   rather than a gift. Every test in this file paid in full, so removing that check left the
+    ///   suite green. This is the one that goes red.
+    function test_RevertWhenTakerUnderpays() public {
+        Mandate memory m = _mandate();
+        _ship(m);
+        uint256 makerOutBefore = tokenOut.balanceOf(maker);
+
+        _shortBy = 1;
+        vm.expectPartialRevert(AquaApp.MissingTakerAquaPush.selector);
+        app.swap(m, 10e18, 0, address(this), "");
+        _shortBy = 0;
+
+        assertEq(tokenOut.balanceOf(maker), makerOutBefore, "a refused swap must move nothing");
+    }
+
+    /// @notice And paying nothing at all is the same refusal, not a different one.
+    function test_RevertWhenTakerPaysNothing() public {
+        Mandate memory m = _mandate();
+        _ship(m);
+        _shortBy = 10e18;
+        vm.expectPartialRevert(AquaApp.MissingTakerAquaPush.selector);
+        app.swap(m, 10e18, 0, address(this), "");
+        _shortBy = 0;
+    }
+
+    /// @notice `quote` refuses for every reason `swap` does, with the same bytes — not only expiry.
+    /// @dev The README claimed this for all reasons; one test checked one. `_checkMandate` is
+    ///   shared, so this should hold trivially — which is exactly why it is cheap to pin and
+    ///   expensive to have wrong.
+    function test_QuoteAndSwapRefuseIdentically() public {
+        Mandate memory m = _mandate();
+        _ship(m);
+
+        uint256[3] memory amounts = [uint256(m.maxAmountIn) + 1, uint256(0), uint256(1)];
+        for (uint256 i = 0; i < amounts.length; i++) {
+            (bool qOk, bytes memory qErr) = address(app).call(abi.encodeCall(app.quote, (m, amounts[i])));
+            (bool sOk, bytes memory sErr) = address(app).call(
+                abi.encodeCall(app.swap, (m, amounts[i], 0, address(this), ""))
+            );
+            assertEq(qOk, false, "quote should refuse");
+            assertEq(sOk, false, "swap should refuse");
+            assertEq(keccak256(qErr), keccak256(sErr), "quote and swap must refuse with the same bytes");
+        }
     }
 
     /// @notice A swap inside every limit settles and moves real tokens.
