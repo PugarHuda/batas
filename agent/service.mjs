@@ -31,6 +31,7 @@ import { HCS_TOPIC } from './deployment.mjs';
 import { openapiDocument, agentCard, ATTRIBUTION } from './openapi.mjs';
 import { attest } from './attest.mjs';
 import { createServer as createMcpServer } from './mcp.mjs';
+import { mountA2A } from './a2a.mjs';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 const PORT = Number(process.env.PORT || 4021);
@@ -289,7 +290,9 @@ app.get('/.well-known/x402', (_req, res) => {
 // constants, and a directory that crawls them is exactly the caller they exist for.
 const described = { origin: PUBLIC_ORIGIN, price: `${Number(PRICE.amount) / 1e8} HBAR`, network: 'hedera:testnet', payTo: PAY_TO };
 app.get('/openapi.json', (_req, res) => res.json(openapiDocument(described)));
-app.get('/.well-known/agent-card.json', (_req, res) => res.json(agentCard(described)));
+// The card now names a JSON-RPC interface as well, so a2a.mjs serves it, extending this one, next
+// to the A2A endpoint that negotiates fills and settles them through the same resource server.
+mountA2A(app, { card: () => agentCard(described), resourceServer, origin: PUBLIC_ORIGIN, payTo: PAY_TO, price: PRICE, overLimit, inspect });
 
 // The MCP server, over HTTP rather than stdio. Same factory, same four tools, one server per
 // request and no session: a Vercel function may not be the same instance twice, so there is nothing

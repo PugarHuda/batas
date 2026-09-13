@@ -396,6 +396,18 @@ export const ROUTES = [
         responses: { 200: { description: 'the card', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } } },
     },
     {
+        method: 'post', path: '/a2a', free: true,
+        summary: 'A2A JSON-RPC: negotiate a fill, then pay for the firm quote inside the task',
+        description: 'message/send, tasks/get and tasks/cancel. A proposal { direction, amountIn, minAmountOut or limitRate } is priced against the live position: outside the mandate the task stays input-required with a counter-offer; inside it the task asks for payment under the a2a-x402 extension (x402.payment.required), and completes with the firm quote once the x402.payment.payload has settled on Hedera. Negotiating is free and rate limited; the deliverable costs the same as the paid route.',
+        body: { type: 'object', description: 'a JSON-RPC 2.0 request', additionalProperties: true },
+        responses: {
+            200: { description: 'a JSON-RPC 2.0 response; protocol errors answer here too, with error.code', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+            400: answer('Error', 'the body was not valid JSON'),
+            ...TOO_LARGE,
+            429: { description: 'too many negotiation turns from one caller; payments are not limited', content: JSON_RPC_ERROR },
+        },
+    },
+    {
         method: 'get', path: '/openapi.json', free: true,
         summary: 'This document',
         responses: { 200: { description: 'OpenAPI 3.1', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } } },
