@@ -19,6 +19,7 @@ import { sepolia } from 'viem/chains';
 import 'dotenv/config';
 
 import { AQUA, ROUTER, APP, IDENTITY_REGISTRY, HCS_TOPIC, ENS_REGISTRY, AGENT_ID, SEPOLIA_RPC } from './deployment.mjs';
+import { resolveAgent } from './erc8004.mjs';
 
 const REGISTRY_ABI = [
     {
@@ -132,28 +133,30 @@ const toDataUri = (obj) =>
     `data:application/json;base64,${Buffer.from(JSON.stringify(obj)).toString('base64')}`;
 
 async function main() {
+    // Reading needs no key, and goes through the same resolver the service answers with. The old
+    // path here decoded every data: URI as base64, so a percent-encoded registration — which the
+    // spec allows — came out as a JSON error instead of an agent.
+    const readIdx = process.argv.indexOf('--read');
+    if (readIdx !== -1) {
+        const agent = await resolveAgent(process.argv[readIdx + 1]);
+        console.log(`agent    #${agent.agentId}  in ${agent.registry}`);
+        if (!agent.registered) {
+            console.log('         not registered');
+            return;
+        }
+        console.log(`owner    ${agent.owner}`);
+        if ('agentWallet' in agent) console.log(`wallet   ${agent.agentWallet ?? 'unset — nobody has proved a payment address since the last transfer'}`);
+        for (const issue of agent.registrationCheck?.issues ?? []) console.log(`issue    ${issue}`);
+        console.log(JSON.stringify(agent.registration ?? { uriKind: agent.uriKind, hostedAt: agent.registrationURI }, null, 2));
+        return;
+    }
+
     const key = process.env.SEPOLIA_PRIVATE_KEY;
     if (!key) throw new Error('SEPOLIA_PRIVATE_KEY missing; copy .env.example to .env');
 
     const account = privateKeyToAccount(key);
     const transport = http(SEPOLIA_RPC);
     const pub = createPublicClient({ chain: sepolia, transport });
-
-    const readIdx = process.argv.indexOf('--read');
-    if (readIdx !== -1) {
-        const tokenId = BigInt(process.argv[readIdx + 1]);
-        const [uri, owner] = await Promise.all([
-            pub.readContract({ address: IDENTITY_REGISTRY, abi: REGISTRY_ABI, functionName: 'tokenURI', args: [tokenId] }),
-            pub.readContract({ address: IDENTITY_REGISTRY, abi: REGISTRY_ABI, functionName: 'ownerOf', args: [tokenId] }),
-        ]);
-        console.log(`agent    #${tokenId}`);
-        console.log(`owner    ${owner}`);
-        const json = uri.startsWith('data:')
-            ? JSON.parse(Buffer.from(uri.split(',')[1], 'base64').toString())
-            : { hostedAt: uri };
-        console.log(JSON.stringify(json, null, 2));
-        return;
-    }
 
     const file = registrationFile(account.address);
     const agentURI = toDataUri(file);
