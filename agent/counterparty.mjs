@@ -16,8 +16,10 @@
 // from a position it does not like, and pays only when the free evidence was good and the remaining
 // doubt is worth a tenth of a cent to settle.
 //
-// Nothing here is discovered from this repository. The endpoint, the price and the network are read
-// from the host's own `/.well-known/x402` manifest, the way an indexer or a stranger's agent would.
+// Nothing here is discovered from this repository. The host comes out of the ERC-8004 identity
+// registry — agent #10123's own registration names its x402 endpoint — and the price, network and
+// payee from that host's `/.well-known/x402` manifest, which has to agree with what the registry
+// says before anything is called. BATAS_SERVICE_URL, when set, skips the registry, and the run says so.
 
 import 'dotenv/config';
 import { createPublicClient, createWalletClient, http, formatUnits, decodeAbiParameters, parseAbiParameters, getAddress } from 'viem';
@@ -27,11 +29,13 @@ import { sepolia } from 'viem/chains';
 import { payForExplanation, latestProgramOnChain, programFromStrategy } from './inspect.mjs';
 import { explain } from './swapvm.mjs';
 import { tryQuote } from './killswitch.mjs';
-import { AQUA, OWNER, ROUTER, TOKEN_A, TOKEN_B, SEPOLIA_RPC } from './deployment.mjs';
+import { AQUA, OWNER, ROUTER, TOKEN_A, TOKEN_B, SEPOLIA_RPC, AGENT_ID } from './deployment.mjs';
+import { resolveAgent, IDENTITY_REGISTRY } from './erc8004.mjs';
 import { keccak256, toHex, parseUnits } from 'viem';
 import { feedbackFromTrade, giveFeedback, readReputation } from './reputation.mjs';
 
-const ORIGIN = process.env.BATAS_SERVICE_URL?.replace(/\/v1\/.*$/, '') || 'https://batas-one.vercel.app';
+// Set by `discover`. Module-level because `review` names the same host in the feedback it writes.
+let ORIGIN;
 const E18 = 10n ** 18n;
 
 /**
@@ -197,10 +201,92 @@ async function getJson(url, init) {
  * here rather than hard-coding the endpoint is what makes this a counterparty rather than a client
  * somebody wired up.
  */
-async function discover() {
-    const manifest = await getJson(`${ORIGIN}/.well-known/x402`);
-    const resource = manifest.resources?.[0];
-    if (!resource) throw new Error('the host publishes a manifest with no resources');
+export async function discover({ override = process.env.BATAS_SERVICE_URL, agentId = AGENT_ID } = {}) {
+    if (override) {
+        const origin = override.replace(/\/v1\/.*$/, '').replace(/\/$/, '');
+        const manifest = await getJson(`${origin}/.well-known/x402`);
+        const resource = manifest.resources?.[0];
+        if (!resource) throw new Error('the host publishes a manifest with no resources');
+        return { via: 'BATAS_SERVICE_URL', origin, ...summarise(manifest, resource) };
+    }
+    return discoverFromRegistry(agentId);
+}
+
+const METADATA_ABI = [{
+    name: 'getMetadata', type: 'function', stateMutability: 'view',
+    inputs: [{ name: 'agentId', type: 'uint256' }, { name: 'metadataKey', type: 'string' }],
+    outputs: [{ type: 'bytes' }],
+}];
+
+/**
+ * Find the service from the agent's identity, not from a URL somebody configured.
+ *
+ * A configured host is a host the caller already trusted. The registry is where an agent that has
+ * never heard of this one would look: the token's registration names its x402 endpoint, and the
+ * on-chain metadata names the network and the Hedera account payments go to. The manifest is then
+ * fetched from that endpoint's host and has to repeat both. A host serving a manifest that pays an
+ * account the identity never named is not the agent, whatever its URL looks like.
+ */
+export async function discoverFromRegistry(agentId = AGENT_ID, { rpcUrl = SEPOLIA_RPC } = {}) {
+    const client = createPublicClient({ chain: sepolia, transport: http(rpcUrl) });
+    const agent = await resolveAgent(agentId, { client });
+    if (!agent.registered) throw new Error(`agent #${agentId} is not in the identity registry`);
+    if (!agent.registrationCheck?.valid) {
+        throw new Error(`agent #${agentId}'s registration does not check out: ${agent.registrationCheck?.issues?.join('; ') ?? agent.uriKind}`);
+    }
+    const [payTo, network] = await Promise.all(['batas.x402.payTo', 'batas.x402.network'].map(async (key) => {
+        const hex = await client.readContract({
+            address: IDENTITY_REGISTRY, abi: METADATA_ABI, functionName: 'getMetadata', args: [BigInt(agent.agentId), key],
+        });
+        return hex === '0x' ? null : Buffer.from(hex.slice(2), 'hex').toString('utf8');
+    }));
+    const endpoint = x402Endpoint(agent.registration);
+    if (!endpoint) throw new Error(`agent #${agentId} advertises no x402 service`);
+    const origin = new URL(endpoint).origin;
+    const manifest = await getJson(`${origin}/.well-known/x402`);
+    const check = checkDiscovery({ endpoint, metadata: { payTo, network }, manifest });
+    if (!check.ok) throw new Error(`the manifest at ${origin} does not match agent #${agentId}: ${check.issues.join('; ')}`);
+    return {
+        via: `ERC-8004 agent #${agent.agentId}`, origin, agentId: agent.agentId, registered: { endpoint, payTo, network },
+        ...summarise(manifest, check.resource),
+    };
+}
+
+/** The http(s) endpoint an ERC-8004 registration lists for its x402 service, if it lists one. */
+export function x402Endpoint(registration) {
+    const s = (Array.isArray(registration?.services) ? registration.services : [])
+        .find((x) => x?.name === 'x402' && typeof x.endpoint === 'string');
+    return s && /^https?:\/\//.test(s.endpoint) ? s.endpoint : null;
+}
+
+/**
+ * Whether a manifest is the service the identity describes.
+ *
+ * Pure, so each way of disagreeing is pinned by a test. The resource has to be the registered
+ * endpoint itself, and every payment option it offers has to go to the registered account on the
+ * registered network: one stray `accepts` entry is enough for a client that takes the first option
+ * it supports to pay a stranger. Missing metadata is a failure, not a pass, because a check with
+ * nothing to compare against has checked nothing.
+ */
+export function checkDiscovery({ endpoint, metadata = {}, manifest }) {
+    const issues = [];
+    const resource = (Array.isArray(manifest?.resources) ? manifest.resources : []).find((r) => r?.url === endpoint);
+    if (!resource) {
+        issues.push(`the manifest lists no resource at the registered endpoint ${endpoint}`);
+        return { ok: false, issues };
+    }
+    if (!metadata.payTo) issues.push('the registry holds no batas.x402.payTo to check the manifest against');
+    if (!metadata.network) issues.push('the registry holds no batas.x402.network to check the manifest against');
+    const accepts = Array.isArray(resource.accepts) ? resource.accepts : [];
+    if (accepts.length === 0) issues.push('the resource offers no way to pay');
+    for (const a of accepts) {
+        if (metadata.payTo && a?.payTo !== metadata.payTo) issues.push(`the manifest pays ${a?.payTo}, the registry names ${metadata.payTo}`);
+        if (metadata.network && a?.network !== metadata.network) issues.push(`the manifest settles on ${a?.network}, the registry names ${metadata.network}`);
+    }
+    return { ok: issues.length === 0, issues, resource };
+}
+
+function summarise(manifest, resource) {
     const terms = resource.accepts?.[0];
     return {
         name: manifest.name,
@@ -208,6 +294,7 @@ async function discover() {
         price: terms ? Number(terms.amount) / 1e8 : null,
         asset: terms?.asset,
         network: terms?.network,
+        payTo: terms?.payTo,
     };
 }
 
@@ -218,6 +305,10 @@ async function main() {
 
     head(1, 'Find out what this host sells, without being told');
     const service = await discover();
+    ORIGIN = service.origin;
+    say('found via', service.via === 'BATAS_SERVICE_URL' ? 'BATAS_SERVICE_URL, set by hand; the registry was not consulted' : service.via);
+    if (service.registered) say('registry', `x402 at ${service.registered.endpoint}, pays ${service.registered.payTo} on ${service.registered.network}`);
+    if (service.registered) say('manifest', 'agrees with the registry on endpoint, payee and network');
     say('host', ORIGIN);
     say('sells', service.name);
     say('endpoint', service.endpoint);
@@ -320,7 +411,7 @@ async function main() {
     // Reading it as the body gave "agent not resolved" from an answer that had resolved the agent
     // perfectly — the paid call had worked and the reader had not.
     // Paid for against the bytes this agent holds, not the ones the server said it holds.
-    const { body: answer, settlement } = await payForExplanation(localProgram, { log: (s) => console.log(`  ${s}`) });
+    const { body: answer, settlement } = await payForExplanation(localProgram, { origin: ORIGIN, log: (s) => console.log(`  ${s}`) });
     const operator = answer.operator;
     say('agent', operator?.agentId ? `#${operator.agentId}  ${operator.registration?.name ?? '(unnamed)'}` : 'not resolved');
     say('held by', operator?.owner ?? '—');
