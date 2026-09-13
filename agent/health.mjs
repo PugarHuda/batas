@@ -9,7 +9,7 @@
 import { createPublicClient, http, formatUnits, decodeFunctionData, getAddress } from 'viem';
 import { sepolia } from 'viem/chains';
 
-import { explain, BPS, E18 } from './swapvm.mjs';
+import { explain, clearsFloor, BPS, E18 } from './swapvm.mjs';
 import { liveProgram } from './free.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { lookupMandate, lookupRevocations, lookupNameGrants } from './hcs.mjs';
@@ -33,6 +33,30 @@ function isqrt(n) {
 }
 
 // --- the arithmetic ----------------------------------------------------------
+
+/**
+ * The largest input, no bigger than `ceiling`, that the router would settle at these reserves.
+ *
+ * Priced by `clearsFloor`, which is the contract's own check — `amountOut·1e18 >= amountIn·floor`
+ * with the fee taken off the gross input first — rather than by a closed form beside it. The cap
+ * alone is not the worst case: once spot has walked toward the floor a cap-sized trade is refused,
+ * and reporting what it would take describes an outflow the chain would not allow. The rate a trade
+ * gets falls as it grows, so the answer is a bisection; it is 0n when nothing clears at all.
+ */
+export function largestClearingInput({ reserveA, reserveB, minRateE18, feeBps, ceiling }) {
+    if (!reserveA || !reserveB || !ceiling || ceiling <= 0n) return 0n;
+    const fee = BigInt(feeBps ?? 0);
+    const clears = (amountIn) => clearsFloor({ reserveA, reserveB, amountIn, minRateE18: minRateE18 ?? 0n, feeBps: fee });
+    if (clears(ceiling)) return ceiling;
+    let lo = 0n, hi = ceiling;
+    while (hi - lo > 1n) {
+        const mid = (lo + hi) / 2n;
+        if (clears(mid)) lo = mid; else hi = mid;
+    }
+    // Wei-sized inputs fail on rounding alone, so a bisection that only ever saw failures lands on
+    // a dust value that was never tested; checked rather than assumed.
+    return lo > 0n && clears(lo) ? lo : 0n;
+}
 
 /**
  * `terms` are BigInt/number as `readMandate` gives them; `reservesNow` is null when Aqua says the
@@ -70,10 +94,13 @@ export function deriveHealth({ terms, reservesNow, reservesAtShip, trades = [], 
         const root = isqrt((a * b * (BPS - fee) * E18) / (BPS * floor));
         const absorbNet = root > a ? root - a : 0n;
         const absorbable = (absorbNet * BPS) / (BPS - fee);
-        // One trade at the cap, priced as the contracts price it (fee up, output down).
-        const capFee = cap ? (cap * fee + BPS - 1n) / BPS : 0n;
-        const capNet = cap ? cap - capFee : 0n;
-        const worstOut = (capNet * b) / (a + capNet);
+        // The largest single trade the router would settle now, priced as the contracts price it
+        // (fee up, output down). A mandate with no cap is bounded only by its floor, so the whole
+        // A side stands in as the ceiling rather than pretending the trade has a size limit.
+        const worstIn = largestClearingInput({ reserveA: a, reserveB: b, minRateE18: floor, feeBps: fee, ceiling: cap ?? a });
+        const worstFee = (worstIn * fee + BPS - 1n) / BPS;
+        const worstNet = worstIn - worstFee;
+        const worstOut = worstIn === 0n ? 0n : (worstNet * b) / (a + worstNet);
 
         headroom = {
             spotNow: fmt(spotNow),
@@ -82,15 +109,28 @@ export function deriveHealth({ terms, reservesNow, reservesAtShip, trades = [], 
             spotVsFloorBps: bps(spotNow - floor, floor),
             marginalBps: bps(marginal - floor, floor),
             absorbableBeforeFloorA: fmt(absorbable),
+            worstCaseInputA: fmt(worstIn),
+            capClears: cap == null ? null : worstIn === cap,
             worstCaseOutflowB: fmt(worstOut),
             worstCaseOutflowPctB: Number((worstOut * 10_000n) / b) / 100,
             floorAgeHours: reservesAtShip.at == null ? null : Math.round(((now - reservesAtShip.at) / 3600) * 10) / 10,
         };
 
-        if (headroom.marginalBps < 0) {
-            alert('FLOOR_INVERTED', 'critical', changedAt, `spot after fee is ${headroom.marginalBps}bps under the floor; no trade clears the mandate`);
+        // Marginal rate under the floor, or no size at all that the exact check lets through: the
+        // second catches the case where rounding refuses every trade while the marginal rate still
+        // reads a hair above.
+        if (headroom.marginalBps < 0 || worstIn === 0n) {
+            alert('FLOOR_INVERTED', 'critical', changedAt, headroom.marginalBps < 0
+                ? `spot after fee is ${-headroom.marginalBps}bps under the floor; no trade clears the mandate`
+                : 'no trade size clears the floor once the contract rounds; the mandate authorises nothing');
         } else if (headroom.marginalBps < 30) {
             alert('FLOOR_HEADROOM_LOW', 'warn', changedAt, `only ${headroom.marginalBps}bps between spot after fee and the floor`);
+        }
+        // A limit that is present but does not limit is reported as such. Past this point the
+        // floor, not the cap, sizes the largest trade — worth a word, not an alarm.
+        if (cap != null && worstIn > 0n && worstIn < cap) {
+            alert('CAP_NOT_BINDING', 'info', changedAt,
+                `the floor refuses a cap-sized trade; the largest that settles now is ${fmt(worstIn)} of the ${fmt(cap)} cap`);
         }
         if (reservesAtShip.b > 0n) {
             const pct = Number((b * 10_000n) / reservesAtShip.b) / 100;
@@ -106,10 +146,21 @@ export function deriveHealth({ terms, reservesNow, reservesAtShip, trades = [], 
         if (t.selfTrade) alert('SELF_TRADE', 'info', trades[i].at, `trade ${t.tx} was taken by the maker`);
     });
 
-    if (terms.expiry != null && terms.expiry - now < 86_400) {
-        const left = terms.expiry - now;
-        alert('EXPIRY_SOON', 'warn', terms.expiry - 86_400,
-            left <= 0 ? `mandate expired at ${iso(terms.expiry)}` : `mandate expires in ${Math.round(left / 360) / 10}h`);
+    // Past the expiry second, not at it: `Deadline` is `block.timestamp <= deadline`, so the whole
+    // of that second still trades. An expired mandate authorises nothing, which is the same outcome
+    // as an inverted floor and gets the same severity — it used to be a warning worded as a lapse.
+    if (terms.expiry != null && now > terms.expiry) {
+        alert('EXPIRED', 'critical', terms.expiry, `mandate expired at ${iso(terms.expiry)}; the router refuses every trade`);
+    } else if (terms.expiry != null && terms.expiry - now < 86_400) {
+        alert('EXPIRY_SOON', 'warn', terms.expiry - 86_400, `mandate expires in ${Math.round((terms.expiry - now) / 360) / 10}h`);
+    }
+
+    // "We could not check" is not "nothing is wrong". Without this, an upstream that failed simply
+    // raised no alert, and a report whose kill-switch read had timed out said `ok`.
+    const unanswered = [['authority', authority], ['publication', ledger?.publication], ['reputation', reputation]]
+        .filter(([, v]) => v?.error);
+    if (unanswered.length) {
+        alert('UNCHECKED', 'warn', null, `could not check ${unanswered.map(([k, v]) => `${k} (${v.error})`).join('; ')}`);
     }
 
     if (authority && !authority.error) {
@@ -123,7 +174,11 @@ export function deriveHealth({ terms, reservesNow, reservesAtShip, trades = [], 
 
     if (ledger) {
         const pub = ledger.publication;
-        if (pub && !pub.error && pub.published !== true) {
+        // A mirror walk that ran out of pages answered nothing about the bytes; saying "not
+        // published" from it is a finding nobody made.
+        if (pub && !pub.error && (pub.published === null || pub.searched === 'incomplete')) {
+            alert('PUBLICATION_UNKNOWN', 'info', null, pub.reason ?? 'the publication lookup did not finish');
+        } else if (pub && !pub.error && pub.published !== true) {
             alert('NOT_PUBLISHED', 'warn', reservesAtShip?.at ?? null, pub.reason ?? 'these bytes have no publication record on the topic');
         }
         // The ledger's last word on the label against the chain's. Records about a name come in
@@ -224,10 +279,12 @@ async function gather() {
 
     const head = await pub.getBlockNumber();
     const wanted = strategyHash.toLowerCase();
-    const [ship] = await scan(pub, {
+    // The newest ship of these bytes, not the oldest: a strategy docked and shipped again carries
+    // the same hash, and the reserves and trades that matter are the ones since the second ship.
+    const ship = (await scan(pub, {
         address: AQUA, event: SHIPPED, toBlock: head, fromBlock: head > LOOKBACK ? head - LOOKBACK : 0n,
         keep: (l) => l.args.strategyHash?.toLowerCase() === wanted,
-    });
+    })).at(-1);
     if (!ship) throw new Error(`Shipped log for ${strategyHash} not in the last ${LOOKBACK} blocks`);
 
     const [tx, block, swaps, balances] = await Promise.all([
@@ -237,9 +294,17 @@ async function gather() {
             address: ROUTER, event: SWAPPED, fromBlock: ship.blockNumber, toBlock: head,
             keep: (l) => l.args.orderHash?.toLowerCase() === wanted,
         }),
-        // A docked strategy reverts here rather than answering zero; that revert is the answer.
-        pub.readContract({ address: AQUA, abi: SAFE_BALANCES_ABI, functionName: 'safeBalances', args: [OWNER, ROUTER, strategyHash, TOKEN_A, TOKEN_B] })
-            .then(([a, b]) => ({ a, b }), () => null),
+        // A docked strategy reverts here rather than answering zero; that revert is the answer, and
+        // only the revert. This read used to turn every failure into null, so a rate-limited node
+        // reported a standing position as docked — a claim about the maker made out of a timeout.
+        // `liveProgram` is cached for a minute, so its `docked` can lag a dock this read would see.
+        live.docked
+            ? null
+            : pub.readContract({ address: AQUA, abi: SAFE_BALANCES_ABI, functionName: 'safeBalances', args: [OWNER, ROUTER, strategyHash, TOKEN_A, TOKEN_B] })
+                .then(([a, b]) => ({ a, b }), (e) => {
+                    if (e.walk?.((x) => x.name === 'ContractFunctionRevertedError')) return null;
+                    throw e;
+                }),
     ]);
 
     const { args: [, , tokens, amounts] } = decodeFunctionData({ abi: SHIP_ABI, data: tx.input });

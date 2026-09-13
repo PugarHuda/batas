@@ -63,11 +63,23 @@ export const POLICY = {
  * chain does not get exercised. Empty means nothing free disqualified the position; it does not
  * mean trade, which is the next decision and a different one.
  */
-export function doubtsAbout({ decoded, local, publication, authority, spotE18 = null, minRateE18 = null, quoteE18 = null }, policy = POLICY) {
+export function doubtsAbout({
+    decoded, local, publication, authority, spotE18 = null, minRateE18 = null, quoteE18 = null, docked = false, nowMs = Date.now(),
+}, policy = POLICY) {
     // The chain's reading wins when the counterparty has one. The server's answer is then a claim
     // to be checked, not a source.
     const m = (local ?? decoded)?.mandate ?? {};
     const doubts = [];
+
+    // Both of these used to pass. A docked position still decodes to sound terms, and an expired
+    // one still carries a deadline — so "has a deadline" was checked and "the deadline is behind
+    // us" was not, and the counterparty walked on to trade against terms that authorise nothing.
+    // Either party's word on the dock is enough: nobody docks a position by mistake.
+    if (docked || decoded?.docked) doubts.push('the maker has docked this position: nothing is on offer');
+    // Past the expiry second, not at it — `Deadline` is `block.timestamp <= deadline`.
+    if (m.expiryISO && nowMs >= Date.parse(m.expiryISO) + 1000) {
+        doubts.push(`the deadline passed at ${m.expiryISO}: this position authorises nothing`);
+    }
 
     if (local !== undefined && terms(local) !== terms(decoded)) {
         doubts.push('the service describes bytes the chain does not carry');
@@ -228,12 +240,17 @@ async function main() {
     let decidedHash = null;
     let spotE18 = null;
     let quoteE18 = null;
+    let shipped = null;
     if (!program) {
-        const shipped = await latestProgramOnChain();
+        shipped = await latestProgramOnChain();
         if (!shipped) throw new Error('no position shipped to the live router yet');
         decidedHash = shipped.strategyHash;
         localProgram = programFromStrategy(shipped.strategy);
-
+    }
+    const docked = Boolean(shipped?.docked);
+    // A docked strategy has no reserves to read — Aqua reverts — and no quote to give. Asking
+    // anyway crashed the run on a revert, when the dock was itself the answer and a free one.
+    if (shipped && !docked) {
         const chain = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) });
         const [reserveA, reserveB] = await chain.readContract({
             address: AQUA, abi: AQUA_ABI, functionName: 'safeBalances',
@@ -277,7 +294,7 @@ async function main() {
     say('reason', authority.reason);
 
     head(5, 'The decision');
-    const doubts = doubtsAbout({ decoded, local, publication: pub, authority, spotE18, minRateE18, quoteE18 });
+    const doubts = doubtsAbout({ decoded, local, publication: pub, authority, spotE18, minRateE18, quoteE18, docked });
     if (doubts.length > 0) {
         console.log('  walking away, having spent nothing:');
         for (const d of doubts) console.log(`    · ${d}`);
@@ -364,6 +381,12 @@ async function act({ floorRateE18, feedbackURI, agentId, decidedHash } = {}) {
     if (shipped.strategyHash.toLowerCase() !== decidedHash.toLowerCase()) {
         console.log(`  not trading: the live position is now ${shipped.strategyHash}`);
         console.log(`  and the verdict was about ${decidedHash}. decide again.`);
+        return;
+    }
+    // The same position, closed since the verdict. The approve below would still be sent and the
+    // swap would revert in simulation, spending gas to learn what one read already says.
+    if (shipped.docked) {
+        console.log('  not trading: the maker docked this position between deciding and acting.');
         return;
     }
     const [order] = decodeAbiParameters(

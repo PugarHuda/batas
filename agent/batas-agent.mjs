@@ -20,6 +20,7 @@ import {
 
 import { toProgram, decideMandate, decodeProgram, readMandate, volatilityBudget, clearsFloor } from './swapvm.mjs';
 import { programFromStrategy } from './inspect.mjs';
+import { largestClearingInput } from './health.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { publishMandate } from './hcs.mjs';
 import { AQUA, ROUTER, TOKENS, ENS_REGISTRY, MANDATE_NAME, SEPOLIA_RPC, HCS_TOPIC } from './deployment.mjs';
@@ -148,6 +149,32 @@ export function refusesOwnCap({ reserveA, reserveB, maxAmountIn, minRateE18, fee
 }
 
 /**
+ * The terms a renewal may ship, given the ones it replaces.
+ *
+ * Renewal may tighten and never loosen: the cap may not grow and the floor may not fall (the watch
+ * loop in `tick` says why each). Holding the floor used to stop there, and that shipped a cap the
+ * new floor refused. `decideMandate` sizes the cap so a max trade lands exactly on *its* floor; lift
+ * the floor and that same trade lands under it, which is the cap that never binds — worse than no
+ * cap, because it reads like a limit. So a held floor re-sizes the cap against the amounts that will
+ * actually ship, priced by the contract's own check. A cap of zero here means spot after fee already
+ * sits under the held floor and the new position would refuse everything.
+ */
+export function holdTerms({ decided, liveCap = null, liveFloor = null, reserveA, reserveB, feeBps }) {
+    let { maxAmountIn, minRateE18 } = decided;
+    const held = [];
+    if (liveCap !== null && maxAmountIn > liveCap) {
+        maxAmountIn = liveCap;
+        held.push('cap');
+    }
+    if (liveFloor !== null && minRateE18 < liveFloor) {
+        minRateE18 = liveFloor;
+        held.push('floor');
+        maxAmountIn = largestClearingInput({ reserveA, reserveB, minRateE18, feeBps, ceiling: maxAmountIn });
+    }
+    return { maxAmountIn, minRateE18, held };
+}
+
+/**
  * Should this mandate be replaced yet?
  *
  * Pure, exported and deliberately narrow. The agent renews on *time* and on nothing else: a
@@ -264,16 +291,34 @@ async function tick({ watching = false, mayShip = true } = {}) {
             to = from - 1n;
             if (from === 0n) break;
         }
-    } catch {
+    } catch (e) {
         // History is an input to a better number, not a precondition for acting. A node that will
-        // not serve the range leaves the budget at its floor rather than stopping the agent.
+        // not serve the range leaves the budget at its floor rather than stopping the agent. The
+        // windows it did serve are the newest ones only, so they are dropped rather than measured:
+        // the comment above promised the floor, and the loop kept a partial sample. And it is said,
+        // because the budget's own reason — "not enough settled trades" — is a claim about the
+        // market that a refused request did not establish.
+        settledRates.length = 0;
+        console.log(`trade history unavailable (${String(e.shortMessage || e.message || e)}); budget holds at its floor`);
     }
     settledRates.sort((a, b) => (a.block === b.block ? a.index - b.index : (a.block < b.block ? -1 : 1)));
 
-    const [reserveA, reserveB] = await pub.readContract({
-        address: AQUA, abi: AQUA_ABI, functionName: 'safeBalances',
-        args: [account.address, ROUTER, strategyHash, TOKEN_A, TOKEN_B],
-    });
+    // Aqua reverts for a docked strategy rather than answering zero. The newest ship being docked
+    // is the owner having closed the position by hand, and there is nothing to renew from: the
+    // reserves the new terms would be derived from are gone. That used to surface as a raw revert
+    // and a failed round, every round. Anything other than a revert is still a failure.
+    let reserveA, reserveB;
+    try {
+        [reserveA, reserveB] = await pub.readContract({
+            address: AQUA, abi: AQUA_ABI, functionName: 'safeBalances',
+            args: [account.address, ROUTER, strategyHash, TOKEN_A, TOKEN_B],
+        });
+    } catch (e) {
+        if (!e.walk?.((x) => x.name === 'ContractFunctionRevertedError')) throw e;
+        console.log('\nthe newest position is docked; the owner closed it, and there is nothing to renew');
+        // Not a stop in a watch: the owner may ship a new position, and the next round finds it.
+        return { shipped: false, stopped: 'docked' };
+    }
 
     // The terms the live position enforces, read once. An undecodable strategy is not a reason to
     // skip the authority check, and it caps nothing: the fresh mandate starts from measurement.
@@ -356,19 +401,26 @@ async function tick({ watching = false, mayShip = true } = {}) {
     // key could grow for itself, one renewal at a time, and the chain would let it: every mandate
     // is valid on its own. So the previous mandate's cap is a ceiling on the next one. Tightening
     // is the maker's to undo, by granting a wider mandate by hand.
-    let { maxAmountIn, minRateE18 } = decided;
-    if (liveCap !== null && maxAmountIn > liveCap) {
-        console.log(`  cap held at the previous mandate's ${formatUnits(liveCap, 18)} A: renewal may tighten, never widen`);
-        maxAmountIn = liveCap;
-    }
     // And it may not lower the floor, for the same reason with a slower fuse. The floor is struck
     // one budget under the spot the position's own reserves imply, and a max fill lands exactly on
     // the floor and leaves spot lower than it. Re-striking at every renewal is a ratchet: a day of
     // hourly renewals took spot from 1.96 to 1.43 in the arithmetic, one budget at a time, with no
     // single step that looked like anything. So the previous floor is a floor on the next one.
-    if (liveFloor !== null && minRateE18 < liveFloor) {
+    const { maxAmountIn, minRateE18, held } = holdTerms({
+        decided, liveCap, liveFloor, reserveA: shipA, reserveB: shipB, feeBps: FEE_BPS,
+    });
+    if (held.includes('cap')) {
+        console.log(`  cap held at the previous mandate's ${formatUnits(liveCap, 18)} A: renewal may tighten, never widen`);
+    }
+    if (held.includes('floor')) {
         console.log(`  floor held at the previous mandate's ${formatUnits(liveFloor, 18)} B per A: renewal may tighten, never loosen`);
-        minRateE18 = liveFloor;
+        console.log(`  cap re-sized to ${formatUnits(maxAmountIn, 18)} A, the largest trade that clears the held floor`);
+        if (maxAmountIn === 0n) {
+            // Only A-for-B trades settle and each one lowers spot, so this does not clear on its
+            // own; the same stop the live position's refusal gets, for the same reason.
+            console.log('\nspot after fee is under the held floor: the renewal would refuse every trade; only the owner can loosen a floor; nothing was shipped');
+            return { shipped: false, stopped: 'refuses own cap' };
+        }
     }
 
     console.log('\ndecision');
