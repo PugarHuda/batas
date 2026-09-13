@@ -368,3 +368,49 @@ test('the direction is a term, read back and refused when missing', () => {
     const legacy = instruction(OP.POLICY_ENVELOPE, '0x' + '00'.repeat(32)) + xycSwap().slice(2);
     assert.throws(() => explain(legacy), /33 arg bytes/);
 });
+
+// --- two-sided bands ---------------------------------------------------------
+
+const E18n = 10n ** 18n;
+const bandTerms = {
+    tokenA: '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B',
+    tokenB: '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81',
+    priceMinE18: 18n * E18n / 10n, priceMaxE18: 22n * E18n / 10n,
+    aToB: { maxAmountIn: 500n * E18n, minRateE18: 196n * E18n / 100n },
+    bToA: { maxAmountIn: 1000n * E18n, minRateE18: 49n * E18n / 100n },
+    expiry: 1_800_000_000, feeBps: 30_000, decayPeriod: 600, salt: 1n,
+};
+
+test('a two-sided band reads as guarded, with each side under its own cap and floor', async () => {
+    const { toBandProgram } = await import('./band.mjs');
+    const r = explain(toBandProgram(bandTerms));
+    assert.equal(r.guarded, true, 'each branch starts with an envelope, so the band is guarded');
+    assert.equal(r.instructions[0].name, 'JUMP_IF_TOKEN_IN');
+    const [a, b] = r.mandate.sides;
+    assert.deepEqual([a.direction, a.maxAmountInFormatted, a.minRateFormatted], ['aToB', '500', '1.96']);
+    assert.deepEqual([b.direction, b.maxAmountInFormatted, b.minRateFormatted], ['bToA', '1000', '0.49']);
+    // Two caps in two tokens are not one number, so the merged view invents neither.
+    assert.equal(r.mandate.maxAmountIn, null);
+    assert.equal(r.mandate.direction, null);
+    assert.equal(r.mandate.decayPeriodSeconds, 600);
+    assert.equal(r.mandate.priceRange.min.slice(0, 4), '1.79');
+    assert.ok(!r.notes.some((n) => /No size cap|No floor price|unbounded/.test(n)), r.notes.join('\n'));
+});
+
+test('a band whose shape is off by one jump is read as unguarded, not trusted', async () => {
+    const { toBandProgram } = await import('./band.mjs');
+    const good = toBandProgram(bandTerms);
+    const exit = decodeProgram(good).find((i) => i.name === 'JUMP');
+    const at = 2 + exit.offset * 2;
+
+    // Exit one byte short of the end: the fall-through side would run into the other one.
+    const short = good.slice(0, at + 4) + (parseInt(exit.args, 16) - 1).toString(16).padStart(4, '0') + good.slice(at + 8);
+    assert.equal(explain(short).guarded, false);
+
+    // The exit replaced by a Salt of the same width: nothing stops side 1 at its end.
+    const noExit = good.slice(0, at) + '02020000' + good.slice(at + 8);
+    assert.equal(explain(noExit).guarded, false);
+
+    // A second jump inside a branch is a way out of an envelope this reader did not reason about.
+    assert.equal(explain(good + instruction(OP.JUMP, '0x0000').slice(2)).guarded, false);
+});
