@@ -21,6 +21,11 @@ export const OP = {
     ONLY_TAKER_BALANCE_GTE: 0x24,
     ONLY_TAKER_SUPPLY_SHARE_GTE: 0x25,
     ONLY_TX_ORIGIN_BALANCE_NONZERO: 0x26,
+    // JumpIfDirection (0x30) is deliberately absent: AquaOpcodes does not dispatch it, so the
+    // router answers UnknownOpcode and a report naming it as a branch would describe a program
+    // that cannot run.
+    JUMP_IF_TOKEN_IN: 0x31,
+    JUMP_IF_TOKEN_OUT: 0x32,
     XYC_SWAP: 0x50,
     XYC_CONCENTRATE_SWAP: 0x51,
     PEGGED_SWAP: 0x58,
@@ -82,6 +87,31 @@ export const deadline = (unixTs) => instruction(OP.DEADLINE, pad(toHex(unixTs), 
 export const feeFlatIn = (feeBps) => instruction(OP.FEE_FLAT_IN, pad(toHex(feeBps), { size: 3 }));
 export const xycSwap = () => instruction(OP.XYC_SWAP);
 export const salt = (value) => instruction(OP.SALT, pad(toHex(value), { size: 8 }));
+/** `Jump`: two bytes of absolute program counter, as `Jump.build` packs it. */
+export const jump = (nextPC) => {
+    if (nextPC < 0 || nextPC > 0xffff) throw new Error(`jump target ${nextPC} does not fit two bytes`);
+    return instruction(OP.JUMP, pad(toHex(nextPC), { size: 2 }));
+};
+/** `JumpIfTokenIn`: [token][uint16 nextPC]. Taken when the taker's input token is `token`. */
+export const jumpIfTokenIn = (token, nextPC) => {
+    if (nextPC < 0 || nextPC > 0xffff) throw new Error(`jump target ${nextPC} does not fit two bytes`);
+    return instruction(OP.JUMP_IF_TOKEN_IN, concat([pad(token, { size: 20 }), pad(toHex(nextPC), { size: 2 })]));
+};
+/**
+ * `XYCConcentrateSwap`: [sqrtPriceMin][sqrtPriceMax], each a uint256 square root of a 1e18 price.
+ *
+ * The same refusal `XYCConcentrateSwap.build` makes. The instruction's own `exec` does not check
+ * the bounds, so an inverted pair built by hand would ship and price nonsense.
+ */
+export const xycConcentrate = (sqrtPriceMin, sqrtPriceMax) => {
+    if (!(sqrtPriceMin > 0n && sqrtPriceMin < sqrtPriceMax)) throw new Error('concentrated bounds must satisfy 0 < min < max');
+    return instruction(OP.XYC_CONCENTRATE_SWAP, concat([pad(toHex(sqrtPriceMin), { size: 32 }), pad(toHex(sqrtPriceMax), { size: 32 })]));
+};
+/** `Decay`: [uint16 period seconds]. The counter-trade spread it adds fades to zero over `period`. */
+export const decay = (period) => {
+    if (!(period > 0 && period <= 0xffff)) throw new Error(`decay period ${period} must be 1..65535 seconds`);
+    return instruction(OP.DECAY, pad(toHex(period), { size: 2 }));
+};
 /**
  * The kill switch, as bytes: [registry][holder][label length][label].
  *
@@ -353,6 +383,17 @@ export function readMandate(instructions) {
                 break;
             case OP.XYC_CONCENTRATE_SWAP:
                 terms.curve = 'concentrated constant product';
+                // The range is only reported when both bounds are really there. A short one reads
+                // its bounds out of whatever calldata follows, and a range made of that is not a
+                // term anybody set.
+                if (ins.args.length === 128) {
+                    const sqrtMin = hexToBig(ins.args.slice(0, 64));
+                    const sqrtMax = hexToBig(ins.args.slice(64, 128));
+                    terms.priceRange = { minE18: (sqrtMin * sqrtMin) / E18, maxE18: (sqrtMax * sqrtMax) / E18 };
+                }
+                break;
+            case OP.DECAY:
+                if (ins.args.length === 4) terms.decayPeriod = Number(hexToBig(ins.args));
                 break;
             case OP.PEGGED_SWAP:
                 terms.curve = 'pegged / stable curve';
@@ -364,13 +405,112 @@ export function readMandate(instructions) {
     return terms;
 }
 
+const JUMPS = new Set([OP.JUMP, OP.JUMP_IF_TOKEN_IN, OP.JUMP_IF_TOKEN_OUT, 0x30]);
+
+/**
+ * Recognise a two-sided program: one branch per direction, each under its own PolicyEnvelope.
+ *
+ * An envelope carries one direction, so a position that trades both ways needs two, and SwapVM can
+ * only reach the second by jumping. That breaks the rule `explain` otherwise lives by — envelope
+ * first or unguarded — because the first instruction is now the jump. The shape below is the one
+ * case where that is still safe, and it is matched exactly rather than approximately:
+ *
+ *   [JumpIfTokenIn token → L] [PolicyEnvelope ... Jump → end] L: [PolicyEnvelope ...]
+ *
+ * The jump runs before any envelope, but it only chooses which envelope runs; it cannot settle
+ * anything. The fall-through side must end in a Jump to exactly the end of the program, which
+ * executes inside its envelope, so it cannot wander into the other side. Any further jump, in
+ * either branch, and this returns null and the program is read as flat — where it reports as
+ * unguarded — because a jump this function did not reason about is a way out of an envelope.
+ */
+export function bandShape(instructions, byteLength) {
+    const [first] = instructions;
+    if (!first || first.opcode !== OP.JUMP_IF_TOKEN_IN || first.args.length !== 44) return null;
+    const target = parseInt(first.args.slice(40, 44), 16);
+    const split = instructions.findIndex((i) => i.offset === target);
+    if (split < 2) return null;
+    const fall = instructions.slice(1, split);
+    const jumped = instructions.slice(split);
+    const exit = fall[fall.length - 1];
+    if (exit.opcode !== OP.JUMP || exit.args.length !== 4 || parseInt(exit.args, 16) !== byteLength) return null;
+    if ([...fall.slice(0, -1), ...jumped].some((i) => JUMPS.has(i.opcode))) return null;
+    if (fall[0].opcode !== OP.POLICY_ENVELOPE || jumped[0].opcode !== OP.POLICY_ENVELOPE) return null;
+    return { token: `0x${first.args.slice(0, 40)}`, fall, jumped };
+}
+
+/**
+ * The terms both sides of a band share, and null for any they do not.
+ *
+ * A cap in A and a cap in B are not one number, so no single figure is invented for them. The one
+ * exception is the expiry: the grant as a whole ends when its last side does, and only if every
+ * side has a deadline at all.
+ */
+function mergeSides(sides) {
+    const key = (v) => JSON.stringify(v, (_, x) => (typeof x === 'bigint' ? x.toString() : x));
+    const merged = {};
+    for (const k of new Set(sides.flatMap(Object.keys))) {
+        merged[k] = sides.every((s) => key(s[k]) === key(sides[0][k])) ? sides[0][k] : null;
+    }
+    const expiries = sides.map((s) => s.expiry);
+    merged.expiry = expiries.includes(null) ? null : Math.max(...expiries);
+    // Salt is a hash nonce and sits in one branch only; it is still the program's salt.
+    merged.salt = sides.map((s) => s.salt).find((v) => v !== null) ?? null;
+    if (merged.priceRange === null) delete merged.priceRange;
+    if (merged.decayPeriod === null || merged.decayPeriod === undefined) delete merged.decayPeriod;
+    return merged;
+}
+
+// The terms a stranger reads, in the units they read them in. Shared by a flat program and by
+// each side of a band so the two cannot format the same term differently.
+const formatTerms = (t) => ({
+    maxAmountIn: t.maxAmountIn?.toString() ?? null,
+    maxAmountInFormatted: t.maxAmountIn === null ? null : formatUnits(t.maxAmountIn, 18),
+    minRateE18: t.minRateE18?.toString() ?? null,
+    minRateFormatted: t.minRateE18 === null ? null : formatUnits(t.minRateE18, 18),
+    expiry: t.expiry,
+    expiryISO: t.expiry === null ? null : new Date(t.expiry * 1000).toISOString(),
+    feeBps: t.feeBps,
+    feePercent: t.feeBps === null ? null : (t.feeBps / Number(BPS)) * 100,
+    curve: t.curve,
+    salt: t.salt,
+    // Which way the terms are denominated. The other direction is refused outright; a
+    // report that showed a cap without saying which token it is a cap on would be showing
+    // half a number.
+    direction: t.direction,
+    // Only for a concentrated curve, and only when both bounds are really encoded.
+    ...(t.priceRange ? {
+        priceRange: {
+            minE18: t.priceRange.minE18.toString(), min: formatUnits(t.priceRange.minE18, 18),
+            maxE18: t.priceRange.maxE18.toString(), max: formatUnits(t.priceRange.maxE18, 18),
+        },
+    } : {}),
+    ...(t.decayPeriod !== undefined ? { decayPeriodSeconds: t.decayPeriod } : {}),
+});
+
 /** Plain-language reading of what a position will and will not do. */
 export function explain(program) {
     const instructions = decodeProgram(program);
-    const t = readMandate(instructions);
+    const band = bandShape(instructions, (program.length - 2) / 2);
+    const sides = band ? [band.fall, band.jumped].map(readMandate) : null;
+    const t = sides ? mergeSides(sides) : readMandate(instructions);
 
-    const guarded = instructions.length > 0 && instructions[0].opcode === OP.POLICY_ENVELOPE;
+    const guarded = Boolean(band) || (instructions.length > 0 && instructions[0].opcode === OP.POLICY_ENVELOPE);
     const notes = [];
+
+    if (sides) {
+        notes.push(
+            'Two-sided: the first instruction picks a branch by input token, and each branch runs under '
+            + 'its own PolicyEnvelope with its own cap and floor. Read the terms per side.',
+        );
+        if (sides[0].direction === sides[1].direction) {
+            notes.push('Both envelopes are denominated in the same direction, so one side refuses every trade.');
+        }
+        sides.forEach((s, i) => {
+            const which = `Side ${i + 1} (${s.direction})`;
+            if (s.expiry === null) notes.push(`${which} has no deadline: that side never expires.`);
+            if (s.feeBps === null) notes.push(`${which} takes no maker fee.`);
+        });
+    }
 
     if (!guarded) {
         notes.push(
@@ -397,8 +537,14 @@ export function explain(program) {
             + 'a stream this long is doing something other than granting one.',
         );
     }
-    if (t.maxAmountIn === null) notes.push('No size cap: a single trade may consume the whole reserve.');
-    if (t.minRateE18 === null) notes.push('No floor price: the position will settle at any rate the curve produces.');
+    // A band's two caps are in two different tokens, so the merged view carries neither; asking it
+    // would call a two-sided position uncapped. Each side answers for itself instead.
+    const scopes = sides ? sides.map((s, i) => [s, `Side ${i + 1} (${s.direction}): `]) : [[t, '']];
+    for (const [s, which] of scopes) {
+        if (s.maxAmountIn === null) notes.push(`${which}No size cap: a single trade may consume the whole reserve.`);
+        if (s.minRateE18 === null) notes.push(`${which}No floor price: the position will settle at any rate the curve produces.`);
+    }
+    const hasFloor = scopes.every(([s]) => s.minRateE18 !== null);
 
     // Limits that are present but do not limit.
     //
@@ -422,7 +568,7 @@ export function explain(program) {
     // the same thing on the day the mandate is written and drift apart afterwards, so the longer
     // the term, the less the floor is protecting. A caller deciding whether to trust a position
     // has to be told which of the two it was sold.
-    if (t.minRateE18 !== null && t.expiry !== null && t.expiry * 1000 > Date.now() + FLOOR_GOES_STALE_MS) {
+    if (hasFloor && t.expiry !== null && t.expiry * 1000 > Date.now() + FLOOR_GOES_STALE_MS) {
         const days = Math.round((t.expiry * 1000 - Date.now()) / 86_400_000);
         notes.push(
             `The floor is a fixed rate chosen when this mandate was granted, not a reading of any `
@@ -447,20 +593,10 @@ export function explain(program) {
             .slice(0, MAX_LISTED_INSTRUCTIONS)
             .map((i) => ({ offset: i.offset, name: i.name, args: `0x${i.args}` })),
         mandate: {
-            maxAmountIn: t.maxAmountIn?.toString() ?? null,
-            maxAmountInFormatted: t.maxAmountIn === null ? null : formatUnits(t.maxAmountIn, 18),
-            minRateE18: t.minRateE18?.toString() ?? null,
-            minRateFormatted: t.minRateE18 === null ? null : formatUnits(t.minRateE18, 18),
-            expiry: t.expiry,
-            expiryISO: t.expiry === null ? null : new Date(t.expiry * 1000).toISOString(),
-            feeBps: t.feeBps,
-            feePercent: t.feeBps === null ? null : (t.feeBps / Number(BPS)) * 100,
-            curve: t.curve,
-            salt: t.salt,
-            // Which way the terms are denominated. The other direction is refused outright; a
-            // report that showed a cap without saying which token it is a cap on would be showing
-            // half a number.
-            direction: t.direction,
+            ...formatTerms(t),
+            // Present only for a two-sided program: the terms each branch enforces, in the order
+            // they sit in the bytes. The fields above then carry only what both sides agree on.
+            ...(sides ? { sides: sides.map((s) => ({ ...formatTerms(s), killSwitch: s.name })) } : {}),
             // Reported as a fact rather than remarked on.
             //
             // The notes above are for terms that are present and do not limit, and a reader could
