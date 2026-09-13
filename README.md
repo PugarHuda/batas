@@ -663,8 +663,8 @@ transfers, no mocked settlement:
 
 | Step | Transaction |
 |---|---|
-| Ship liquidity under the mandate | [`0x8cdec703…`](https://sepolia.etherscan.io/tx/0x8cdec703361527046d60199bae327b8db7e784d55622897eace87b51c5909275) |
-| Swap settled inside the mandate | [`0x9408b60a…`](https://sepolia.etherscan.io/tx/0x9408b60a7bfc5345f9909153f5d5bf97feb193b5716f3c0fae21c33b89830060) |
+| Ship liquidity under the mandate | [`0x9408b60a…`](https://sepolia.etherscan.io/tx/0x9408b60a7bfc5345f9909153f5d5bf97feb193b5716f3c0fae21c33b89830060) |
+| Swap settled inside the mandate | [`0x8cdec703…`](https://sepolia.etherscan.io/tx/0x8cdec703361527046d60199bae327b8db7e784d55622897eace87b51c5909275) |
 
 10 tokenA in, **19.743160687941225977 tokenB** out to
 [`0x8474d483…`](https://sepolia.etherscan.io/address/0x8474d483Cc4374B8a16fE2D019717b23f0a5BD83) —
