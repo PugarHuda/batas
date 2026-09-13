@@ -14,7 +14,7 @@
 // quotes cost nothing; they are `eth_call`.
 
 import 'dotenv/config';
-import { createPublicClient, http, decodeAbiParameters, parseAbiParameters, getAddress } from 'viem';
+import { createPublicClient, http, decodeAbiParameters, parseAbiParameters, getAddress, ContractFunctionRevertedError } from 'viem';
 import { sepolia } from 'viem/chains';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -77,26 +77,31 @@ async function liveOrder() {
  *
  * A revert is the result being looked for, so it is caught rather than thrown: the interesting
  * output of this script is *which* refusal, and a stack trace is not that.
+ *
+ * Only a revert. An RPC that timed out, refused the connection or rate-limited us never asked the
+ * router anything, and it used to come back as `{ ok: false }` like a refusal — so a network blip
+ * during `--prove` read as the name gating the settlement. That is thrown, because "we could not
+ * ask" is not an answer about the position. `client` is here for the caller who has its own.
  */
-export async function tryQuote(order, amountIn) {
+export async function tryQuote(order, amountIn, { client: pub = client } = {}) {
     try {
-        const [, amountOut] = await client.readContract({
+        const [, amountOut] = await pub.readContract({
             address: getAddress(ROUTER), abi: QUOTE_ABI, functionName: 'quote',
             args: [order, amountIn, TAKER_DATA],
         });
         return { ok: true, amountOut };
     } catch (e) {
+        const reverted = typeof e.walk === 'function' ? e.walk((x) => x instanceof ContractFunctionRevertedError) : null;
+        if (!reverted) throw e;
+
         // viem's short message stops at "reverted with the following signature:", which is the one
         // part of a refusal that carries no information. The selector says *which* limit refused,
-        // so it is pulled out of the full message and named.
-        // viem puts the revert bytes on `cause.raw` and only the words in the message, so the
-        // selector is read from the data rather than scraped out of English that changes between
-        // versions. The message is the fallback, not the source.
-        // The message fallback reads only after "signature:"; the first eight hex digits in the
-        // message are the router's own address, and a revert with no data was being named after it.
-        const raw = e.cause?.raw ?? e.raw ?? e.cause?.data;
-        const selector = raw
-            ? String(raw).slice(0, 10).toLowerCase()
+        // so it is read from the revert bytes viem keeps on `raw` rather than scraped out of
+        // English that changes between versions. The message is the fallback, not the source, and
+        // it reads only after "signature:": the first eight hex digits in the message are the
+        // router's own address, and a revert with no data was being named after it.
+        const selector = reverted.raw
+            ? String(reverted.raw).slice(0, 10).toLowerCase()
             : String(e.message ?? e).match(/signature:\s*(0x[0-9a-f]{8})/i)?.[1]?.toLowerCase();
         if (!selector || selector === '0x') {
             // No selector at all is not one of the mandate's refusals: those all carry one. A bare

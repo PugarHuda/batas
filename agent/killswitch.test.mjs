@@ -11,9 +11,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { toFunctionSelector } from 'viem';
+import { toFunctionSelector, createPublicClient, http } from 'viem';
+import { sepolia } from 'viem/chains';
 
-import { ERRORS, verdict } from './killswitch.mjs';
+import { ERRORS, verdict, tryQuote } from './killswitch.mjs';
 
 /**
  * Every error the built router declares, as selector → signature.
@@ -114,4 +115,25 @@ test('and it has to come back at the same price it left at', () => {
     const v = verdict({ before: ok(1952840679837944719n), during: refused('x'), after: ok(1952840679000000000n) });
     assert.equal(v.gated, false);
     assert.match(v.reason, /different price/);
+});
+
+// --- a refusal and a failed read are different answers -----------------------
+//
+// Both against the real router on Sepolia, read-only: `quote` is an eth_call.
+
+const NOBODY = { maker: '0x0000000000000000000000000000000000000001', traits: 0n, data: '0x' };
+
+test('a quote the live router refuses comes back as a refusal with its selector', async () => {
+    // An order for a maker with nothing shipped and no program: the router reverts, with data.
+    const q = await tryQuote(NOBODY, 1n);
+    assert.equal(q.ok, false);
+    assert.match(q.why, /^0x[0-9a-f]{8}$| — /, q.why);
+});
+
+test('a quote that never reached the router is thrown, not reported as refused', async () => {
+    // Before, this came back `{ ok: false }`, and `--prove` would have counted a dead RPC during the
+    // middle quote as the name gating the settlement. A real connection to a port nothing listens
+    // on fails the way a dead RPC does.
+    const dead = createPublicClient({ chain: sepolia, transport: http('http://127.0.0.1:1', { retryCount: 0 }) });
+    await assert.rejects(tryQuote(NOBODY, 1n, { client: dead }), /HTTP request failed/);
 });
