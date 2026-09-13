@@ -88,3 +88,12 @@ export const REPUTATION_REGISTRY = getAddress(
  * forget it.
  */
 export const TOKENS = [TOKEN_A, TOKEN_B].sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : 1));
+
+/**
+ * Batas Inspection Credit (BIC), the HTS token the paid inspection accepts after HBAR.
+ *
+ * Its custom fee schedule is part of every settlement in it: a 1% fractional fee, paid by the sender
+ * on top of the price and collected by the service account, assessed by the ledger at consensus
+ * rather than by anything this service runs. Created by `node agent/hts.mjs --create`.
+ */
+export const HTS_TOKEN = env('BATAS_HTS_TOKEN', '0.0.10523367');
