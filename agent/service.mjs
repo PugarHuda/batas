@@ -22,7 +22,7 @@ import 'dotenv/config';
 import { explain, MAX_LISTED_INSTRUCTIONS } from './swapvm.mjs';
 import { resolveAgent, vouchesFor, parseAgentId } from './erc8004.mjs';
 import { lookupMandate } from './hcs.mjs';
-import { decodeAnswer, publicationAnswer, authorityAnswer, reputationAnswer } from './free.mjs';
+import { decodeAnswer, publicationAnswer, authorityAnswer, nameAnswer, reputationAnswer } from './free.mjs';
 import { healthAnswer } from './health.mjs';
 import { page } from './ui.mjs';
 import { landing } from './landing.mjs';
@@ -323,6 +323,7 @@ const freely = (handler) => async (req, res) => {
 app.post('/v1/mandate/decode', freely((req) => decodeAnswer(req.body?.program)));
 app.post('/v1/mandate/publication', freely((req) => publicationAnswer(req.body?.program)));
 app.get('/v1/agent/reputation', freely((req) => reputationAnswer({ agentId: req.query?.agentId })));
+app.get('/v1/agent/name', freely((req) => nameAnswer({ name: req.query?.name })));
 app.get('/v1/position/health', freely(() => healthAnswer()));
 // Passed through as the query string gave them; authorityAnswer decides what a valid deadline is, so
 // "abc" is refused there rather than becoming NaN here and being quietly ignored.

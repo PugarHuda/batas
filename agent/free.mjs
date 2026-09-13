@@ -16,11 +16,12 @@ import { sepolia } from 'viem/chains';
 
 import { explain, decodeProgram, readMandate } from './swapvm.mjs';
 import { lookupMandate } from './hcs.mjs';
-import { mandateNameStatus } from './ens.mjs';
+import { mandateNameStatus, resolveName } from './ens.mjs';
+import { verifyAgentLink } from './ens-hierarchy.mjs';
 import { latestProgramOnChain, programFromStrategy } from './position.mjs';
 import { readReputation } from './reputation.mjs';
 import { parseAgentId } from './erc8004.mjs';
-import { OWNER, ENS_REGISTRY, MANDATE_NAME, HCS_TOPIC, AGENT_ID, SEPOLIA_RPC } from './deployment.mjs';
+import { OWNER, ENS_REGISTRY, MANDATE_NAME, ENS_NAME, ENS_PARENT_LABEL, HCS_TOPIC, AGENT_ID, SEPOLIA_RPC } from './deployment.mjs';
 
 const HEX = /^0x[0-9a-fA-F]*$/;
 
@@ -153,6 +154,25 @@ export async function authorityAnswer({ label, grantedUntil } = {}) {
         grantedUntil: until,
     });
     return { label: name, registry: getAddress(ENS_REGISTRY), ...status };
+}
+
+/**
+ * The agent's name as ENS clients see it: resolved through the UniversalResolver, with the ENSIP-25
+ * link to its ERC-8004 identity checked in both directions.
+ *
+ * Limited to names under the project's own parent. A free route that resolved any name would be an
+ * RPC relay for strangers, and the only names this service has anything to say about are its own —
+ * which include the alias and the wildcard answers, so those stay askable.
+ */
+export async function nameAnswer({ name } = {}) {
+    if (name !== undefined && typeof name !== 'string') throw refused(400, 'name must be a string');
+    const asked = (name || ENS_NAME).toLowerCase();
+    if (!asked.endsWith(`.${ENS_PARENT_LABEL}.eth`) || asked.length > 255) {
+        throw refused(400, `name must be a name under ${ENS_PARENT_LABEL}.eth`);
+    }
+    const pub = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) });
+    const [resolved, link] = await Promise.all([resolveName(pub, asked), verifyAgentLink(pub, { name: asked })]);
+    return { name: asked, ...resolved, erc8004: link };
 }
 
 /**

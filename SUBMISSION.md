@@ -148,7 +148,7 @@ against a paraphrase of it.
 |---|---|
 | "Project must be built on ENSv2 (Sepolia)" | `UserRegistry` proxy via ENS's own `VerifiableFactory`, `0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B` |
 | "ENSv2 features should be central to the product, not a cosmetic add-on" | `MandateName`, SwapVM opcode `0x22`, reads the registry during settlement: revoke the subname and the swap reverts for every caller. The same name resolves as `agent.batas.eth` through ENS's UniversalResolver |
-| "Your demo must be functional and not just include hard-coded values" | `node agent/killswitch.mjs --prove` revokes, quotes, and re-grants against the live chain; `/v1/agent/authority` reads it block-pinned |
+| "Your demo must be functional and not just include hard-coded values" | `node agent/killswitch.mjs --prove` revokes, quotes, and re-grants against the live chain; `/v1/agent/authority` reads it block-pinned; `/v1/agent/name` resolves `agent.batas.eth` through the UniversalResolver on every request and checks its ENSIP-25 link to ERC-8004 agent #10123 both ways |
 | "a video recording or link to a live demo (ideally both) … open source" | both, and the repository is public |
 
 | Feature the prize names | Status |

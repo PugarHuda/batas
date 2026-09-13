@@ -979,6 +979,7 @@ The mandate registry that the settlement reads ([`0x945800Bd…`](https://sepoli
 The `agent` label was pointed at that resolver ([tx](https://sepolia.etherscan.io/tx/0xfd6a6c72edb48ca778ce122d982699c76926e774e833b5fa867ff85e133f9613)), and the change touched nothing else. `getState` returns the same status, expiry, owner and token id before and after, so the kill switch did not move.
 
 ```bash
+curl https://batas-one.vercel.app/v1/agent/name   # the same resolution, served live: records, alias, and the ENSIP-25 link
 npm run ens:resolve          # agent.batas.eth through the UniversalResolver
 npm run ens:verify           # ENSIP-25, both directions
 node agent/ens.mjs --resolve mandate.batas.eth

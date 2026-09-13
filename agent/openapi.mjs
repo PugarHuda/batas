@@ -304,6 +304,15 @@ export const ROUTES = [
         responses: { 200: answer('Authority', 'held, lapsed, or revoked'), ...FREE_ERRORS },
     },
     {
+        method: 'get', path: '/v1/agent/name', free: true,
+        summary: 'The agent as ENS resolves it',
+        description: 'Resolve agent.batas.eth, or any name under batas.eth, through the ENS UniversalResolver on Sepolia: its resolver, address and ENSIP-26 agent records, followed through record aliases and wildcard resolution. Also checks the ENSIP-25 link to ERC-8004 agent #10123 in both directions, so the name and the identity each vouch for the other or neither does.',
+        parameters: [
+            { name: 'name', in: 'query', schema: { type: 'string' }, description: 'a name under batas.eth; default agent.batas.eth' },
+        ],
+        responses: { 200: { description: 'the resolved records and the ENSIP-25 link', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } }, ...FREE_ERRORS },
+    },
+    {
         method: 'get', path: '/v1/agent/reputation', free: true,
         skill: { id: 'check_reputation', tags: ['erc-8004', 'reputation', 'free'] },
         summary: 'What clients have said',
