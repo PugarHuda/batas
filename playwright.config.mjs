@@ -1,5 +1,10 @@
 import { defineConfig } from '@playwright/test';
 
+// The port is an environment variable so parallel runs — several agents in separate worktrees —
+// each start their own server instead of silently reusing another run's, which would test code that
+// is not the code under test.
+const PORT = Number(process.env.PORT || 4021);
+
 // API tests only. The service under test is an HTTP paywall, so there is nothing to render and no
 // browser is launched — Playwright is here for its request fixture, its server lifecycle handling
 // and its reporting, not for a page.
@@ -14,7 +19,7 @@ export default defineConfig({
     ],
     reporter: process.env.CI ? 'github' : 'list',
     use: {
-        baseURL: process.env.BATAS_SERVICE_URL || 'http://127.0.0.1:4021',
+        baseURL: process.env.BATAS_SERVICE_URL || `http://127.0.0.1:${PORT}`,
         extraHTTPHeaders: { 'Content-Type': 'application/json' },
     },
     webServer: {
@@ -28,7 +33,7 @@ export default defineConfig({
             HEDERA_SERVICE_ID: process.env.HEDERA_SERVICE_ID || '0.0.10388560',
             BATAS_FREE_RATE_LIMIT: '12',
         },
-        url: 'http://127.0.0.1:4021/',
+        url: `http://127.0.0.1:${PORT}/`,
         reuseExistingServer: !process.env.CI,
         timeout: 30_000,
         stdout: 'pipe',

@@ -404,7 +404,9 @@ function drawEnvelope(h) {
         + '<line class="cap" x1="' + sx(cap) + '" x2="' + sx(cap) + '" y1="' + T + '" y2="' + (H - Bm) + '"/>'
         + '<text class="lbl-cap" x="' + (sx(cap) + 6) + '" y="' + (T + 12) + '">cap ' + fmt(cap, 2) + '</text>'
         + '<path class="curve" d="' + path + '"/>'
-        + '<text class="lbl-curve" x="' + (L + 8) + '" y="' + (sy(rate(0)) + 18) + '">what the pool pays today</text>'
+        + '<text class="lbl-curve" x="' + (L + 8) + '" y="' + (H - Bm - 10) + '">what the pool pays today</text>'
+        // The curve's label sits bottom-left: the curve falls left to right, so the marker riding it can
+        // never be low and left at once, and nothing else on the chart lives there.
         // Trades the position actually settled, at the size and rate they got. They sit off today's
         // curve because each one moved the reserves the curve is drawn from.
         + trades.map((t) => '<circle class="trade" r="5.5" cx="' + sx(t.x) + '" cy="' + sy(t.y) + '"><title>settled: ' + fmt(t.x, 2) + ' A at ' + fmt(t.y, 4) + '</title></circle>').join('')
