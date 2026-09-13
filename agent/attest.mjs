@@ -79,11 +79,24 @@ export async function attest(answer, { privateKey, program, chainId = DOMAIN.cha
  * Who signed this body, and whether it is still the body they signed.
  *
  * The recovered address is a fact; whether it is the address a caller expected is their check to
- * make, against the service description or the ERC-8004 registration, not ours to assert.
+ * make, against the service description or the ERC-8004 registration, not ours to assert. A caller
+ * who has already made it passes `signer`, and a body signed by anyone else is refused here.
+ *
+ * The domain is this service's unless the caller names another. It used to be read from the body,
+ * which let the body choose what its own signature meant: the same key signing the same struct for
+ * a different chain or a different verifying contract — another deployment, a test run — produced
+ * a signature this function accepted as an attestation about this one.
  */
-export async function verifyAttestation(body, { program } = {}) {
+export async function verifyAttestation(body, { program, signer: expected, domain = DOMAIN } = {}) {
     const a = body?.attestation;
     if (!a?.signature || !a.message || !a.domain) return { valid: false, reason: 'no attestation on this body' };
+    const keys = Object.keys(a.domain).sort().join(',');
+    if (keys !== 'chainId,name,verifyingContract,version'
+        || a.domain.name !== domain.name || String(a.domain.version) !== String(domain.version)
+        || Number(a.domain.chainId) !== Number(domain.chainId)
+        || String(a.domain.verifyingContract).toLowerCase() !== String(domain.verifyingContract).toLowerCase()) {
+        return { valid: false, reason: `signed for the domain ${canonical(a.domain)}, not ${canonical(domain)}` };
+    }
     if (a.message.answerHash !== answerHash(body)) {
         return { valid: false, reason: 'the body is not the one that was signed' };
     }
@@ -93,13 +106,16 @@ export async function verifyAttestation(body, { program } = {}) {
     let signer;
     try {
         signer = await recoverTypedDataAddress({
-            domain: a.domain, types: TYPES, primaryType: PRIMARY, message: a.message, signature: a.signature,
+            domain, types: TYPES, primaryType: PRIMARY, message: a.message, signature: a.signature,
         });
     } catch (e) {
         return { valid: false, reason: `signature does not recover: ${e.shortMessage ?? e.message}` };
     }
     if (a.signer && signer.toLowerCase() !== a.signer.toLowerCase()) {
         return { valid: false, signer, reason: `signed by ${signer}, which is not the ${a.signer} it claims` };
+    }
+    if (expected && signer.toLowerCase() !== String(expected).toLowerCase()) {
+        return { valid: false, signer, reason: `signed by ${signer}, not by ${expected}` };
     }
     return { valid: true, signer, issuedAt: a.message.issuedAt };
 }

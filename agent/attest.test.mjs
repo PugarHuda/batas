@@ -68,3 +68,42 @@ test('a signature moved onto another program, or forged for another signer, does
 
     assert.equal((await verifyAttestation(ANSWER)).valid, false);
 });
+
+test('a signature made for another domain does not verify as this service\'s', async () => {
+    // Same key, same struct, a different verifying contract: a real signature, about something else.
+    const elsewhere = await attest(ANSWER, { privateKey: KEY, program: PROGRAM, verifyingContract: '0x0000000000000000000000000000000000000001' });
+    const moved = await verifyAttestation({ ...ANSWER, attestation: elsewhere }, { program: PROGRAM });
+    assert.equal(moved.valid, false);
+    assert.match(moved.reason, /signed for the domain/);
+
+    const otherChain = await attest(ANSWER, { privateKey: KEY, program: PROGRAM, chainId: 1 });
+    assert.equal((await verifyAttestation({ ...ANSWER, attestation: otherChain })).valid, false);
+
+    // A domain relabelled on the way to match ours no longer recovers to the key that signed it.
+    const relabelled = { ...elsewhere, domain: { ...DOMAIN } };
+    const verdict = await verifyAttestation({ ...ANSWER, attestation: relabelled });
+    assert.equal(verdict.valid, false);
+    assert.match(verdict.reason, /is not the .* it claims/);
+
+    // A domain with a field ours does not have is a different domain, whatever the rest says.
+    const own = await attest(ANSWER, { privateKey: KEY, program: PROGRAM });
+    const salted = { ...own, domain: { ...own.domain, salt: `0x${'00'.repeat(32)}` } };
+    assert.equal((await verifyAttestation({ ...ANSWER, attestation: salted })).valid, false);
+
+    // The caller who names the domain it expects gets it checked against that one instead.
+    const named = await verifyAttestation({ ...ANSWER, attestation: elsewhere }, { domain: elsewhere.domain });
+    assert.equal(named.valid, true, named.reason);
+});
+
+test('a caller who knows the service key refuses a body signed by any other', async () => {
+    const attestation = await attest(ANSWER, { privateKey: KEY, program: PROGRAM });
+    const body = { ...ANSWER, attestation };
+    assert.equal((await verifyAttestation(body, { signer: attestation.signer.toLowerCase() })).valid, true);
+
+    // Without `signer` on the body at all, recovery alone names somebody; only the expectation
+    // turns that into a refusal.
+    const { signer: _dropped, ...unnamed } = await attest(ANSWER, { privateKey: `0x${randomBytes(32).toString('hex')}`, program: PROGRAM });
+    const verdict = await verifyAttestation({ ...ANSWER, attestation: unnamed }, { signer: attestation.signer });
+    assert.equal(verdict.valid, false);
+    assert.match(verdict.reason, /not by/);
+});
