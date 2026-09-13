@@ -127,3 +127,17 @@ export const BAND_SWAP_TXS = env(
     'BATAS_BAND_SWAP_TXS',
     '0x69eda36bdaaf01112f9e92d8163d67f6a4ce629eb97a64f252cecf4c7175d4e6,0x8da6253af8ac55fca6ebd5c8daef4c0f31490d271cf20b4d8982a167b6b0b94c',
 );
+
+/**
+ * The second agent namespace under batas.eth: `<COUNTERPARTY_LABEL>.<ENS_PARENT_LABEL>.eth`.
+ *
+ * agent/counterparty.mjs trades, pays and writes reputation from this address. It holds its own name in
+ * the mandate registry, granted by OWNER on the same terms as the maker's label: expiring, soulbound, and
+ * revocable by the grantor. It also holds its own ERC-8004 identity, which it minted with its own key.
+ * Both are written by `node agent/namespaces.mjs`.
+ */
+export const COUNTERPARTY = getAddress(env('BATAS_COUNTERPARTY_ADDRESS', '0x1437aF5722D5Dfe6BAEda25f3A7A39aeCA374614'));
+export const COUNTERPARTY_LABEL = env('BATAS_COUNTERPARTY_LABEL', 'counterparty');
+export const COUNTERPARTY_NAME = `${COUNTERPARTY_LABEL}.${ENS_PARENT_LABEL}.eth`;
+/** Minted by the counterparty's own key in tx 0x967a2895a649c237711b0f005ddadafaf715b6bb187c961439d08378043df081. */
+export const COUNTERPARTY_AGENT_ID = env('BATAS_COUNTERPARTY_AGENT_ID', '10258');
