@@ -11,7 +11,7 @@ import { getAddress, keccak256, toHex } from 'viem';
 
 import {
     erc7930, agentRegistrationKey, dnsEncode, desiredRecords, staleRecordCalls, killSwitchState, verifyAgentLink,
-    publicClient, REGISTRY_ABI, AGENT_NAME, ALIAS_NAME, PARENT_NAME,
+    publicClient, REGISTRY_ABI, AGENT_NAME, ALIAS_NAME, PARENT_NAME, DELEGATED_KEY, WITHHELD_KEY,
 } from './ens-hierarchy.mjs';
 import { resolveName, mandateNameStatus } from './ens.mjs';
 import { ENS_REGISTRY, ENS_RESOLVER, ETH_REGISTRY, MANDATE_NAME, OWNER, ENS_PARENT_LABEL, ENS_NAME } from './deployment.mjs';
@@ -111,6 +111,38 @@ test('ENSIP-25: agent.batas.eth and ERC-8004 agent 10123 name each other', async
     assert.equal(link.forward, true, 'the name carries the agent-registration record');
     assert.equal(link.reverse, true, `the registration lists the name; it lists ${JSON.stringify(link.registrationNames)}`);
     assert.equal(link.linked, true);
+});
+
+// --- Enhanced Access Control, on the live resolver -----------------------------
+//
+// The delegate is the counterparty account. It was granted ROLE_SET_TEXT on one key of one name, and
+// wrote that key itself. What these pin is the boundary: the grant covers that key and nothing beside it.
+
+const COUNTERPARTY = getAddress(process.env.BATAS_COUNTERPARTY_ADDRESS || '0x1437aF5722D5Dfe6BAEda25f3A7A39aeCA374614');
+const TEXT_ABI = [
+    { name: 'setText', type: 'function', stateMutability: 'nonpayable', inputs: [{ type: 'bytes32' }, { type: 'string' }, { type: 'string' }], outputs: [] },
+    { name: 'text', type: 'function', stateMutability: 'view', inputs: [{ type: 'bytes32' }, { type: 'string' }], outputs: [{ type: 'string' }] },
+    { type: 'error', name: 'EACUnauthorizedAccountRoles', inputs: [{ type: 'uint256' }, { type: 'uint256' }, { type: 'address' }] },
+];
+
+test('the delegate wrote the one record it was granted', async () => {
+    const { namehash } = await import('viem/ens');
+    const value = await publicClient().readContract({ address: ENS_RESOLVER, abi: TEXT_ABI, functionName: 'text', args: [namehash(AGENT_NAME), DELEGATED_KEY] });
+    assert.equal(getAddress(value), COUNTERPARTY);
+});
+
+test('the delegate may still write its key, and is refused every key beside it', async () => {
+    const { namehash } = await import('viem/ens');
+    const pub = publicClient();
+    const call = (key) => ({ account: COUNTERPARTY, address: ENS_RESOLVER, abi: TEXT_ABI, functionName: 'setText', args: [namehash(AGENT_NAME), key, COUNTERPARTY] });
+    await pub.simulateContract(call(DELEGATED_KEY));
+    await assert.rejects(pub.simulateContract(call(WITHHELD_KEY)), /EACUnauthorizedAccountRoles/);
+    await assert.rejects(pub.simulateContract(call('agent-endpoint[mcp]')), /EACUnauthorizedAccountRoles/, 'the endpoint records stay the maker\'s');
+    // And the grant is scoped to the name as well as the key: the same key on batas.eth is refused.
+    await assert.rejects(
+        pub.simulateContract({ ...call(DELEGATED_KEY), args: [namehash(PARENT_NAME), DELEGATED_KEY, COUNTERPARTY] }),
+        /EACUnauthorizedAccountRoles/,
+    );
 });
 
 test('one direction is not a link: a name the registration does not claim fails verification', async () => {

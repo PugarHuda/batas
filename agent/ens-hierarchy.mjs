@@ -365,6 +365,52 @@ export async function verifyAgentLink(pub, { name = AGENT_NAME, agentId = AGENT_
     };
 }
 
+/** The one text record the delegate may write, and one it may not. */
+export const DELEGATED_KEY = 'batas.counterparty';
+export const WITHHELD_KEY = 'url';
+
+/**
+ * Enhanced Access Control, used for what it is for: one account, one record, nothing else.
+ *
+ * The maker grants the counterparty ROLE_SET_TEXT on the `batas.counterparty` key of agent.batas.eth
+ * only. The counterparty then writes its own address there, which is a fact it is entitled to state,
+ * and is refused `url` on the same name in a simulation against the same resolver. Both are real
+ * answers from the deployed contract. The refusal is simulated rather than sent because a transaction
+ * that reverts proves nothing a simulation does not, and costs the delegate gas it barely has.
+ */
+async function delegate() {
+    const pub = publicClient();
+    const maker = signer();
+    const counterparty = signer('BATAS_COUNTERPARTY_KEY');
+    const node = namehash(AGENT_NAME);
+    const encoded = dnsEncode(AGENT_NAME);
+
+    const current = await pub.readContract({ address: ENS_RESOLVER, abi: RESOLVER_ABI, functionName: 'text', args: [node, DELEGATED_KEY] });
+    if (current.toLowerCase() !== counterparty.account.address.toLowerCase()) {
+        await send(pub, maker.account, maker.wallet, {
+            address: ENS_RESOLVER, abi: RESOLVER_ABI, functionName: 'authorizeTextRoles',
+            args: [encoded, DELEGATED_KEY, counterparty.account.address, true],
+        }, `grant ${DELEGATED_KEY}`);
+        await send(pub, counterparty.account, counterparty.wallet, {
+            address: ENS_RESOLVER, abi: RESOLVER_ABI, functionName: 'setText',
+            args: [node, DELEGATED_KEY, counterparty.account.address],
+        }, `delegate sets ${DELEGATED_KEY}`);
+    } else {
+        console.log(`${DELEGATED_KEY} already written by the delegate`);
+    }
+
+    try {
+        await pub.simulateContract({
+            account: counterparty.account, address: ENS_RESOLVER, abi: RESOLVER_ABI, functionName: 'setText',
+            args: [node, WITHHELD_KEY, 'https://example.invalid'],
+        });
+        throw new Error(`the delegate could set ${WITHHELD_KEY}; the grant is wider than one record`);
+    } catch (e) {
+        if (String(e.message).includes('grant is wider')) throw e;
+        console.log(`delegate refused ${WITHHELD_KEY.padEnd(10)} ${revertName(e)}`);
+    }
+}
+
 async function status() {
     const { resolveName } = await import('./ens.mjs');
     const pub = publicClient();
@@ -380,6 +426,7 @@ async function main() {
     if (argv.includes('--setup')) return setup();
     if (argv.includes('--records')) return records();
     if (argv.includes('--status')) return status();
+    if (argv.includes('--delegate')) return delegate();
     if (argv.includes('--verify')) {
         const link = await verifyAgentLink(publicClient());
         console.log(JSON.stringify(link, null, 2));
