@@ -67,7 +67,7 @@ export const SCENES = [
         title: 'The kill switch',
         en: "Here's the key part. The settlement reads that registry. Revoke the name and every swap is refused, for every caller, not just my agent. This is the recorded run: quote, revoke, refused, grant back.",
         id_: 'Ini bagian terpentingnya. Settlement membaca registry itu. Cabut namanya, dan setiap swap ditolak, untuk semua pemanggil, bukan hanya agen saya. Ini rekaman jalannya: quote, cabut, ditolak, diberikan lagi.',
-        shots: [{ clip: 'killswitch', from: 6.5, dur: 99, rows: ['E-Q2', 'E-F2'] }],
+        shots: [{ clip: 'killswitch', from: 21.5, zoom: { x: 330, y: 110, w: 1000, h: 430 }, dur: 99, rows: ['E-Q2', 'E-F2'] }],
     },
     {
         id: 'ens-features',
@@ -109,7 +109,7 @@ export const SCENES = [
         en: "That payment settled on Hedera testnet through Blocky402. The price is metered from the request, so this call cost 0.0012 HBAR. And the operator's ERC-8004 identity checks out.",
         id_: 'Pembayaran itu diselesaikan di Hedera testnet lewat Blocky402. Harganya dihitung dari request, jadi panggilan ini seharga 0.0012 HBAR. Dan identitas ERC-8004 operatornya valid.',
         shots: [
-            { term: 'counterparty-paranoid', env: 'BATAS_SERVICE_URL=',pin: 38, dur: 8, rows: ['H-Q1', 'H-E2', 'H-E1'] },
+            { term: 'counterparty-paranoid', env: 'BATAS_SERVICE_URL=', hold: true, pin: 38, dur: 8, rows: ['H-Q1', 'H-E2', 'H-E1'] },
             { clip: 'card', from: 3, dur: 99, rows: ['H-E1'] },
         ],
     },

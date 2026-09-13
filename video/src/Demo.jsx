@@ -73,8 +73,10 @@ const rowColor = (r) => (/✔|\bPASS\b|VERIFIED|passed|settled|vouches\s+true|li
 
 const Terminal = ({ shot }) => {
     const frame = useCurrentFrame();
-    const ms = (frame / FPS) * 1000;
     const p = useMemo(() => prepare(CAPTURES[shot.term]), [shot.term]);
+    // `hold` returns to a run the previous shot already played, so it opens on the finished output
+    // rather than replaying the same command a second time.
+    const ms = (frame / FPS) * 1000 + (shot.hold ? p.doneAt : 0);
     const command = `${shot.env ? `${shot.env} ` : ''}${p.command}`;
     const typed = command.slice(0, Math.ceil(command.length * Math.min(1, ms / (TYPE_MS - 250))));
     const rows = rowsAt(p, ms);
