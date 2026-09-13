@@ -12,6 +12,7 @@
 // ERC-8004 identity and whether it vouches for the address that granted the mandate.
 
 import { createPublicClient, http, getAddress } from 'viem';
+import { normalize } from 'viem/ens';
 import { sepolia } from 'viem/chains';
 
 import { explain, decodeProgram, readMandate } from './swapvm.mjs';
@@ -166,7 +167,18 @@ export async function authorityAnswer({ label, grantedUntil } = {}) {
  */
 export async function nameAnswer({ name } = {}) {
     if (name !== undefined && typeof name !== 'string') throw refused(400, 'name must be a string');
-    const asked = (name || ENS_NAME).toLowerCase();
+    if ((name ?? '').length > 255) throw refused(400, `name must be a name under ${ENS_PARENT_LABEL}.eth`);
+    // Normalised here, before the parent check and before any chain read. Lowercasing is not ENS
+    // normalisation: a label like "xn--…", "*" or an empty one passed the suffix check, failed inside
+    // the resolver and went out as a 502 upstream fault for a request that can never succeed, and a
+    // full-width spelling of a name under the parent was checked as a different string from the one
+    // resolved.
+    let asked;
+    try {
+        asked = normalize(name || ENS_NAME);
+    } catch (e) {
+        throw refused(400, `name is not a valid ENS name: ${String(e.shortMessage ?? e.message ?? e)}`);
+    }
     if (!asked.endsWith(`.${ENS_PARENT_LABEL}.eth`) || asked.length > 255) {
         throw refused(400, `name must be a name under ${ENS_PARENT_LABEL}.eth`);
     }

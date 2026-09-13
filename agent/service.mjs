@@ -101,7 +101,10 @@ export function priceFor(body) {
             { component: 'authority', tinybar: METER.authority },
         );
         const { agentId, maker } = body;
-        if (agentId !== undefined && parseAgentId(agentId) !== null && (maker === undefined || isAddress(maker))) {
+        const id = agentId === undefined ? null : parseAgentId(agentId);
+        // ownerOf takes a uint256. A larger id parses, but fails to encode before any request leaves
+        // the service, so `inspect` can only answer "not checked" and there is no read to bill for.
+        if (id !== null && id < 2n ** 256n && (maker === undefined || isAddress(maker))) {
             components.push({ component: 'operator', tinybar: METER.operator });
         }
     }

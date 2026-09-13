@@ -27,11 +27,16 @@ async function fetchJson(url, { fetchImpl, timeoutMs }) {
         return { reason: 'unreachable', detail: `HTTP ${res.status} redirect to ${res.headers.get('location')}; the file must be served by the domain itself` };
     }
     if (!res.ok) return { reason: 'unreachable', detail: `HTTP ${res.status}` };
+    let json;
     try {
-        return { json: await res.json() };
+        json = await res.json();
     } catch {
         return { reason: 'no-registrations', detail: 'the response is not JSON' };
     }
+    // Callers test `got.json` for truthiness, so a body of `null`, `false`, `0` or `""` parsed fine and
+    // then came back as a failure with no reason and no detail at all.
+    if (json === null || typeof json !== 'object') return { reason: 'no-registrations', detail: 'the response is not a JSON object' };
+    return { json };
 }
 
 // Every distinct hostname among the registration's HTTPS service endpoints. `endpoints` is the

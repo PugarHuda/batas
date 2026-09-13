@@ -30,6 +30,7 @@ export const X402_EXTENSION = 'https://github.com/google-a2a/a2a-x402/v0.1';
 
 const NETWORK = 'hedera:testnet';
 const TERMINAL = new Set(['completed', 'canceled', 'failed', 'rejected']);
+const HISTORY = 10;
 const HEX = /^0x[0-9a-fA-F]*$/;
 const DECIMAL = /^\d+(\.\d{1,18})?$/;
 const fmt = (wei) => formatUnits(wei, 18);
@@ -51,12 +52,22 @@ const chain = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) 
 /** A JSON-RPC error that is meant for the caller, carried on an Error so a handler can throw it. */
 const fault = (code, message) => Object.assign(new Error(message), { rpc: { code, message } });
 
+/** The id tasks/get and tasks/cancel act on; anything but a string is bad params, not "no such task". */
+function taskIdOf(params) {
+    if (typeof params?.id !== 'string') throw fault(-32602, 'params.id must be a task id string');
+    return params.id;
+}
+
 function amount(value, name, { optional = false } = {}) {
     if (value === undefined || value === null) {
         if (optional) return null;
         throw fault(-32602, `${name} is required`);
     }
-    if (!DECIMAL.test(String(value))) throw fault(-32602, `${name} must be a decimal token amount such as "2.5"`);
+    // A string or a number only: String(["2.5"]) is "2.5", so an array used to pass as the amount it
+    // happened to hold.
+    if (!(typeof value === 'string' || typeof value === 'number') || !DECIMAL.test(String(value))) {
+        throw fault(-32602, `${name} must be a decimal token amount such as "2.5"`);
+    }
     return parseUnits(String(value), 18);
 }
 
@@ -257,7 +268,9 @@ export function mountA2A(app, { card, resourceServer, origin, payTo, price, over
     const tasks = new Map();
     let ready;
 
-    app.get('/.well-known/agent-card.json', (_req, res) => res.json(a2aCard(card(), { origin, price })));
+    // Readable from any origin, as the ERC-8004 registration file is: A2A clients that run in a
+    // browser fetch the card cross-origin, and it holds nothing that is not public.
+    app.get('/.well-known/agent-card.json', (_req, res) => res.set('Access-Control-Allow-Origin', '*').json(a2aCard(card(), { origin, price })));
 
     async function paymentRequired(description) {
         // The facilitator's /supported names the Hedera fee payer, and a requirement without it
@@ -272,6 +285,13 @@ export function mountA2A(app, { card, resourceServer, origin, payTo, price, over
         const msg = params?.message;
         if (!msg || typeof msg !== 'object' || msg.role !== 'user' || !Array.isArray(msg.parts)) {
             throw fault(-32602, 'params.message must be a Message with role "user" and parts');
+        }
+        // Ids are map keys and are echoed on every answer, so an object or a number used to become a
+        // task whose id was that object.
+        for (const key of ['taskId', 'contextId']) {
+            if (msg[key] !== undefined && !(typeof msg[key] === 'string' && msg[key].length > 0 && msg[key].length <= 128)) {
+                throw fault(-32602, `message.${key} must be a string of 1 to 128 characters`);
+            }
         }
         const prior = msg.taskId ? tasks.get(msg.taskId) : undefined;
         if (prior && TERMINAL.has(prior.task.status.state)) {
@@ -290,7 +310,11 @@ export function mountA2A(app, { card, resourceServer, origin, payTo, price, over
             const task = {
                 kind: 'task', id, contextId,
                 status: { state, message, timestamp: new Date().toISOString() },
-                history: [...(prior?.task.history ?? []), msg, message],
+                // The last few turns only. Paying turns skip the free brake, and each one appended two
+                // messages that every later answer sent back in full, so one caller could grow a task's
+                // memory and response size without limit.
+                // ponytail: a fixed window of HISTORY messages; a paged tasks/get if anyone needs more.
+                history: [...(prior?.task.history ?? []), msg, message].slice(-HISTORY),
                 ...(artifacts ? { artifacts } : {}),
             };
             tasks.delete(id);
@@ -442,12 +466,12 @@ export function mountA2A(app, { card, resourceServer, origin, payTo, price, over
                 case 'message/send':
                     return answer({ result: await send(body.params) });
                 case 'tasks/get': {
-                    const found = tasks.get(body.params?.id);
+                    const found = tasks.get(taskIdOf(body.params));
                     if (!found) throw fault(-32001, `no task ${body.params?.id} on this instance`);
                     return answer({ result: found.task });
                 }
                 case 'tasks/cancel': {
-                    const found = tasks.get(body.params?.id);
+                    const found = tasks.get(taskIdOf(body.params));
                     if (!found) throw fault(-32001, `no task ${body.params?.id} on this instance`);
                     if (TERMINAL.has(found.task.status.state)) throw fault(-32002, `task is already ${found.task.status.state}`);
                     const task = { ...found.task, status: { state: 'canceled', timestamp: new Date().toISOString() } };
