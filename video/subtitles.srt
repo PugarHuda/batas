@@ -213,30 +213,30 @@ Other agents can also find Batas in the
 Hashgraph Online directory.
 
 45
-00:03:21,100 --> 00:03:26,221
+00:03:21,100 --> 00:03:26,632
 There's a Hedera Agent Kit adapter in the
-package. The README covers setup,
+package. The README covers setup, the
 
 46
-00:03:26,221 --> 00:03:30,974
-architecture, and the payment flow.
-And it's a hundred and forty-two commits
+00:03:26,632 --> 00:03:31,792
+architecture, and how the payment flow
+works. And it's a hundred and forty-two
 
 47
-00:03:30,974 --> 00:03:33,400
-over seven days.
+00:03:31,792 --> 00:03:34,600
+commits over seven days.
 
 48
-00:03:33,400 --> 00:03:37,836
+00:03:34,600 --> 00:03:39,036
 Last, the live app.
 Every number here is read from Sepolia,
 
 49
-00:03:37,836 --> 00:03:43,255
+00:03:39,036 --> 00:03:44,455
 Hedera and ENS when the page loads.
 The agent trades, the settlement holds the
 
 50
-00:03:43,255 --> 00:03:48,200
+00:03:44,455 --> 00:03:49,400
 limits, and I can take the authority back.
 Thanks for watching.

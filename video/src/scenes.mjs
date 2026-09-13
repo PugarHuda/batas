@@ -127,7 +127,7 @@ export const SCENES = [
         id_: 'Tidak harus HBAR. Di sini ia membayar dengan token HTS kami. Token ini punya biaya kustom tetap, dan biaya itu dipotong langsung di settlement.',
         shots: [
             { term: 'hts-pay', dur: 7, rows: ['H-E5'] },
-            { clip: 'token', from: 5, dur: 99, rows: ['H-E5'] },
+            { clip: 'token', from: 12.5, dur: 99, rows: ['H-E5'] },
         ],
     },
     {
@@ -147,18 +147,20 @@ export const SCENES = [
         id_: 'Pembayaran bisa berulang. Order ini membayar tiga kali lewat scheduled transaction, dan satu lagi dibatalkan. Agen lain juga bisa menemukan Batas di direktori Hashgraph Online.',
         shots: [
             { term: 'subscribe-status', dur: 5, rows: ['H-E7'] },
-            { clip: 'schedule', from: 5, dur: 4, rows: ['H-E7'] },
+            { clip: 'schedule', from: 11, dur: 4, rows: ['H-E7'] },
             { term: 'hol-find', dur: 99, rows: ['H-E4', 'H-E1'] },
         ],
     },
     {
         id: 'builders',
         title: 'For builders',
-        en: "There's a Hedera Agent Kit adapter in the package. The README covers setup, architecture, and the payment flow. And it's a hundred and forty-two commits over seven days.",
+        en: "There's a Hedera Agent Kit adapter in the package. The README covers setup, the architecture, and how the payment flow works. And it's a hundred and forty-two commits over seven days.",
         id_: 'Ada adapter Hedera Agent Kit di dalam paketnya. README menjelaskan setup, arsitektur, dan alur pembayaran. Dan ada seratus empat puluh dua commit selama tujuh hari.',
         shots: [
-            { term: 'agent-kit', dur: 3, rows: ['H-Q2'] },
-            { clip: 'readme', from: 5, dur: 7, rows: ['H-Q3', 'E-Q4'] },
+            { term: 'agent-kit', dur: 2.5, rows: ['H-Q2'] },
+            { clip: 'readme', from: 30.5, dur: 2.5, rows: ['H-Q3', 'E-Q4'] },
+            { clip: 'readme', from: 46.5, dur: 2.5, rows: ['H-Q3'] },
+            { clip: 'readme', from: 70, dur: 2.5, rows: ['H-Q3'] },
             { term: 'commits', dur: 99, rows: ['I-5'] },
         ],
     },
