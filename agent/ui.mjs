@@ -79,7 +79,9 @@ ${BASE}
   .yes { color: var(--inside); }
   .no  { color: var(--never); }
   .tag.yes::before { content: ""; width: .45rem; height: .45rem; border-radius: 50%; background: currentColor; }
-  .tag.no::before { content: "×"; font-weight: 700; }
+  /* The never mark, drawn: two crossed strokes, the same cross the state marks use. A typed "×"
+     sits on the text baseline and changes shape with every fallback face. */
+  .tag.no::before { content: ""; width: .5rem; height: .5rem; flex: none; background: linear-gradient(45deg, transparent 40%, currentColor 40% 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, currentColor 40% 60%, transparent 60%); }
   .note { border-left: 1px solid var(--rule); padding: .1rem 0 .1rem 1rem; margin: 1.2rem 0 0; color: var(--ink-2); font-size: .9rem; max-width: 68ch; }
   table { border-collapse: collapse; width: 100%; font-size: .9rem; }
   th, td { text-align: left; padding: .6rem .75rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
@@ -102,11 +104,12 @@ ${BASE}
   .bars { display: grid; gap: 1rem; margin: 1.4rem 0 .6rem; }
   .bar { display: grid; grid-template-columns: 11rem 1fr 11rem; gap: 1.2rem; align-items: center; font-size: .9rem; }
   .bar .track { height: 1.6rem; border: 1px solid var(--edge); border-radius: 2px; overflow: hidden; background: repeating-linear-gradient(135deg, var(--sunk) 0 6px, color-mix(in oklab, var(--never) 20%, var(--sunk)) 6px 8px); }
-  .bar .fill { height: 100%; animation: fill 1.1s cubic-bezier(.16,1,.3,1) both; }
+  /* Drawn at the measured width and left there: a chart is still, and a bar that grows on load
+     shows a number that was never measured on its way to the one that was. */
+  .bar .fill { height: 100%; }
   .bar .fill.yes { background: var(--inside); }
   .bar .fill.no { background: var(--never); }
   .bar .n { text-align: right; font-family: var(--number); }
-  @keyframes fill { from { width: 0; } }
   .compare { margin-top: 1rem; }
   .compare td:first-child { color: var(--dim); }
   .ins { margin-top: 1.2rem; font-size: .84rem; }

@@ -1,0 +1,594 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-13T12:10:27.633Z",
+  "title": "Design System: Batas",
+  "extensions": {
+    "colorMeta": {
+      "ground": {
+        "role": "neutral",
+        "displayName": "Chart White",
+        "canonical": "#f3f6f4",
+        "tonalRamp": [
+          "#0a0c0a",
+          "#232624",
+          "#404341",
+          "#5f6260",
+          "#808381",
+          "#a3a6a4",
+          "#c7cac8",
+          "#ecefed"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(97.0% 0.004 157.2)"
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Plate Paper",
+        "canonical": "#fbfcfb",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242524",
+          "#414241",
+          "#616161",
+          "#828282",
+          "#a4a5a4",
+          "#c8c9c8",
+          "#eeefee"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(99.0% 0.002 145.6)"
+      },
+      "sunk": {
+        "role": "neutral",
+        "displayName": "Sunk Well",
+        "canonical": "#e9eeeb",
+        "tonalRamp": [
+          "#090c0a",
+          "#222624",
+          "#3f4341",
+          "#5e6260",
+          "#7f8481",
+          "#a2a6a3",
+          "#c6cac8",
+          "#ebf0ed"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(94.4% 0.007 160.1)"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Chart Ink",
+        "canonical": "#0f1a22",
+        "tonalRamp": [
+          "#040c14",
+          "#1b272f",
+          "#38444d",
+          "#56636d",
+          "#77848f",
+          "#99a7b2",
+          "#bdcbd7",
+          "#e2f1fc"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(21.1% 0.022 240.7)"
+      },
+      "ink-2": {
+        "role": "neutral",
+        "displayName": "Second Ink",
+        "canonical": "#33414d",
+        "tonalRamp": [
+          "#030c16",
+          "#192732",
+          "#364450",
+          "#546370",
+          "#758592",
+          "#97a7b6",
+          "#bbccda",
+          "#e1f1ff"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(36.8% 0.028 244.5)"
+      },
+      "dim": {
+        "role": "neutral",
+        "displayName": "Dim",
+        "canonical": "#56636f",
+        "tonalRamp": [
+          "#030c15",
+          "#1b2631",
+          "#37444f",
+          "#56636f",
+          "#778491",
+          "#99a7b4",
+          "#bccbd9",
+          "#e1f1ff"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(49.3% 0.025 246.2)"
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#d2dad5",
+        "tonalRamp": [
+          "#070d09",
+          "#212723",
+          "#3d4440",
+          "#5c635f",
+          "#7d8480",
+          "#a0a7a2",
+          "#c3cbc6",
+          "#e9f1ec"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(88.1% 0.011 158.8)"
+      },
+      "grid": {
+        "role": "neutral",
+        "displayName": "Graticule",
+        "canonical": "#e3e9e5",
+        "tonalRamp": [
+          "#080c0a",
+          "#222623",
+          "#3f4340",
+          "#5e635f",
+          "#7e8480",
+          "#a1a7a3",
+          "#c5cbc7",
+          "#eaf0ec"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(92.8% 0.008 157.1)"
+      },
+      "edge": {
+        "role": "neutral",
+        "displayName": "Edge",
+        "canonical": "#a9b5ae",
+        "tonalRamp": [
+          "#050d09",
+          "#1e2822",
+          "#3b453f",
+          "#59645e",
+          "#7a867f",
+          "#9da8a1",
+          "#c0cdc5",
+          "#e5f2eb"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(76.2% 0.017 160.5)"
+      },
+      "boundary": {
+        "role": "primary",
+        "displayName": "Airspace Magenta",
+        "canonical": "#a0146c",
+        "tonalRamp": [
+          "#1c000f",
+          "#47002d",
+          "#78004f",
+          "#a61d72",
+          "#ce4794",
+          "#f66cb7",
+          "#ffacd4",
+          "#fee7f1"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(47.4% 0.186 349.0)"
+      },
+      "boundary-soft": {
+        "role": "primary",
+        "displayName": "Magenta Wash",
+        "canonical": "#f6e3ee",
+        "tonalRamp": [
+          "#12070e",
+          "#2e2029",
+          "#4c3d46",
+          "#6c5c65",
+          "#8e7d87",
+          "#b19fa9",
+          "#d5c3ce",
+          "#fbe8f3"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(93.4% 0.025 341.8)"
+      },
+      "structure": {
+        "role": "secondary",
+        "displayName": "Airspace Blue",
+        "canonical": "#1b4d99",
+        "tonalRamp": [
+          "#000923",
+          "#002155",
+          "#093d88",
+          "#2d5fad",
+          "#4e82d2",
+          "#70a5f9",
+          "#a9cbff",
+          "#e5efff"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(43.2% 0.135 259.0)"
+      },
+      "inside": {
+        "role": "tertiary",
+        "displayName": "Green Arc",
+        "canonical": "#17753b",
+        "tonalRamp": [
+          "#001003",
+          "#012e12",
+          "#015023",
+          "#16743a",
+          "#41975b",
+          "#65bb7c",
+          "#8ae0a0",
+          "#c7ffd3"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(49.6% 0.124 151.0)"
+      },
+      "caution": {
+        "role": "tertiary",
+        "displayName": "Yellow Arc",
+        "canonical": "#8f5c00",
+        "tonalRamp": [
+          "#140800",
+          "#362000",
+          "#5c3a00",
+          "#855601",
+          "#ab762b",
+          "#d09951",
+          "#f6bd75",
+          "#ffebd4"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(51.8% 0.111 72.0)"
+      },
+      "caution-fill": {
+        "role": "tertiary",
+        "displayName": "Yellow Arc Fill",
+        "canonical": "#f0b429",
+        "tonalRamp": [
+          "#120a00",
+          "#322201",
+          "#563d00",
+          "#7d5b05",
+          "#a67a05",
+          "#d29a04",
+          "#fbbe38",
+          "#ffeccb"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(80.4% 0.156 82.5)"
+      },
+      "never": {
+        "role": "tertiary",
+        "displayName": "Red Radial",
+        "canonical": "#c0141a",
+        "tonalRamp": [
+          "#1f0000",
+          "#4d0103",
+          "#80020a",
+          "#b80111",
+          "#e13e38",
+          "#ff7367",
+          "#ffb3a9",
+          "#ffe9e6"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(51.5% 0.201 27.1)"
+      },
+      "on-boundary": {
+        "role": "primary",
+        "displayName": "On Magenta",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ],
+        "scheme": "light",
+        "oklch": "oklch(100.0% 0.000 89.9)"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The landing hero headline only; uppercase, balanced wrap."
+      },
+      "name": {
+        "displayName": "Name",
+        "purpose": "The name Batas beside its meaning in the hero, at display scale."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Landing band and final band headings (max 22ch); app page title at clamp(2rem, 4vw, 2.9rem)."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "App section headings over a hairline; 1.35rem below 46rem."
+      },
+      "wordmark": {
+        "displayName": "Wordmark",
+        "purpose": "The name beside the drawn mark in the top bar."
+      },
+      "placard-label": {
+        "displayName": "Placard Label",
+        "purpose": "Plate titles, placard head (+0.12em) and row labels, reach terms, form labels."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Running text, tabular numerals on; 68ch in the app, 62ch band intros."
+      },
+      "lead": {
+        "displayName": "Lead",
+        "purpose": "Hero lead paragraph, max 36rem."
+      },
+      "figure": {
+        "displayName": "Figure",
+        "purpose": "Every number a reader reads: B612 with tabular lining numerals, never the mono."
+      },
+      "button": {
+        "displayName": "Button",
+        "purpose": "All buttons, text only; 0.9rem in the app, 0.82rem small."
+      },
+      "label": {
+        "displayName": "State Label",
+        "purpose": "Inside / caution / never readouts with their drawn mark."
+      },
+      "tag": {
+        "displayName": "Tag",
+        "purpose": "Compact outlined yes/no labels in the app."
+      },
+      "bytes": {
+        "displayName": "Bytes",
+        "purpose": "Hex programs, instruction tables, code, timestamps, scale ticks."
+      }
+    },
+    "shadows": [
+      {
+        "name": "plate-lift",
+        "value": "0 1px 1px rgb(15 26 34 / .06), 0 12px 32px -18px rgb(15 26 34 / .28)",
+        "purpose": "Envelope plate, limitations placard, app panels."
+      },
+      {
+        "name": "button-seat",
+        "value": "0 1px 0 rgb(0 0 0 / .08)",
+        "purpose": "Primary button only."
+      },
+      {
+        "name": "input-halo",
+        "value": "0 0 0 3px var(--boundary-soft)",
+        "purpose": "Text input focus."
+      },
+      {
+        "name": "focus-outline",
+        "value": "outline: 2px solid var(--boundary); outline-offset: 3px; border-radius: 2px",
+        "purpose": "Every :focus-visible element; never suppressed."
+      },
+      {
+        "name": "bar-glass",
+        "value": "background: color-mix(in oklab, var(--ground) 88%, transparent); backdrop-filter: saturate(1.2) blur(10px)",
+        "purpose": "Sticky top bar."
+      }
+    ],
+    "motion": [
+      {
+        "name": "still",
+        "value": "none",
+        "purpose": "Nothing moves on its own; the trade-size probe is the only moving thing and the visitor moves it. The probe marker has no transition, the app health bars are drawn at their measured width, and there is no @keyframes rule."
+      },
+      {
+        "name": "press",
+        "value": ".08s ease-out",
+        "purpose": "Button press, 1px down."
+      },
+      {
+        "name": "pointer-response",
+        "value": ".12s to .14s ease-out",
+        "purpose": "Button fill and border, input border and focus halo."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "animation-duration and transition-duration .001ms, iteration-count 1",
+        "purpose": "Global prefers-reduced-motion: reduce guard in world.mjs."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "stack",
+        "value": "60rem",
+        "purpose": "Hero, split, final grids and the legend become one column; the envelope follows the headline directly; the hero chart shrinks to 440px at the bottom-right corner."
+      },
+      {
+        "name": "plate-narrow",
+        "value": "60rem to 76rem",
+        "purpose": "Envelope chart labels step to 16 SVG units so they render at 11px or more beside the headline (13 units above 76rem)."
+      },
+      {
+        "name": "compact",
+        "value": "46rem",
+        "purpose": "Nav keeps only its button; app bars, facts, reach and cost tables stack."
+      },
+      {
+        "name": "narrow",
+        "value": "40rem",
+        "purpose": "Placard and fare table become stacked rows; chart labels step to 18 SVG units."
+      },
+      {
+        "name": "floor",
+        "value": "390px",
+        "purpose": "Must hold with no horizontal scroll."
+      }
+    ],
+    "scheme": {
+      "value": "light",
+      "purpose": "Light only: color-scheme light and one token set, no prefers-color-scheme block, whatever the operating system prefers."
+    }
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one way forward: open the app, check the live position, decode. Text only.",
+      "html": "<a class=\"ds-btn\" href=\"#\">Open the app</a>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; font: 700 .92rem/1 \"B612\", system-ui, sans-serif; letter-spacing: .01em; text-decoration: none; padding: .78rem 1.15rem; border-radius: 3px; background: var(--boundary, #a0146c); color: var(--on-boundary, #ffffff); border: 1px solid var(--boundary, #a0146c); box-shadow: 0 1px 0 rgb(0 0 0 / .08); transition: background-color .14s ease-out, transform .08s ease-out; } .ds-btn:hover { background: color-mix(in oklab, var(--boundary, #a0146c) 86%, var(--ink, #0f1a22)); } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--boundary, #a0146c); outline-offset: 3px; }"
+    },
+    {
+      "name": "Quiet Button",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "The secondary way: see the proof, read the source, back to the live position.",
+      "html": "<a class=\"ds-btn-quiet\" href=\"#\">See what it stops</a>",
+      "css": ".ds-btn-quiet { display: inline-flex; align-items: center; font: 700 .92rem/1 \"B612\", system-ui, sans-serif; letter-spacing: .01em; text-decoration: none; padding: .78rem 1.15rem; border-radius: 3px; background: transparent; color: var(--ink, #0f1a22); border: 1px solid var(--edge, #a9b5ae); transition: background-color .14s ease-out, border-color .14s ease-out, transform .08s ease-out; } .ds-btn-quiet:hover { background: var(--paper, #fbfcfb); border-color: var(--ink, #0f1a22); } .ds-btn-quiet:active { transform: translateY(1px); } .ds-btn-quiet:focus-visible { outline: 2px solid var(--boundary, #a0146c); outline-offset: 3px; }"
+    },
+    {
+      "name": "Byte Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Textarea or input for hex programs and addresses.",
+      "html": "<textarea class=\"ds-input\" rows=\"3\">0x2121000000000000000000006367be30fcbd45ea</textarea>",
+      "css": ".ds-input { width: 100%; padding: .8rem .9rem; background: var(--sunk, #e9eeeb); color: var(--ink, #0f1a22); border: 1px solid var(--edge, #a9b5ae); border-radius: 3px; font: .82rem/1.7 \"B612 Mono\", ui-monospace, monospace; caret-color: var(--boundary, #a0146c); transition: border-color .12s ease-out, box-shadow .12s ease-out; resize: vertical; } .ds-input:hover { border-color: var(--dim, #56636f); } .ds-input:focus { border-color: var(--boundary, #a0146c); box-shadow: 0 0 0 3px var(--boundary-soft, #f6e3ee); } .ds-input:focus-visible { outline: 2px solid var(--boundary, #a0146c); outline-offset: 3px; }"
+    },
+    {
+      "name": "Top Bar",
+      "kind": "nav",
+      "refersTo": "top-bar",
+      "description": "Wordmark left, section links and the way in right; shared by both pages.",
+      "html": "<header class=\"ds-bar\"><a class=\"ds-mark\" href=\"#\"><svg viewBox=\"0 0 32 32\" aria-hidden=\"true\"><rect x=\"1\" y=\"1\" width=\"30\" height=\"30\" rx=\"3\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><rect x=\"7\" y=\"8\" width=\"2.6\" height=\"16\" fill=\"var(--boundary, #a0146c)\"/><rect x=\"22.4\" y=\"8\" width=\"2.6\" height=\"16\" fill=\"var(--boundary, #a0146c)\"/><rect x=\"12\" y=\"14.7\" width=\"7.5\" height=\"2.6\" fill=\"currentColor\"/></svg><b>Batas</b></a><nav class=\"ds-nav\"><a href=\"#\" aria-current=\"page\">The envelope</a><a href=\"#\">The proof</a><a href=\"#\">What it costs</a></nav></header>",
+      "css": ".ds-bar { display: flex; align-items: center; gap: 1.5rem; padding: .7rem 1.25rem; background: color-mix(in oklab, var(--ground, #f3f6f4) 88%, transparent); backdrop-filter: saturate(1.2) blur(10px); border-bottom: 1px solid var(--rule, #d2dad5); } .ds-mark { display: inline-flex; align-items: center; gap: .6rem; color: var(--ink, #0f1a22); text-decoration: none; } .ds-mark svg { width: 26px; height: 26px; } .ds-mark b { font: 700 1.45rem/1 \"Barlow Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: .06em; text-transform: uppercase; } .ds-nav { display: flex; gap: 1.35rem; margin-left: auto; } .ds-nav a { color: var(--ink-2, #33414d); text-decoration: none; font: .88rem \"B612\", system-ui, sans-serif; text-underline-offset: 3px; } .ds-nav a:hover, .ds-nav a[aria-current=\"page\"] { color: var(--ink, #0f1a22); text-decoration: underline; text-decoration-color: var(--boundary, #a0146c); } .ds-nav a:focus-visible, .ds-mark:focus-visible { outline: 2px solid var(--boundary, #a0146c); outline-offset: 3px; }"
+    },
+    {
+      "name": "State Marks",
+      "kind": "chip",
+      "refersTo": "label",
+      "description": "Airspeed arcs: inside disc, caution open square, never drawn cross. Colour is never the only carrier.",
+      "html": "<p class=\"ds-states\"><span class=\"ds-state ds-inside\">inside the envelope</span><span class=\"ds-state ds-caution\">reading the registry</span><span class=\"ds-state ds-never\">no floor</span></p>",
+      "css": ".ds-states { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0; } .ds-state { display: inline-flex; align-items: center; gap: .4rem; font: 700 .8rem \"B612\", system-ui, sans-serif; } .ds-state::before { content: \"\"; width: .7rem; height: .7rem; flex: none; border-radius: 50%; } .ds-inside { color: var(--inside, #17753b); } .ds-inside::before { background: currentColor; } .ds-caution { color: var(--caution, #8f5c00); } .ds-caution::before { border: 2px solid currentColor; border-radius: 2px; } .ds-never { color: var(--never, #c0141a); } .ds-never::before { border-radius: 0; background: linear-gradient(45deg, transparent 42%, currentColor 42% 58%, transparent 58%), linear-gradient(-45deg, transparent 42%, currentColor 42% 58%, transparent 58%); }"
+    },
+    {
+      "name": "Tag",
+      "kind": "chip",
+      "refersTo": "tag",
+      "description": "Compact outlined verdict in app facts and alerts: a drawn disc for yes, a drawn cross for no, never a typed character.",
+      "html": "<span class=\"ds-tag ds-yes\">guarded</span> <span class=\"ds-tag ds-no\">revoked</span>",
+      "css": ".ds-tag { display: inline-flex; align-items: center; gap: .3rem; padding: .08rem .45rem; border-radius: 2px; font: 700 .72rem/1.5 \"B612\", system-ui, sans-serif; border: 1px solid currentColor; text-transform: uppercase; letter-spacing: .04em; } .ds-yes { color: var(--inside, #17753b); } .ds-yes::before { content: \"\"; width: .45rem; height: .45rem; border-radius: 50%; background: currentColor; } .ds-no { color: var(--never, #c0141a); } .ds-no::before { content: \"\"; width: .5rem; height: .5rem; flex: none; background: linear-gradient(45deg, transparent 40%, currentColor 40% 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, currentColor 40% 60%, transparent 60%); }"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "App working surface: paper plate with an edge frame, the plate lift, a hairline note and static pending bars.",
+      "html": "<div class=\"ds-panel\"><span class=\"ds-label\">SwapVM program, hex</span><dl class=\"ds-facts\"><dt>cap</dt><dd class=\"ds-fig\">7.162902849964033514</dd><dt>floor</dt><dd class=\"ds-fig\">1.941043832593008104 B per A</dd></dl><div class=\"ds-pending\" aria-busy=\"true\"><i style=\"width:78%\"></i><i style=\"width:38%\"></i></div><p class=\"ds-note\">Revocation reverts the swap for every caller.</p></div>",
+      "css": ".ds-panel { background: var(--paper, #fbfcfb); color: var(--ink, #0f1a22); border: 1px solid var(--edge, #a9b5ae); border-radius: 4px; padding: 1.3rem 1.4rem; box-shadow: 0 1px 1px rgb(15 26 34 / .06), 0 12px 32px -18px rgb(15 26 34 / .28); font: .9375rem/1.65 \"B612\", system-ui, sans-serif; } .ds-label { display: block; font: 700 1rem/1.2 \"Barlow Condensed\", \"Arial Narrow\", sans-serif; text-transform: uppercase; letter-spacing: .05em; margin-bottom: .45rem; } .ds-facts { display: grid; grid-template-columns: max-content 1fr; gap: 0 1.4rem; margin: 0; } .ds-facts dt, .ds-facts dd { margin: 0; padding: .5rem 0; border-top: 1px solid var(--rule, #d2dad5); } .ds-facts dt { color: var(--dim, #56636f); font-size: .86rem; } .ds-facts dt:first-of-type, .ds-facts dt:first-of-type + dd { border-top: 0; } .ds-fig { font-variant-numeric: tabular-nums lining-nums; letter-spacing: -.005em; } .ds-pending { display: grid; gap: .6rem; padding: .35rem 0; margin-top: 1rem; } .ds-pending i { display: block; height: .75rem; border-radius: 2px; background: var(--sunk, #e9eeeb); border: 1px solid var(--rule, #d2dad5); } .ds-note { border-left: 1px solid var(--rule, #d2dad5); padding: .1rem 0 .1rem 1rem; margin: 1.2rem 0 0; color: var(--ink-2, #33414d); font-size: .9rem; }"
+    },
+    {
+      "name": "Limitations Placard",
+      "kind": "custom",
+      "refersTo": "placard-head",
+      "description": "Ink-framed table of the live limits, read before anything else.",
+      "html": "<div class=\"ds-placard\"><h3>Operating limitations <span>live</span></h3><table><tr><th>Cap</th><td class=\"ds-v\">7.16 A</td><td class=\"ds-how\">The largest single trade.</td></tr><tr><th>Guard cost</th><td class=\"ds-v\">975 gas</td><td class=\"ds-how\">What refusal costs, measured warm.</td></tr></table></div>",
+      "css": ".ds-placard { border: 2px solid var(--ink, #0f1a22); border-radius: 4px; background: var(--paper, #fbfcfb); color: var(--ink, #0f1a22); box-shadow: 0 1px 1px rgb(15 26 34 / .06), 0 12px 32px -18px rgb(15 26 34 / .28); } .ds-placard h3 { margin: 0; padding: .7rem 1rem; background: var(--ink, #0f1a22); color: var(--paper, #fbfcfb); font: 700 1.05rem/1 \"Barlow Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: .12em; text-transform: uppercase; display: flex; justify-content: space-between; } .ds-placard h3 span { font: 400 .72rem \"B612 Mono\", monospace; letter-spacing: 0; opacity: .8; } .ds-placard table { width: 100%; border-collapse: collapse; } .ds-placard th, .ds-placard td { text-align: left; padding: .72rem 1rem; border-top: 1px solid var(--rule, #d2dad5); vertical-align: top; font: .9rem \"B612\", system-ui, sans-serif; } .ds-placard tr:first-child th, .ds-placard tr:first-child td { border-top: 0; } .ds-placard th { font: 700 1.05rem/1.2 \"Barlow Condensed\", \"Arial Narrow\", sans-serif; text-transform: uppercase; letter-spacing: .05em; width: 7.5rem; } .ds-v { font-weight: 700; font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; } .ds-how { color: var(--ink-2, #33414d); font-size: .84rem; }"
+    },
+    {
+      "name": "Fuel Tape",
+      "kind": "custom",
+      "refersTo": "tape-track",
+      "description": "Kept is solid, lost is hatched; drawn at its measured width, still.",
+      "html": "<div class=\"ds-tape\"><div class=\"ds-tape-head\"><b>Under a mandate</b><span>1,667.53 tokenB · 83%</span></div><div class=\"ds-track\" role=\"img\" aria-label=\"kept 83 percent\"><div class=\"ds-fill\" style=\"width:83.4%\"></div></div></div>",
+      "css": ".ds-tape-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: .45rem; color: var(--ink, #0f1a22); } .ds-tape-head b { font: 700 1.35rem/1 \"Barlow Condensed\", \"Arial Narrow\", sans-serif; text-transform: uppercase; letter-spacing: .04em; } .ds-tape-head span { font: 1.1rem \"B612\", system-ui, sans-serif; font-variant-numeric: tabular-nums lining-nums; } .ds-track { position: relative; height: 2.6rem; border: 1px solid var(--edge, #a9b5ae); border-radius: 2px; overflow: hidden; background: repeating-linear-gradient(135deg, var(--sunk, #e9eeeb) 0 6px, color-mix(in oklab, var(--never, #c0141a) 22%, var(--sunk, #e9eeeb)) 6px 8px); } .ds-fill { position: absolute; inset: 0 auto 0 0; background: var(--inside, #17753b); }"
+    },
+    {
+      "name": "Hero Chart",
+      "kind": "custom",
+      "refersTo": "hero-chart",
+      "description": "Decoration behind the landing hero, after sectional-chart linework: a VOR compass rose in structure blue (ticks every 5, 10 and 30 degrees, magnetic-north arrow, turned 13 degrees), a solid Class C ring with its soft shelf and a dashed Class E ring in airspace magenta, and a ticked meridian and parallel. Low opacity, no labels or numbers, aria-hidden, still. Centred just right of the envelope plate so the plate covers its middle; bottom-right corner when stacked.",
+      "html": "<div class=\"ds-hero-chart\"><svg viewBox=\"0 0 760 760\" aria-hidden=\"true\" focusable=\"false\"><path class=\"grat\" d=\"M0 380H760M380 0V760\"/><circle class=\"shelf\" cx=\"380\" cy=\"380\" r=\"314\"/><circle class=\"class-c\" cx=\"380\" cy=\"380\" r=\"320\"/><circle class=\"class-e\" cx=\"380\" cy=\"380\" r=\"236\"/><g class=\"rose\" transform=\"rotate(13 380 380)\"><circle cx=\"380\" cy=\"380\" r=\"150\"/><path d=\"M380 230V246M530 380H514M380 530V514M230 380H246M380 366V208M375 218L380 206L385 218\"/></g><path class=\"vor\" d=\"M380 370L388.7 375L388.7 385L380 390L371.3 385L371.3 375Z\"/></svg></div>",
+      "css": ".ds-hero-chart { width: 320px; height: 320px; background: var(--ground, #f3f6f4); } .ds-hero-chart svg { width: 100%; height: 100%; } .ds-hero-chart svg * { fill: none; vector-effect: non-scaling-stroke; } .ds-hero-chart .grat { stroke: var(--edge, #a9b5ae); opacity: .55; } .ds-hero-chart .shelf { stroke: var(--boundary, #a0146c); stroke-width: 9; opacity: .07; } .ds-hero-chart .class-c { stroke: var(--boundary, #a0146c); stroke-width: 1.5; opacity: .3; } .ds-hero-chart .class-e { stroke: var(--boundary, #a0146c); stroke-width: 1.5; stroke-dasharray: 9 6; opacity: .34; } .ds-hero-chart .rose { stroke: var(--structure, #1b4d99); opacity: .32; } .ds-hero-chart .vor { stroke: var(--structure, #1b4d99); stroke-width: 1.25; opacity: .45; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Operating Envelope",
+    "overview": "Batas is drawn as an aeronautical chart and a pilot's handbook, printed in daylight. A mandate is an envelope a position flies inside; the page draws that envelope from live terms, plots the trades the position actually settled, and reads every limit the way a pilot reads an operating limitations placard. The vocabulary is borrowed whole: airspace magenta for the boundary that must not be crossed, airspace blue for controlled structure, and the airspeed indicator's three arcs for state.\n\nDensity follows the room. The landing (`/`) is spacious: wide bands, a chart graticule and faint chart linework behind the hero, one plate carrying the live envelope. The app (`/app`) is the same world set for work: denser panels, facts lists ruled with hairlines, byte tables, and section heads marked with a 2px ink rule. Both share one top bar, one set of tokens, one footer, so the split reads as one product with two rooms.\n\nSurfaces are flat paper on a cool chart-white ground, separated by hairlines rather than shadows; the single soft shadow is reserved for objects that read as physical chart plates. The chart is still: nothing moves on its own, and the trade-size probe is the only moving thing, moved by the visitor. The confirmed anti-reference is the DeFi landing default: black ground, glowing 3D object, headline metric row.",
+    "keyCharacteristics": [
+      "Cool chart-white ground, chart ink, magenta for limits, blue for structure.",
+      "Condensed uppercase placard display (Barlow Condensed 700) over the B612 cockpit face.",
+      "Every figure set in B612 with tabular lining numerals; the mono only for bytes, code, timestamps and scale ticks.",
+      "Three states, each carried by colour and a non-colour mark.",
+      "Hairline rules, hatched fills for loss and refused zones, 48px graticule and the hero chart linework in the hero only.",
+      "Nothing moves on its own; buttons are text only and every mark is drawn.",
+      "Light only: `color-scheme: light` and one token set, whatever the operating system prefers. No dark scheme, no dark band, no toggle.",
+      "Self-hosted faces, no third-party request of any kind."
+    ],
+    "rules": [
+      {
+        "name": "The Airspace Rule",
+        "body": "Magenta means a limit or the single action forward; blue means structure. A decorative use of either is a misread chart. The one exception is the hero chart, which draws airspace boundaries in magenta and a navaid in blue with their chart meanings intact, at low opacity, never behind text.",
+        "section": "colors"
+      },
+      {
+        "name": "The Daylight Rule",
+        "body": "There is one scheme and it is light, set by `color-scheme: light` with no `prefers-color-scheme` block. Every surface is a light one: the final band is `paper` under a 2px ink rule, not an ink-black band. Measured WCAG contrast of text tokens on ground, paper and sunk runs from 4.84 (caution on sunk) to 17.14 (ink on paper); on-boundary on boundary is 7.47.",
+        "section": "colors"
+      },
+      {
+        "name": "The Readable Figure Rule",
+        "body": "A figure is read, not typed: B612 with `tabular-nums lining-nums`. The mono sets a decimal point as wide as a digit and 1.941 reads as \"1. 941\", so B612 Mono is kept for bytes, code, timestamps and scale ticks.",
+        "section": "typography"
+      },
+      {
+        "name": "The Placard Voice Rule",
+        "body": "Barlow Condensed is always 700 and uppercase, and only for display, headings, placard labels, the name and the wordmark. It never sets running text or a figure in a sentence; the fare price is its one numeric use, as a placard value.",
+        "section": "typography"
+      },
+      {
+        "name": "The Drawn Mark Rule",
+        "body": "A text character is never an icon. Buttons are text only; state marks, legend symbols and the product mark are drawn in CSS or SVG. An arrow inside a figure readout (\"1.01 A → 1.97 B\") is notation, not an icon.",
+        "section": "typography"
+      },
+      {
+        "name": "The Hairline Chart Rule",
+        "body": "Structure is drawn with rules, not boxes. A new grouping gets a hairline or a 2px ink rule; the plate lift is for a chart plate, never for a row of cards.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Hairline Side Rule",
+        "body": "No coloured side stripe wider than 1px. A note is set off by a 1px `rule` hairline on its left; heavier rules run across the top of a group, never down its side.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Still Chart Rule",
+        "body": "Nothing moves on its own: no fills, draws, loops or shimmer on load. The trade-size probe is the only moving thing, and the visitor moves it; its marker jumps to the new position with no transition. Pointer responses stay brief: button fill 0.13 to 0.14s and press 0.08s, input border and halo 0.12s, all `ease-out`. The global `prefers-reduced-motion: reduce` guard clamps any animation or transition to 0.001ms. The app's health bars are drawn at their measured width with no animation, and there is no `@keyframes` rule on either page.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do take every colour from the tokens through `var(--token)`, and check any new text value on ground, paper and sunk against the 4.5:1 floor.",
+      "Do carry every state with a mark as well as a colour: disc for inside, open square for caution, drawn cross for never.",
+      "Do set every figure in B612 with `tabular-nums lining-nums`; use B612 Mono only for bytes, code, timestamps and scale ticks.",
+      "Do keep the focus outline: 2px solid magenta, 3px offset, on every focusable element.",
+      "Do serve faces from `/assets/fonts` and keep the page free of any third-party request.",
+      "Do hatch loss and refused zones, and open major groups with a 2px ink rule across the top.",
+      "Do show only real, reproducible figures read from a chain, a mirror node or a measured test; show caution while a reading is pending.",
+      "Do keep everything still unless the visitor moves it; pointer responses stay at 0.14s or less, and the reduced-motion guard stays in place."
+    ],
+    "donts": [
+      "Don't load fonts, scripts or styles from a CDN or any external host.",
+      "Don't set a figure in B612 Mono or in running Barlow Condensed.",
+      "Don't suppress or restyle away the focus outline.",
+      "Don't let colour alone carry a state.",
+      "Don't use magenta or blue for decoration; magenta is a limit or the way forward, blue is structure.",
+      "Don't add illustrative or placeholder numbers.",
+      "Don't animate on load: no fills, draws, loops or shimmer; the probe is the only moving thing.",
+      "Don't use a text character as an icon; buttons are text only and marks are drawn.",
+      "Don't add a coloured side stripe; side rules are 1px hairlines.",
+      "Don't add a dark scheme, a prefers-color-scheme block, or an ink-filled band; the site is light only.",
+      "Don't put the hero chart linework behind text, give it labels or numbers, or animate it.",
+      "Don't build the DeFi landing default: black ground, glowing 3D object, headline metric row."
+    ]
+  }
+}
