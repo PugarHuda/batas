@@ -305,6 +305,7 @@ test('the Agent Card carries the four questions as skills and points at the x402
     expect(Array.isArray(card.supportedInterfaces)).toBe(true);
     expect(card.skills.map((s) => s.id)).toEqual([
         'read_mandate', 'check_publication', 'check_agent_authority', 'check_reputation', 'inspect_mandate_paid',
+        'negotiate-fill', 'inspect-mandate',
     ]);
     for (const s of card.skills) {
         expect(typeof s.name).toBe('string');
