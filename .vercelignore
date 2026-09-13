@@ -1,0 +1,17 @@
+# What the Vercel Function does not need at runtime.
+#
+# The CLI uploads the directory as it stands and does not read .gitignore, so anything a local run
+# leaves behind is shipped unless it is named here. Agent worktrees under .claude/ each hold a full
+# copy of the repository and a junction to node_modules; build artefacts and test output are never
+# read by agent/service.mjs.
+.claude/
+.impeccable/
+.playwright-mcp/
+test-results/
+playwright-report/
+blob-report/
+out/
+out-halmos/
+cache/
+broadcast/
+verification/
