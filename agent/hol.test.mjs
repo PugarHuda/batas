@@ -10,11 +10,11 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 import {
-    AGENT_ACCOUNT, NAME, VERSION, SKILLS, REGISTRY_TOPIC, X402_ENDPOINT, ERC8004_ID,
-    base58, canonicalAgentData, uaid, batasUaids, batasProfile, validateProfile,
+    AGENT_ACCOUNT, NAME, VERSION, SKILLS, REGISTRY_TOPIC, X402_ENDPOINT, ERC8004_ID, A2A_ENDPOINT, A2A_CARD,
+    base58, canonicalAgentData, uaid, batasUaids, batasProfile, validateProfile, livePrice, priceText,
     hcs1Encode, hcs1Decode, readProfile, findAgents, registryEntries,
 } from './hol.mjs';
-import { IDENTITY_REGISTRY, AGENT_ID, HCS_TOPIC } from './deployment.mjs';
+import { IDENTITY_REGISTRY, AGENT_ID, HCS_TOPIC, ENS_NAME } from './deployment.mjs';
 
 const MIRROR = 'https://testnet.mirrornode.hedera.com/api/v1';
 const EXPECTED_ERC8004 = `eip155:11155111:${IDENTITY_REGISTRY}/${AGENT_ID}`;
@@ -53,9 +53,14 @@ test('an HCS-1 file survives chunking and reordering, and refuses anything that 
 });
 
 test('the profile passes the reference HCS-11 schema and names this deployment', async () => {
-    const profile = await validateProfile(batasProfile({ inboundTopicId: '0.0.1', outboundTopicId: '0.0.2' }));
+    assert.throws(() => batasProfile({ inboundTopicId: '0.0.1', outboundTopicId: '0.0.2' }), /needs the live price/);
+    // The price is read from the live manifest even here: a price typed into the test would be the
+    // same stale copy the profile used to carry.
+    const profile = await validateProfile(batasProfile({ inboundTopicId: '0.0.1', outboundTopicId: '0.0.2', price: await livePrice() }));
     assert.equal(profile.type, 1, 'AI agent');
     assert.equal(profile.properties.x402.endpoint, 'https://batas-one.vercel.app/v1/mandate/explain');
+    assert.equal(profile.properties.a2a.endpoint, 'https://batas-one.vercel.app/a2a');
+    assert.equal(profile.properties.ens.name, 'agent.batas.eth');
     assert.equal(profile.properties.erc8004.id, EXPECTED_ERC8004);
     assert.equal(profile.properties.hcs.mandateTopic, HCS_TOPIC);
     assert.equal(profile.uaid, batasUaids('0.0.1').hcs10);
@@ -82,6 +87,17 @@ test('the live profile carries the endpoint and ERC-8004 identity in deployment.
     assert.equal(ERC8004_ID, EXPECTED_ERC8004);
     assert.equal(profile.properties.hcs.mandateTopic, HCS_TOPIC);
     await validateProfile(profile);
+});
+
+test('the profile the live memo points at states the price the live x402 manifest states', async () => {
+    const [{ profile, profileTopic }, price, card] = await Promise.all([readLive(), livePrice(), fetch(A2A_CARD).then((r) => r.json())]);
+    assert.deepEqual(profile.properties.x402.price, price, `hcs://1/${profileTopic} states a price the manifest no longer does; run node agent/hol.mjs --update-profile`);
+    assert.ok(profile.bio.includes(priceText(price)), 'the bio a person reads states the same price');
+    assert.match(priceText(price), /^\d+\.\d+ to \d+\.\d+ HBAR per answer \(\d+ to \d+ tinybar/);
+    assert.ok(BigInt(price.min) <= BigInt(price.max));
+    assert.equal(profile.properties.a2a.endpoint, A2A_ENDPOINT);
+    assert.equal(card.url, A2A_ENDPOINT, 'the A2A card served by the service names the endpoint the profile does');
+    assert.equal(profile.properties.ens.name, ENS_NAME);
 });
 
 test('the live UAID recomputes from the published fields', async () => {
