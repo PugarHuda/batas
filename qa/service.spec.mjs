@@ -356,7 +356,7 @@ test('the Agent Card carries the four questions as skills and points at the x402
     expect(erc8004.params.identityRegistry).toMatch(/^0x[0-9a-fA-F]{40}$/);
 });
 
-test('the MCP server answers over HTTP with the same four tools', async ({ request }) => {
+test('the MCP server answers over HTTP with the same six tools', async ({ request }) => {
     const headers = { Accept: 'application/json, text/event-stream' };
     const init = await request.post('/mcp', {
         headers,
@@ -375,7 +375,7 @@ test('the MCP server answers over HTTP with the same four tools', async ({ reque
     const list = await request.post('/mcp', { headers, data: { jsonrpc: '2.0', id: 2, method: 'tools/list' } });
     expect(list.status()).toBe(200);
     const names = (await list.json()).result.tools.map((t) => t.name).sort();
-    expect(names).toEqual(['check_agent_authority', 'check_publication', 'inspect_mandate_paid', 'read_mandate']);
+    expect(names).toEqual(['check_agent_authority', 'check_payment_trail', 'check_publication', 'inspect_mandate_paid', 'read_mandate', 'resolve_agent_name']);
 });
 
 // --- the document is held to what the service actually answers ------------------

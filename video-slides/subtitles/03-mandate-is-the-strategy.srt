@@ -1,0 +1,11 @@
+1
+00:00:00,300 --> 00:00:04,267
+We encode the cap, floor and expiry as the strategy bytes.
+
+2
+00:00:04,400 --> 00:00:07,733
+PolicyEnvelope wraps the program. Aqua hashes it.
+
+3
+00:00:07,867 --> 00:00:11,267
+Drop a limit, and the hash is one nobody funded.

@@ -1,0 +1,11 @@
+1
+00:00:00,300 --> 00:00:02,767
+Aqua's pull only checks who's calling.
+
+2
+00:00:02,900 --> 00:00:06,067
+So any app you ship to can take your tokens.
+
+3
+00:00:06,200 --> 00:00:09,300
+Hand that app to an agent. What stops it?

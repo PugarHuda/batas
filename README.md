@@ -735,6 +735,17 @@ refused   sell 1 A after the deadline          DeadlineReached
 
 No transaction reaches Sepolia. The fork runs on a free local port and is killed when the test ends.
 
+#### Live on Sepolia
+
+The same band is also shipped for real, to the real Aqua against the deployed BatasRouter, by its own maker [`0x3c57764c…E58b`](https://sepolia.etherscan.io/address/0x3c57764cd37d5F624fcd04d2C1074A5074e5E58b). It is not OWNER on purpose: every reader of the live position filters Aqua's log by OWNER and the router, so the band sits beside the live position without changing anything they report. `node agent/band-live.mjs --ship` reads the live pool's reserves (spot 1.9568 B per A) and builds the band around that spot. The band holds liquidity between 1.7611 and 2.1525 B per A. Selling A is capped at 0.5 A and floored at 1.9176 B per A; selling B is capped at 1 B and floored at 0.5008 A per B. The fee is 0.3%, the decay 600s, and the band expires 2026-10-13. The tokens are only what the counterparty honestly held (TokenMock.mint is owner-only), so the band is small: 1 A and 2.1577 B.
+
+- **Ship:** [`0x15b6bf65…89c9`](https://sepolia.etherscan.io/tx/0x15b6bf658d95ed853a668d03ea7bc6f4fef00f9ae4cfadce7b40da77577389c9), strategy hash `0x9af9f488…5f30`, which is what `router.hash(order)` returns.
+- **B → A:** [`0x69eda36b…d4e6`](https://sepolia.etherscan.io/tx/0x69eda36bdaaf01112f9e92d8163d67f6a4ce629eb97a64f252cecf4c7175d4e6), 0.2 B in, 0.101421168721582722 A out.
+- **A → B, 43s later:** [`0x8da6253a…b94c`](https://sepolia.etherscan.io/tx/0x8da6253af8ac55fca6ebd5c8daef4c0f31490d271cf20b4d8982a167b6b0b94c), 0.05 A in, 0.097338106694839809 B out, after paying the Decay spread the first swap left.
+- **Refused by eth_call:** 0.500000000000000001 A and 1.000000000000000001 B fail with `MandateAmountInExceeded`; 0.48 A and 0.9 B, both under the cap, fail with `MandateRateTooLow`.
+
+`npm run band` reads it back: the hash check, Aqua `safeBalances`, both decoded sides, and each swap repriced. `node --test agent/band-live.test.mjs` asserts all of that from the chain alone. It rebuilds the order from the ship transaction, then reprices each recorded swap from the ship amounts forward, Decay included, and requires the tokens' own Transfer logs to match to the wei.
+
 ### Checked against 1inch's official SDK
 
 `agent/sdk-parity.test.mjs` (`npm run test:sdk`) reads the live Batas program from Sepolia and checks `agent/swapvm.mjs` against [`@1inch/swap-vm-sdk`](https://www.npmjs.com/package/@1inch/swap-vm-sdk) 0.4.4. It uses the SDK's own `ProgramBuilder`, opcode objects and argument coders, placed at the slots parsed from the `OpcodeList.sol` the router compiles against.
@@ -1012,6 +1023,28 @@ All of these records were written in [one multicall](https://sepolia.etherscan.i
 
 > One link could not be made. The mandate registry was initialised without `ROLE_SET_PARENT`, and no account holds that role's admin, so `setParent` is refused with `EACUnauthorizedAccountRoles(0, 256, maker)` and `getParent()` stays empty. Resolution never reads the parent link; it walks down from the root. The refusal is pinned in `agent/ens-hierarchy.test.mjs` so it is not forgotten.
 
+### Two agents, two namespaces: agent.batas.eth and counterparty.batas.eth
+
+Batas runs two agents, and each now holds its own name, its own ERC-8004 identity and its own permissions under batas.eth. `agent.batas.eth` belongs to the maker's agent. `counterparty.batas.eth` belongs to the agent in `agent/counterparty.mjs`, which decides whether to trust the position, pays for an inspection when it has doubts, trades, and writes reputation from [`0x1437aF57…`](https://sepolia.etherscan.io/address/0x1437aF5722D5Dfe6BAEda25f3A7A39aeCA374614).
+
+Both names are granted on the same terms; only the holder differs. The grantor registered `counterparty` in the mandate registry with a 90-day expiry and batas.eth's resolver already set ([register](https://sepolia.etherscan.io/tx/0x439046099313a7a31a0c43901cefac293a080c8532023ec13fbddda6351eb18d)). The holder gets `SET_RESOLVER | SET_SUBREGISTRY`. `ROLE_CAN_TRANSFER_ADMIN` is withheld, so the name is soulbound, and `UNREGISTER` and `RENEW` stay with the grantor. On the resolver, the grantor gave the counterparty `ROLE_SET_TEXT` over the whole of `counterparty.batas.eth` and wrote its address record, in one multicall ([grant](https://sepolia.etherscan.io/tx/0xb083c087f8d19c80df29af6aa30a49a0136dbf25e9b018d6488d9a200fa62720)). The `agent` label's state, expiry, owner, token id, roles and resolver read the same before and after.
+
+The counterparty then acted with its own key. It minted its own identity, ERC-8004 agent #10258 ([register](https://sepolia.etherscan.io/tx/0x967a2895a649c237711b0f005ddadafaf715b6bb187c961439d08378043df081)). Its data: registration file describes what `counterparty.mjs` does and lists `{ "name": "ENS", "endpoint": "counterparty.batas.eth" }`. It wrote its own ENSIP-26 `agent-context` and its ENSIP-25 `agent-registration[<ERC-7930 registry>][10258] = 1` on its own name ([records](https://sepolia.etherscan.io/tx/0x2a7035fffb1a9ba0ac6d68a1ae13e4f52125ed10073c303c6cd4678c61f946b6)). The same resolver refuses it on `agent.batas.eth`: `setText` for `agent-context` or the `[10123]` key reverts with `EACUnauthorizedAccountRoles`, which `agent/namespaces.test.mjs` checks by simulation.
+
+```bash
+npm run namespaces   # every agent namespace: holder, expiry, soulbound, records, ERC-8004 link
+curl "https://batas-one.vercel.app/v1/agent/name?name=counterparty.batas.eth"   # its records, and the ENSIP-25 link checked against #10258
+```
+
+| | agent.batas.eth | counterparty.batas.eth |
+|---|---|---|
+| Holder | maker `0x39D2bae5…` | counterparty `0x1437aF57…` |
+| ERC-8004 | #10123, minted by the maker | #10258, minted by the counterparty |
+| Expiry | the live mandate's deadline | 90 days from the grant |
+| Registry roles | `SET_RESOLVER \| SET_SUBREGISTRY`, soulbound | `SET_RESOLVER \| SET_SUBREGISTRY`, soulbound |
+| Resolver | the maker writes every record | the holder writes its own text records and none of the maker's |
+| ENSIP-25 | linked both ways | linked both ways |
+
 ## A name other software can look up
 
 The agent is registered in the canonical
@@ -1271,6 +1304,12 @@ topic 0.0.10394165: 1 payment record(s), 1 verified against the ledger
      ledger    https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1789303433-642299625
 ```
 
+`GET /v1/payments?payer=0.0.10388401&limit=20` serves the same trail over HTTP, with the same verification, as JSON: the newest `limit` records (at most 100), oldest first, with `total` and `verifiedCount` for the whole trail. It is also the free MCP tool `check_payment_trail`, and `client().payments()` in the SDK.
+
+```bash
+curl "https://batas-one.vercel.app/v1/payments?limit=5"   # the payment trail, verified against the ledger
+```
+
 `agent/payment-trail.test.mjs` checks this record on the real mirror node. It also checks that forged, inflated, replayed, wrong-payee and non-HBAR records are reported as unverified.
 
 ### The part the caller could not have worked out alone
@@ -1479,20 +1518,23 @@ Batas is listed in the public HCS-10 registry on Hedera testnet. An agent that h
 | What | Where |
 |---|---|
 | Registry entry | topic [`0.0.6913983`](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.6913983/messages/384) #384 (memo `hcs-10:0:300:3`), paid by the agent account `0.0.10388401` |
-| Account memo | `hcs-11:hcs://1/0.0.10523695` |
-| HCS-11 profile (HCS-1 file) | [`0.0.10523695`](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10523695/messages) — submit key, no admin key, sha256 in the memo |
+| Account memo | `hcs-11:hcs://1/0.0.10524249` (moved from `0.0.10523695` by `node agent/hol.mjs --update-profile`) |
+| HCS-11 profile (HCS-1 file) | [`0.0.10524249`](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10524249/messages) — submit key, no admin key, sha256 in the memo. The first profile, [`0.0.10523695`](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10523695/messages), stays on the ledger with its outdated fixed price |
 | HCS-10 inbound / outbound | `0.0.10523692` (public) / `0.0.10523693` |
 | UAID (HCS-14) | `uaid:aid:72998g8B43FWUQDt3TzhQE1RATUJgiv5Gykt2ppxXbRHRkeS8sD5V3g7eRfg2NK9ME;uid=0.0.10523692@0.0.10388401;registry=hol;proto=hcs-10;nativeId=hedera:testnet:0.0.10388401` |
 | UAID for the ERC-8004 identity | `uaid:aid:5ADkVx3xBapT9QNKuQ5CiocADkd4ubCfWKodEVZi3JDPUY85mFvfJFeSK1iyh8PH4Y;uid=10123;registry=erc-8004;proto=erc-8004;nativeId=eip155:11155111:0x8004A818BFB912233c491871b3d84c89A494BD9e` |
 
-The profile names the x402 endpoint `https://batas-one.vercel.app/v1/mandate/explain`, the ERC-8004 identity `eip155:11155111:0x8004A818BFB912233c491871b3d84c89A494BD9e/10123` and the mandate topic `0.0.10394165`.
+The profile names the x402 endpoint `https://batas-one.vercel.app/v1/mandate/explain` and its metered price, read from `/.well-known/x402` when the profile is inscribed: 0.00094 to 0.0037 HBAR per answer (94000 to 370000 tinybar, the exact amount stated in each 402), or 1.00 BIC (HTS `0.0.10523367`), with the formula. It also names the A2A endpoint `https://batas-one.vercel.app/a2a`, the ENS name `agent.batas.eth`, the ERC-8004 identity `eip155:11155111:0x8004A818BFB912233c491871b3d84c89A494BD9e/10123` and the mandate topic `0.0.10394165`. An HCS-1 file cannot be edited, so an update is a new file plus a memo that points at it. The inbound topic and both UAIDs are carried over. Nothing is sent to the registry, because HCS-10 defines no update message and entry #384 still names the same account, inbound topic and UAID. `agent/hol.test.mjs` fails if the price in the live profile stops matching the live manifest.
 
 ```
 node agent/hol.mjs --find     # walk the registry, follow the memo to the profile, print the endpoint and ERC-8004 id
 node agent/hol.mjs --status   # topics, profile, UAID, registry sequence
+node agent/hol.mjs --update-profile   # inscribe a new profile with the live price, move the memo once the mirror serves it
 ```
 
-The registry topic has no submit key, so an entry only counts when the account it names paid for it, and the mirror node reports the payer on every row. The profile is checked against its sha256 before it is believed. Kiloscribe's HCS-1 CDN, which this project does not run, also serves it: `https://kiloscribe.com/api/inscription-cdn/0.0.10523695?network=testnet`.
+The registry topic has no submit key, so an entry only counts when the account it names paid for it, and the mirror node reports the payer on every row. The profile is checked against its sha256 before it is believed. Kiloscribe's HCS-1 CDN, which this project does not run, also serves it: `https://kiloscribe.com/api/inscription-cdn/0.0.10524249?network=testnet`.
+
+The Hashgraph Online Registry Broker has not indexed Batas: `/api/v1/resolve` answers `UAID not found` for both UAIDs, and a search for Batas under `hashgraph-online` returns nothing (checked 2026-09-13). Discovery works from the HCS-10 registry topic on the mirror node, as above.
 
 ### A standing order, paid by the network
 
@@ -1576,6 +1618,17 @@ says whether a trade of that size settles, falls under the floor, or is refused 
 what the bytes permit, when they were published to HCS, and whether the agent's name still holds.
 Both URLs answer JSON to a client that does not ask for HTML.
 
+### What the pages show live
+
+The landing (`/`, section `#agents`) and the app (`/app`) both show four more readings, taken as the page loads:
+
+- **ENS identity**: `GET /v1/agent/name`. Shows agent.batas.eth, its address and resolver, its text records, and whether the ENSIP-25 link to ERC-8004 #10123 holds both ways, with Etherscan links.
+- **Paying**: `/.well-known/x402`. Shows the metered range (0.00094 to 0.0037 HBAR today), each rate that builds the bill, and both accepted assets: HBAR, and the HTS token BIC `0.0.10523367` with its custom fee as read from the mirror node.
+- **Agent to agent**: `/.well-known/agent-card.json`. Shows the A2A endpoint `/a2a` and its required a2a-x402 extension, plus the Hashgraph Online HCS-10 listing at registry topic `0.0.6913983` #384, read from the mirror node.
+- **Payment audit trail**: the newest `batas.payment` records on HCS topic `0.0.10394165`, each linked to its payment transaction and its record.
+
+The Hedera data comes from `testnet.mirrornode.hedera.com` in the visitor's browser, not through this service, so the service is never the only witness to its own payments. It is the one host the pages read other than their own origin.
+
 It calls only free routes, and the suite asserts that the page never mentions the paid one. Those
 routes are new as HTTP but not new as answers — they sit at parity with the free MCP tools, which
 have given away the decode, the publication lookup and the authority check since they existed:
@@ -1586,6 +1639,8 @@ have given away the decode, the publication lookup and the authority check since
 | `POST /v1/mandate/publication` | when those exact bytes became public | `check_publication` |
 | `GET /v1/agent/authority` | whether the ENSv2 name still holds, and if not, lapsed or revoked | `check_agent_authority` |
 | `GET /v1/agent/reputation` | what clients have said, from ERC-8004 | — |
+| `GET /v1/agent/name` | what the agent's ENS name resolves to, and its ENSIP-25 link | `resolve_agent_name` |
+| `GET /v1/payments` | the x402 payment audit trail, each record verified against the ledger | `check_payment_trail` |
 
 All seven of those call `agent/free.mjs` rather than each implementing the question. Two encoders for
 one format is how this project once shipped mandates with no expiry, and two answers to one
@@ -1623,13 +1678,15 @@ claude mcp add batas -- node /path/to/agent/mcp.mjs
 ```
 
 MCP is how the software people delegate to — Claude, Cursor, Windsurf — reaches an outside service.
-Four tools, and the split between them is the point:
+Six tools, and the split between them is the point:
 
 | Tool | Cost | Answers |
 |---|---|---|
 | `read_mandate` | free | what these bytes permit, and whether `PolicyEnvelope` is outermost |
 | `check_publication` | free | when these exact bytes were published, from the mirror node |
 | `check_agent_authority` | free | whether the ENS name still holds, and if not, lapsed or revoked |
+| `resolve_agent_name` | free, Sepolia reads only | what `agent.batas.eth` (or any name under `batas.eth`) resolves to, and whether its ENSIP-25 link to ERC-8004 agent #10123 holds both ways |
+| `check_payment_trail` | free, mirror node reads only | the `batas.payment` records on HCS topic 0.0.10394165, each verified against the ledger; the newest `limit` (default 20, at most 100) |
 | `inspect_mandate_paid` | **from 0.001 HBAR**, metered | all of it, plus the ERC-8004 identity and whether it vouches |
 
 An assistant can establish for nothing whether a mandate was ever published and whether the agent
@@ -1916,6 +1973,8 @@ the reason that test asks twice is that rare is not never.
 The live checks in there are live on purpose. The ERC-8004 tests read the real registry on Sepolia
 and the publication tests read the real mirror node, because an identity check tested against a
 stand-in proves only that the stand-in agrees with itself.
+
+Hostile API suite. `qa/extras.spec.mjs` and `qa/extras-hostile.spec.mjs` run in the `local` Playwright project against a service started on your port. They check the metered 402 against `priceFor` for 18 bodies, the ceiling in `/.well-known/x402`, and the HTS option in both. They check that a light payment requirement is refused on a heavy body, and they check the registration file, the Agent Card, and the name route for the agent, the alias and a wildcard label. They also attack `POST /a2a` with malformed envelopes, bad ids, hostile amounts, forged and replayed payment payloads, a payment flood and cancel-then-send. They found eight defects, each fixed with a test that failed first. Run with `BATAS_SERVICE_URL=http://127.0.0.1:4370 PORT=4370 npx playwright test --project local`. Pin `BATAS_SERVICE_URL` explicitly: a `.env` that sets it to the deployment otherwise points the local project at production.
 
 ## License
 

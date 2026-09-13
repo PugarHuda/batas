@@ -1,0 +1,11 @@
+1
+00:00:00,300 --> 00:00:02,833
+The agent's authority is an ENS name.
+
+2
+00:00:02,967 --> 00:00:05,700
+MandateName reads it on every settlement.
+
+3
+00:00:05,833 --> 00:00:09,133
+Revoke it, and every swap reverts, for everyone.

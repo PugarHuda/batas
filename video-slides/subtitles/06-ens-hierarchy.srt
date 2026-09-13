@@ -1,0 +1,15 @@
+1
+00:00:00,300 --> 00:00:03,967
+Under batas dot eth, one resolver answers every subname.
+
+2
+00:00:04,100 --> 00:00:06,233
+Mandate is an alias for agent.
+
+3
+00:00:06,367 --> 00:00:09,033
+The counterparty may edit one text key.
+
+4
+00:00:09,167 --> 00:00:11,967
+And it links both ways to ERC-8004.

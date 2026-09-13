@@ -19,6 +19,7 @@ import { explain, decodeProgram, readMandate } from './swapvm.mjs';
 import { lookupMandate, lookupPayments } from './hcs.mjs';
 import { mandateNameStatus, resolveName } from './ens.mjs';
 import { verifyAgentLink } from './ens-hierarchy.mjs';
+import { agentIdForName, recordKeys } from './namespaces.mjs';
 import { latestProgramOnChain, programFromStrategy } from './position.mjs';
 import { readReputation } from './reputation.mjs';
 import { parseAgentId } from './erc8004.mjs';
@@ -183,7 +184,11 @@ export async function nameAnswer({ name } = {}) {
         throw refused(400, `name must be a name under ${ENS_PARENT_LABEL}.eth`);
     }
     const pub = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) });
-    const [resolved, link] = await Promise.all([resolveName(pub, asked), verifyAgentLink(pub, { name: asked })]);
+    // Each agent namespace is checked against its own ERC-8004 id. For any other name the keys and the id
+    // are the ones this route used before. Checking every name against the maker's id reported
+    // counterparty.batas.eth as unlinked, a wrong answer rather than a missing one.
+    const agentId = agentIdForName(asked) ?? AGENT_ID;
+    const [resolved, link] = await Promise.all([resolveName(pub, asked, recordKeys(agentId)), verifyAgentLink(pub, { name: asked, agentId })]);
     return { name: asked, ...resolved, erc8004: link };
 }
 

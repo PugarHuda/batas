@@ -1,0 +1,15 @@
+1
+00:00:00,300 --> 00:00:05,100
+On Hedera, agents pay us per request with x402, via Blocky402.
+
+2
+00:00:05,233 --> 00:00:08,100
+In HBAR, or our BIC token with its fee.
+
+3
+00:00:08,233 --> 00:00:10,400
+Each payment is logged on HCS.
+
+4
+00:00:10,533 --> 00:00:15,633
+Agents negotiate over A2A, pay on a schedule, and find us in a directory.

@@ -1,0 +1,7 @@
+1
+00:00:00,300 --> 00:00:03,867
+One mandate, three tracks: 1inch, ENS and Hedera.
+
+2
+00:00:04,000 --> 00:00:06,800
+It's live. Try it, and read the code.
