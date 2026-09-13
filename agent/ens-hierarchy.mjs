@@ -331,6 +331,40 @@ async function records() {
     }, `multicall ${calls.length} records`);
 }
 
+/**
+ * ENSIP-25's two-way link between a name and an ERC-8004 agent, checked in both directions.
+ *
+ * Forward: the name, resolved through the UniversalResolver, carries a non-empty
+ * `agent-registration[<registry>][<id>]` record. Reverse: the agent's registration file, read from the
+ * identity registry, lists that name as an ENS service. Either half on its own proves nothing — anyone
+ * can set a text record naming agent 10123, and any agent can claim any name in its own file — so
+ * `linked` is true only when both hold.
+ */
+export async function verifyAgentLink(pub, { name = AGENT_NAME, agentId = AGENT_ID } = {}) {
+    const { resolveAgent } = await import('./erc8004.mjs');
+    const normalized = normalize(name);
+    const key = agentRegistrationKey(agentId);
+    const [value, agent] = await Promise.all([
+        pub.getEnsText({ name: normalized, key, strict: true }),
+        resolveAgent(String(agentId)),
+    ]);
+    const claimed = (agent.registration?.services ?? [])
+        .filter((s) => typeof s?.name === 'string' && s.name.toLowerCase() === 'ens' && typeof s.endpoint === 'string')
+        .map((s) => s.endpoint.toLowerCase());
+    const forward = typeof value === 'string' && value.length > 0;
+    const reverse = claimed.includes(normalized);
+    return {
+        name: normalized,
+        agentId: String(agentId),
+        registry: `eip155:${sepolia.id}:${IDENTITY_REGISTRY}`,
+        ensRecord: { key, value: value || null },
+        registrationNames: claimed,
+        forward,
+        reverse,
+        linked: forward && reverse,
+    };
+}
+
 async function status() {
     const { resolveName } = await import('./ens.mjs');
     const pub = publicClient();
@@ -346,7 +380,13 @@ async function main() {
     if (argv.includes('--setup')) return setup();
     if (argv.includes('--records')) return records();
     if (argv.includes('--status')) return status();
-    console.log('usage: --status | --setup | --records');
+    if (argv.includes('--verify')) {
+        const link = await verifyAgentLink(publicClient());
+        console.log(JSON.stringify(link, null, 2));
+        if (!link.linked) process.exitCode = 1;
+        return;
+    }
+    console.log('usage: --status | --setup | --records | --verify');
 }
 
 if (import.meta.filename === process.argv[1]) {
