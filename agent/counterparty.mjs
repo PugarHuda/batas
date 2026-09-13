@@ -312,7 +312,7 @@ async function main() {
     say('host', ORIGIN);
     say('sells', service.name);
     say('endpoint', service.endpoint);
-    say('price', service.price === null ? 'unstated' : `${service.price} HBAR on ${service.network}`);
+    say('price', service.price === null ? 'unstated' : `metered, at most ${service.price} HBAR on ${service.network}`);
 
     const body = program ? { program } : {};
 
@@ -405,7 +405,7 @@ async function main() {
     }
 
     console.log(`  but ${buy.reason}.`);
-    console.log(`\n  paying ${service.price} HBAR for the operator's identity and whether it vouches …`);
+    console.log(`\n  paying the metered price, at most ${service.price} HBAR, for the operator's identity and whether it vouches …`);
 
     // `payForExplanation` returns the body alongside the settlement receipt, not the body itself.
     // Reading it as the body gave "agent not resolved" from an answer that had resolved the agent
