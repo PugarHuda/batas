@@ -2,7 +2,7 @@
 // One command in front of the entry points that already exist.
 //
 //   batas decode 0x…             what these bytes permit, no network
-//   batas inspect [0x…] [--paid] the live position free, or the whole answer for 0.001 HBAR
+//   batas inspect [0x…] [--paid] the live position free, or the whole answer for a metered price from 0.001 HBAR
 //   batas publication 0x…        when these bytes were published, from the mirror node
 //   batas authority [label]      whether the mandate name still holds
 //   batas mcp                    the MCP server over stdio

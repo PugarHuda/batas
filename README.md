@@ -35,7 +35,7 @@ flowchart TB
 
     subgraph HED["Hedera"]
         HC["<b>HCS topic</b><br/>when these exact bytes<br/>became public"]
-        XP["<b>x402 endpoint</b><br/>0.001 HBAR for the answer<br/>a stranger cannot compute"]
+        XP["<b>x402 endpoint</b><br/>metered, from 0.001 HBAR, for the answer<br/>a stranger cannot compute"]
     end
 
     AG -- "abi.encode(mandate) = strategy bytes" --> MD
@@ -63,7 +63,7 @@ flowchart TB
 
 ```bash
 npm run walkthrough              # free: everything anyone can verify without us
-npm run walkthrough -- --paid    # and then settle 0.001 HBAR for the rest
+npm run walkthrough -- --paid    # and then settle the metered price for the rest
 ```
 
 Five steps that read public chains and a public mirror node, then one that pays. The split is the
@@ -360,8 +360,8 @@ stay with the grantor, and withholding `ROLE_CAN_TRANSFER_ADMIN` makes the grant
 
 **And the paid endpoint sells a different good than its neighbours.** Hedera's x402 bounty closed in
 July 2026 with five winners; the two published ones — Pinout and Mystic — meter a resource by the
-second. `/v1/mandate/explain` meters nothing. It sells a verdict that the party asking for it cannot
-produce alone: what a program's bytes actually permit, and whether the identity claiming to operate
+second. `/v1/mandate/explain` meters the reads an answer takes, not seconds of a resource, and what
+it sells is a verdict that the party asking for it cannot produce alone: what a program's bytes actually permit, and whether the identity claiming to operate
 it holds the registration it names.
 
 What the table's other rows do that this one does not is not hidden either; it is under
@@ -691,6 +691,64 @@ Each run salts the program, because Aqua permanently burns a strategy hash once 
 `Salt` is the instruction that exists for exactly this: a no-op whose bytes change the program
 hash, which is how the same terms get a fresh position.
 
+### A banded, two-sided position (1inch Aqua)
+
+The live position sells one direction along x*y=k. `agent/band.mjs` builds what a market maker would actually run, using only instructions the deployed BatasRouter already runs, so no new contract is needed:
+
+```
+JumpIfTokenIn(B) -> side 2
+side 1, A in:  PolicyEnvelope(cap 500 A,  floor 1.96 B/A, aToB) · Deadline · Decay(600s) · FeeFlatIn(0.3%) · XYCConcentrate(1.8–2.2) · Jump(end)
+side 2, B in:  PolicyEnvelope(cap 1000 B, floor 0.49 A/B, bToA) · Deadline · Decay(600s) · FeeFlatIn(0.3%) · XYCConcentrate(1.8–2.2) · Salt
+```
+
+- **Band:** all liquidity sits between 1.8 and 2.2 B per A (spot 2.0), so the same tokens give much deeper quotes near spot and run out at the edges.
+- **A floor and a cap each way:** an envelope has one direction, so each branch gets its own. The only instruction before the envelopes is the jump, and a jump only picks which envelope runs.
+- **Decay spread:** an immediate counter-trade gets a worse price, and the penalty fades to zero over 10 minutes.
+- **Decoding:** `/v1/mandate/decode` reports the band as `guarded: true` with `mandate.sides`. Any jump outside that exact shape makes it report unguarded.
+
+`npm run test:band` forks Sepolia with anvil, impersonates the maker, and ships to the real Aqua against the real router. Every balance change must match the JS mirror of the instructions to the wei:
+
+```
+band      1.8 – 2.2 B per A, spot 2
+sell A    cap 500 A, floor 1.96 B/A
+sell B    cap 1000 B, floor 0.49 A/B
+fee       0.3%   decay 600s   program 272 bytes
+shipped   906.866750716306163325 A / 1999.999999999999999999 B   hash 0x5d1b47be…c659cc   gas 85690
+✔ the band ships to the real Aqua under the hash the deployed router computes
+A → B     20 A in, 39.839234302834470749 B out, rate 1.991961715141723537
+✔ selling A inside the band settles, and every balance moves exactly as priced
+B → A     40 B in, 19.923696560570092498 A out, rate 0.498092414014252312
+          decay spread cost the counter-trade 0.036750047654714491 A
+✔ selling B back a minute later settles too, and pays the decay spread
+refused   sell 480 A, under the 1.96 floor   MandateRateTooLow  (best rate 1.946208345931366881)
+refused   sell 501 A, over the 500 A cap     MandateAmountInExceeded  (best rate 1.944169727723162668)
+refused   sell 900 B, under the 0.49 floor   MandateRateTooLow  (best rate 0.487282197965157757)
+refused   sell 1001 B, over the 1000 B cap   MandateAmountInExceeded  (best rate 0.486054730170726963)
+refused   sell 2500 A, past the band edge    MandateAmountInExceeded  (best rate 1.891674322888669131, band drained)
+✔ each side refuses past its cap, under its floor, and a trade that would drain the band
+refused   sell 1 A after the deadline          DeadlineReached
+✔ a trade inside every limit is still refused once the deadline passes
+ℹ tests 5  pass 5  fail 0
+```
+
+No transaction reaches Sepolia. The fork runs on a free local port and is killed when the test ends.
+
+### Checked against 1inch's official SDK
+
+`agent/sdk-parity.test.mjs` (`npm run test:sdk`) reads the live Batas program from Sepolia and checks `agent/swapvm.mjs` against [`@1inch/swap-vm-sdk`](https://www.npmjs.com/package/@1inch/swap-vm-sdk) 0.4.4. It uses the SDK's own `ProgramBuilder`, opcode objects and argument coders, placed at the slots parsed from the `OpcodeList.sol` the router compiles against.
+
+**Where they agree:**
+- **Instructions the SDK defines.** `Deadline`, `XYCSwap` and `Salt` have the same opcode, offset, decoded arguments and bytes. This holds for the live program and for mandates at zero, typical and maximum deadline and salt.
+- **Batas's own instructions.** The SDK has no `PolicyEnvelope` (0x21) or `MandateName` (0x22). Registered through its custom-instruction interface, they land at the same offsets `decodeProgram` reports, and the SDK writes the live program back byte for byte.
+- **Program extraction and hashing.** `Order.decode` pulls out the same program from the shipped strategy. The SDK's Aqua rule, `keccak256(abi.encode(order))`, reproduces the live strategy hash, and `BatasRouter.hash` confirms it.
+
+**Three places the SDK disagrees with the contracts Batas runs on.** Each is asserted with its bytes:
+1. **Opcode numbering.** The SDK numbers opcodes as a dense array: `deadline` 13, `xycSwapXD` 17, `salt` 20, flat fee 21. `@1inch/swap-vm`'s `OpcodeList.sol` groups them by family: 0x20, 0x50, 0x02, 0x70. The SDK's `AquaProgramBuilder` fails on the live program. Worse, it silently reads 0x21 as `onlyTxOriginTokenBalanceNonZero`. With the table corrected, 0x21 and 0x22 decode as `empty` and their arguments are dropped.
+2. **Flat fee.** `FeeFlat.sol` is `[uint24 feeBps]` on a 1e7 base. The SDK's `FlatFeeArgs` is a uint32 on a 1e9 base. The live 0.3% fee is `7003007530` on chain; the SDK's `AquaXYCAmmStrategy` writes 0.3% as `1504002dc6c0`, and its coder cannot read the on-chain one.
+3. **Order data.** `MakerTraitsLib.build` puts tokenA and tokenB at the front of `data` and starts the data-slice offsets at 40. The SDK's `MakerTraits.encode` does neither. Round-tripped through the SDK, the live order becomes a different strategy: `0x1b03ef4c…` instead of `0x4ed644d4…`.
+
+These are version gaps between the SDK and the contracts, not bugs in Batas's encoder. Batas's bytes match the Solidity that settles them.
+
 ## The agent
 
 `agent/batas-agent.mjs` is the half the project is named for. It reads the live position on
@@ -914,6 +972,43 @@ the registration still succeeds, the name simply permits more than intended.
 > with `cast code` before use, and the role values came from the specification rather than from
 > memory.
 
+### The name is in the ENS hierarchy: agent.batas.eth
+
+The mandate registry that the settlement reads ([`0x945800Bd…`](https://sepolia.etherscan.io/address/0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B)) is now the subregistry of **batas.eth** on ENSv2 Sepolia. The label `agent` that the kill switch checks is also the name `agent.batas.eth`, and any ENS client resolves it through ENS's own UniversalResolver. Registering batas.eth went through the ENSv2 registrar's commit and reveal ([commit](https://sepolia.etherscan.io/tx/0x0c8856d0243031abfa5a55cbc3d4c60040fe4d9d8e266ec8baca35cf729b96e5), [register](https://sepolia.etherscan.io/tx/0xe01d01d37a649db0a3573ad435913bf9530a594f5789d792d2ac22cee7dcb12f)). The mandate registry was set as its subregistry in that same registration. The records sit on a PermissionedResolver deployed through ENS's VerifiableFactory at [`0x671C506A…`](https://sepolia.etherscan.io/address/0x671C506Aaa2a123bE802Fe51975Ca9515AEC2516) ([deploy](https://sepolia.etherscan.io/tx/0xdcc86300c42270299558600463101617f3a91c94a17b86095e4a7aaa21ca9b6f)).
+
+The `agent` label was pointed at that resolver ([tx](https://sepolia.etherscan.io/tx/0xfd6a6c72edb48ca778ce122d982699c76926e774e833b5fa867ff85e133f9613)), and the change touched nothing else. `getState` returns the same status, expiry, owner and token id before and after, so the kill switch did not move.
+
+```bash
+npm run ens:resolve          # agent.batas.eth through the UniversalResolver
+npm run ens:verify           # ENSIP-25, both directions
+node agent/ens.mjs --resolve mandate.batas.eth
+```
+
+```
+agent.batas.eth
+  resolver              0x671C506Aaa2a123bE802Fe51975Ca9515AEC2516
+  addr                  0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E
+  agent-endpoint[web]   https://batas-one.vercel.app
+  agent-endpoint[mcp]   https://batas-one.vercel.app/mcp
+  agent-endpoint[x402]  https://batas-one.vercel.app/.well-known/x402
+  agent-context         what the agent is, where its kill switch lives, its ERC-8004 id
+  agent-registration[0x0001000003aa36a7148004a818bfb912233c491871b3d84c89a494bd9e][10123]  1
+```
+
+All of these records were written in [one multicall](https://sepolia.etherscan.io/tx/0x9d141f7051223969d48f49fce404b785780d21a7d1f4d6ba7778b5ec58eaa413).
+
+| ENSv2 feature | What it does here |
+|---|---|
+| Subregistry | batas.eth → the existing mandate registry, so the name the settlement reads is also the name ENS resolves |
+| PermissionedResolver | holds the ENSIP-26 agent records (`agent-context`, `agent-endpoint[...]`) and the ENSIP-25 `agent-registration` record |
+| Wildcard | an unregistered label such as `anything.batas.eth` has no resolver of its own, so the UniversalResolver uses batas.eth's; it resolves and gets no records invented for it |
+| Alias | `mandate.batas.eth` is registered nowhere. The resolver rewrites it to `agent.batas.eth` and answers with that name's records |
+| Enhanced Access Control | the counterparty account holds `ROLE_SET_TEXT` on one key of one name ([grant](https://sepolia.etherscan.io/tx/0x3da4cc3543bad065175d920bdb63ca5deb6e1c54b8e7d78b7f5ac68a03f0e1cc)). It wrote that key itself ([tx](https://sepolia.etherscan.io/tx/0x09ab95bb180c7e7df8e5419c340b8ac5e23714522536e60647c23de3600276d2)), and the resolver refuses it `url`, the endpoint records, and the same key on batas.eth |
+
+**ENSIP-25, both directions.** The name carries `agent-registration[<ERC-7930 registry>][10123] = 1`. ERC-8004 agent #10123's registration now lists `{ "name": "ENS", "endpoint": "agent.batas.eth" }` ([uri](https://sepolia.etherscan.io/tx/0x224e89f82d0cddf795f19f80abf7b33753ebfb7401bcccc8fbcde0653662d43c), [metadata](https://sepolia.etherscan.io/tx/0x3579958f264c9f5cf2db84c84d777354a29e8a57f5d4328c8f639b954c4b3b17)). `verifyAgentLink` accepts the link only when both halves agree. `mandate.batas.eth` shows why: it passes the forward check through its alias, but the registration does not claim it, so verification fails.
+
+> One link could not be made. The mandate registry was initialised without `ROLE_SET_PARENT`, and no account holds that role's admin, so `setParent` is refused with `EACUnauthorizedAccountRoles(0, 256, maker)` and `getParent()` stays empty. Resolution never reads the parent link; it walks down from the root. The refusal is pinned in `agent/ens-hierarchy.test.mjs` so it is not forgotten.
+
 ## A name other software can look up
 
 The agent is registered in the canonical
@@ -970,6 +1065,30 @@ mandates   https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/mess
 The third one matters most. A reader who trusts neither this repository nor the paid endpoint can
 still check any grant this agent made, on a mirror node that is public, unauthenticated, and not
 ours. Identity leads to ledger; ledger holds the terms.
+
+### The domain it names, proven
+
+ERC-8004 lets an agent prove it controls an HTTPS endpoint domain by serving
+`https://{domain}/.well-known/agent-registration.json` with a `registrations` entry that names its
+on-chain id and registry. Agent #10123's URI is a `data:` URI, so no host serves the agentURI. Without
+the well-known file, nothing would show that `batas-one.vercel.app` actually belongs to it.
+
+The service publishes that file at
+[`/.well-known/agent-registration.json`](https://batas-one.vercel.app/.well-known/agent-registration.json).
+It is not a copy. On each request, with a one-minute cache, it reads what the registry holds for #10123,
+so the file can only ever say what the token says.
+
+Any agent can be checked the other way round:
+
+```bash
+node agent/domain-verify.mjs 10123
+```
+
+The script resolves the agent on Sepolia and fetches the well-known file from each distinct HTTPS
+endpoint domain in its registration. It reports each domain as verified, or not verified with the
+reason: unreachable, no registrations, or a registry/id mismatch. A domain that serves a hosted
+agentURI counts as verified, as the spec allows. For #10123, `github.com` and the Hedera mirror node
+are listed services, but they are not ours, and they come back not verified.
 
 ### And what anyone who traded here says about it
 
@@ -1041,7 +1160,7 @@ Vercel Functions, so there is one implementation rather than a hosted copy that 
 
 ```bash
 curl https://batas-one.vercel.app/                       # free: what it sells and what it costs
-node agent/inspect.mjs 0x2120...                         # pay 0.001 HBAR and read the answer
+node agent/inspect.mjs 0x2120...                         # pay the metered price and read the answer
 BATAS_SERVICE_URL=http://localhost:4021 node agent/inspect.mjs 0x2120...   # against a local server
 ```
 
@@ -1101,6 +1220,55 @@ notes
 `guarded` is the field worth reading first. It is true only when `PolicyEnvelope` occupies the
 outermost position; anywhere else, later instructions can undo whatever it checked, and the service
 says so in plain words rather than leaving the caller to notice.
+
+### Metered, not flat
+
+`POST /v1/mandate/explain` is priced per request by the work the body asks for. The price is still settled with x402 `exact` on `hedera:testnet` through Blocky402. The paywall computes the price from the request body (`priceFor(body)` in `agent/service.mjs`, resolved by `@x402/core` as a dynamic price). The 402's `PAYMENT-REQUIRED` header states that exact amount. On the paid retry x402 recomputes the requirement from the same body and requires the signed payment to match, so a light quote cannot be replayed against a heavy body.
+
+| Component | Tinybar | When |
+|---|---|---|
+| decode | 40,000 | always |
+| instructions | 1,000 each, at most 256 billed | the program decodes |
+| publication | 34,000 | the HCS mirror-node lookup runs |
+| authority | 20,000 | the ENSv2 authority reads run |
+| operator | 20,000 | a well-formed `agentId` (and `maker`, if given) is sent, so the ERC-8004 identity and reputation reads run |
+
+The live mandate on its own (six instructions) costs exactly 0.001 HBAR (100,000 tinybar). With `agentId` and `maker` it costs 0.0012 HBAR. The most any request can cost is 0.0037 HBAR, under the 0.01 HBAR default cap in `agent/inspect.mjs`. A body that is not hex or does not decode is quoted the decode only, and x402 does not settle a 4xx answer.
+
+Checking the bill: the paid answer carries `metering`, which lists each component and the total. `/.well-known/x402` publishes the rates and formula (`resources[0].metered`), and its `accepts[0].amount` is the ceiling. `GET /` and `/openapi.json` state the range.
+
+```
+{"program":"0x2121…"}                         -> 402 amount 100000
+{"program":"0x2121…","agentId":"1","maker":…} -> 402 amount 120000
+{"program":"0x5000…(200 instructions)","agentId":"1"} -> 402 amount 314000
+```
+
+### Every payment leaves an audit record
+
+An x402 settlement is a public Hedera transaction, but the transaction only says that HBAR moved. It does not say what the HBAR bought. So once the mirror node confirms a settlement, `inspect.mjs` makes the **payer** publish a `batas.payment` record to the same HCS topic. The record holds the transaction id, payer, payee, amount in tinybars, asset, network, the resource URL, and a keccak256 of the exact request body and response body. The payer already holds a Hedera key, so the paid service needs no new secret for this. Anyone holding the two bodies can show that this payment bought that answer, at a consensus time neither party controls.
+
+`node agent/hcs.mjs --payments` reads the trail back and checks each record against the ledger. A record counts as verified only if all of these hold:
+- the HCS message was paid by the account the record names as payer (the topic has no submit key, so this is the signature)
+- no earlier verified record claimed the same transaction
+- the mirror node shows the transaction succeeded
+- at least the stated amount left the payer and reached the payee
+
+Anything else is listed as `UNVERIFIED` with the reason, never hidden. If the mirror node cannot answer, the record shows as `UNCHECKED`.
+
+The first recorded payment, 0.001 HBAR from the agent to the service against the live deployment:
+
+```
+topic 0.0.10394165: 1 payment record(s), 1 verified against the ledger
+  #16  2026-09-13T12:44:06.120Z  VERIFIED  0.001 HBAR  0.0.10388401 -> 0.0.10388560
+     tx        0.0.7162784@1789303433.642299625  SUCCESS, settled 2026-09-13T12:44:02.000Z
+     resource  https://batas-one.vercel.app/v1/mandate/explain
+     request   0x9d10e77dbd715684e32beb2af08f32e401dc136ea75f93aa578837fd0d5c2e69
+     response  0x16d381aa084d103c25a0adbdda187e4706b656161bf2de030cd27ce1cb7a92e8
+     record    https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages/16
+     ledger    https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1789303433-642299625
+```
+
+`agent/payment-trail.test.mjs` checks this record on the real mirror node. It also checks that forged, inflated, replayed, wrong-payee and non-HBAR records are reported as unverified.
 
 ### The part the caller could not have worked out alone
 
@@ -1187,7 +1355,7 @@ associated the project's own token can pay in it instead, and that path carries 
 
 #### Pay in an HTS token with a custom fee schedule
 
-`POST /v1/mandate/explain` accepts two payments. HBAR comes first (0.001 HBAR, no association needed). Second is **Batas Inspection Credit (BIC)**, HTS token [`0.0.10523367`](https://hashscan.io/testnet/token/0.0.10523367): 1.00 BIC per answer, 2 decimals, treasury `0.0.10388560`. Both options appear in the 402 and in `/.well-known/x402`, and both settle through the Blocky402 facilitator, which pays the network fee. The hosted deployment needs no Hedera key for either.
+`POST /v1/mandate/explain` accepts two payments. HBAR comes first (metered, from 0.001 HBAR, no association needed). Second is **Batas Inspection Credit (BIC)**, HTS token [`0.0.10523367`](https://hashscan.io/testnet/token/0.0.10523367): 1.00 BIC per answer, 2 decimals, treasury `0.0.10388560`. Both options appear in the 402 and in `/.well-known/x402`, and both settle through the Blocky402 facilitator, which pays the network fee. The hosted deployment needs no Hedera key for either.
 
 The token carries a **custom fee schedule**: a fixed 0.01 BIC fee, paid in BIC by the sender and collected by the service account `0.0.10388560`. The x402 payload only moves 1.00 BIC. The network adds the fee at consensus, so every settlement in BIC pays the fee schedule on the ledger, and the mirror node records it in `assessed_custom_fees`:
 
@@ -1287,6 +1455,46 @@ position's own spot. A counterparty with its own view of the market sets `BATAS_
 for the operator's identity is a separate decision, `shouldPay`, made only after every free check is
 clean: it buys the answer when the grant is under an hour old or when told to with `--paranoid`, and
 otherwise trades without spending.
+
+### Found through the registry, not a URL
+
+The counterparty does not start from a host name. It reads agent #10123 from the ERC-8004 identity registry on Sepolia and takes the `x402` endpoint from the registration's `services`. It reads the payee and network from the on-chain metadata (`batas.x402.payTo`, `batas.x402.network`), then fetches `/.well-known/x402` from that endpoint's host. It calls the host only if the manifest lists a resource at exactly the registered endpoint and every payment option pays the registered account on the registered network. A manifest that pays anyone else is refused before anything is spent.
+
+```
+1. Find out what this host sells, without being told
+  found via     ERC-8004 agent #10123
+  registry      x402 at https://batas-one.vercel.app/v1/mandate/explain, pays 0.0.10388560 on hedera:testnet
+  manifest      agrees with the registry on endpoint, payee and network
+```
+
+Setting `BATAS_SERVICE_URL` skips the registry, and the run says so (`found via BATAS_SERVICE_URL, set by hand; the registry was not consulted`). To see the registry path when your `.env` sets it, run `BATAS_SERVICE_URL= npm run counterparty`.
+
+### A standing order, paid by the network
+
+x402 sells one answer per call. Monitoring a position is ongoing, so it is paid for with a standing order: `agent/subscribe.mjs` wraps each payment in a Hedera Scheduled Transaction (`ScheduleCreateTransaction` with `waitForExpiry`). The agent signs once when it creates the order. Consensus then executes each payment at its due time, whether or not the process is still running. The agent keeps the admin key, so any payment that has not run yet can be deleted.
+
+This is a recurring payment **beside** x402, not through it. These are plain HBAR transfers from the agent account to the service account. They are not settled through Blocky402 or any facilitator, and the mirror node is their only record.
+
+```bash
+npm run subscribe -- --create 3 --every 2   # three payments of 0.001 HBAR, two minutes apart
+npm run subscribe -- --status               # pending / executed / deleted, with the paying transaction
+npm run subscribe -- --cancel               # delete what has not run yet
+```
+
+A real order on testnet, from `0.0.10388401` to `0.0.10388560`:
+
+```
+order 1789303558  0.0.10388401 -> 0.0.10388560, 0.001 HBAR each
+  1/3  0.0.10523344   executed  0.0.10388401-1789303551-913362817  SUCCESS
+  2/3  0.0.10523346   executed  0.0.10388401-1789303555-150112982  SUCCESS
+  3/3  0.0.10523347   executed  0.0.10388401-1789303557-316806181  SUCCESS
+
+order 1789303573  0.0.10388401 -> 0.0.10388560, 0.001 HBAR each
+  1/2  0.0.10523349   deleted
+  2/2  0.0.10523350   deleted
+```
+
+Check it yourself: `https://testnet.mirrornode.hedera.com/api/v1/schedules?account.id=0.0.10388401`. `agent/subscribe.test.mjs` reads these schedules from the mirror node.
 
 ### Agent-to-agent: negotiate a fill, settle it over x402 (A2A)
 
@@ -1393,7 +1601,7 @@ Four tools, and the split between them is the point:
 | `read_mandate` | free | what these bytes permit, and whether `PolicyEnvelope` is outermost |
 | `check_publication` | free | when these exact bytes were published, from the mirror node |
 | `check_agent_authority` | free | whether the ENS name still holds, and if not, lapsed or revoked |
-| `inspect_mandate_paid` | **0.001 HBAR** | all of it, plus the ERC-8004 identity and whether it vouches |
+| `inspect_mandate_paid` | **from 0.001 HBAR**, metered | all of it, plus the ERC-8004 identity and whether it vouches |
 
 An assistant can establish for nothing whether a mandate was ever published and whether the agent
 behind it is still authorised, and *then* decide the full answer is worth a payment. That is the

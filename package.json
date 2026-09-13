@@ -50,7 +50,7 @@
   "scripts": {
     "test": "npm run build:contracts && npm run test:sol && npm run test:js && npm run test:api",
     "test:sol": "forge test",
-    "test:js": "node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs agent/inspect-handler.test.mjs agent/counterparty.test.mjs agent/killswitch.test.mjs agent/ui-render.test.mjs agent/reputation.test.mjs agent/health.test.mjs agent/attest.test.mjs agent/index.test.mjs agent/batas-agent.test.mjs agent/a2a.test.mjs agent/hts.test.mjs",
+    "test:js": "node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs agent/inspect-handler.test.mjs agent/counterparty.test.mjs agent/killswitch.test.mjs agent/ui-render.test.mjs agent/reputation.test.mjs agent/health.test.mjs agent/attest.test.mjs agent/index.test.mjs agent/batas-agent.test.mjs agent/a2a.test.mjs agent/hts.test.mjs agent/payment-trail.test.mjs agent/subscribe.test.mjs agent/ens-hierarchy.test.mjs agent/domain-verify.test.mjs agent/sdk-parity.test.mjs",
     "test:api": "playwright test --project=local",
     "service": "node agent/service.mjs",
     "agent": "node agent/batas-agent.mjs",
@@ -60,13 +60,20 @@
     "hcs": "node agent/hcs.mjs",
     "mcp": "node agent/mcp.mjs",
     "walkthrough": "node agent/walkthrough.mjs",
-    "coverage": "node --test --experimental-test-coverage agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs agent/inspect-handler.test.mjs agent/counterparty.test.mjs agent/killswitch.test.mjs agent/ui-render.test.mjs agent/reputation.test.mjs agent/health.test.mjs agent/attest.test.mjs agent/index.test.mjs agent/batas-agent.test.mjs agent/a2a.test.mjs agent/hts.test.mjs",
+    "coverage": "node --test --experimental-test-coverage agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs agent/inspect-handler.test.mjs agent/counterparty.test.mjs agent/killswitch.test.mjs agent/ui-render.test.mjs agent/reputation.test.mjs agent/health.test.mjs agent/attest.test.mjs agent/index.test.mjs agent/batas-agent.test.mjs agent/a2a.test.mjs agent/hts.test.mjs agent/payment-trail.test.mjs agent/subscribe.test.mjs agent/ens-hierarchy.test.mjs agent/domain-verify.test.mjs agent/sdk-parity.test.mjs",
     "build:contracts": "forge build --force",
     "killswitch": "node agent/killswitch.mjs",
     "counterparty": "node agent/counterparty.mjs",
     "reputation": "node agent/reputation.mjs --read",
     "a2a": "node agent/a2a-client.mjs",
     "hts": "node agent/hts.mjs",
-    "hts:pay": "node agent/hts-pay.mjs"
+    "hts:pay": "node agent/hts-pay.mjs",
+    "payments": "node agent/hcs.mjs --payments",
+    "subscribe": "node agent/subscribe.mjs",
+    "test:band": "node --test agent/band.fork.test.mjs",
+    "test:sdk": "node --test agent/sdk-parity.test.mjs",
+    "ens:resolve": "node agent/ens.mjs --resolve",
+    "ens:verify": "node agent/ens-hierarchy.mjs --verify",
+    "ens:status": "node agent/ens-hierarchy.mjs --status"
   }
 }

@@ -13,7 +13,7 @@
 //
 // Three of the four tools cost nothing and one settles a payment on Hedera. That split is
 // deliberate: an assistant can establish whether a mandate was ever published, and whether the
-// agent behind it is still authorised, before deciding the full decode is worth 0.001 HBAR. That
+// agent behind it is still authorised, before deciding the full decode is worth paying for. That
 // is the shape of the thing the payment is for — not a subscription, a decision.
 //
 // Nothing here may write to stdout except the protocol. A stray console.log corrupts the stream,

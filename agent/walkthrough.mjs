@@ -1,7 +1,7 @@
 // Everything, in one command.
 //
 //   node agent/walkthrough.mjs           free: what anyone can verify without us
-//   node agent/walkthrough.mjs --paid    and then settle 0.001 HBAR for the rest
+//   node agent/walkthrough.mjs --paid    and then settle the metered price for the rest
 //
 // The order matters more than the output. Steps 1 to 5 read public chains and a public mirror node;
 // none of them route through this project's service, and none of them cost anything. Only step 6
@@ -133,7 +133,7 @@ async function main() {
     if (!process.argv.includes('--paid')) {
         verdict(check.vouched);
         console.log('\nEverything above was free and none of it went through this project\'s service.');
-        console.log('Run again with --paid to settle 0.001 HBAR and get the same answer from the');
+        console.log('Run again with --paid to settle the metered price and get the same answer from the');
         console.log('live endpoint, which is the part a stranger cannot compute for themselves.\n');
         return;
     }

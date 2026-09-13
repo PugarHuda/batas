@@ -63,7 +63,7 @@ export const TOOLS = {
         title: 'Buy a full mandate inspection',
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
         description:
-            'Settle 0.001 HBAR on Hedera testnet and get the complete answer from the live service:'
+            'Settle a metered price (0.001 HBAR for a live mandate alone, at most 0.0037 HBAR) on Hedera testnet and get the complete answer from the live service:'
             + ' the decoded limits, the publication record, and the ERC-8004 identity behind the'
             + ' position with a check that it is held by the address that granted the mandate.'
             + ' THIS SPENDS MONEY — one payment per call, capped at 0.01 HBAR by the client. Prefer'

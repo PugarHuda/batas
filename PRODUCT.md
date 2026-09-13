@@ -48,7 +48,7 @@ node at page load; nothing is stored. Free routes are rate limited at 60/min/IP.
 - `GET /` must serve HTML only to a caller whose `Accept` says `text/html`; every machine client
   still gets JSON at the same URL.
 - Four questions are free (decode, publication, authority, reputation). The fifth — the whole answer
-  assembled, with the ERC-8004 identity and whether it vouches for the maker — costs 0.001 HBAR over
+  assembled, with the ERC-8004 identity and whether it vouches for the maker — costs a metered price, from 0.001 HBAR, over
   x402, settled on Hedera testnet through the Blocky402 facilitator.
 - Cold start on a serverless host: the first request after idle can answer 5xx; clients retry once.
 
