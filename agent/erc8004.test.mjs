@@ -11,7 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseAgentURI, vouchesFor, resolveAgent, parseAgentId, IDENTITY_REGISTRY } from './erc8004.mjs';
+import { parseAgentURI, vouchesFor, resolveAgent, parseAgentId, checkRegistration, IDENTITY_REGISTRY, REGISTRATION_TYPE } from './erc8004.mjs';
 
 const AGENT_ID = 10123n;
 const OWNER = '0x39D2bae5EAedA9283535dDC98F1991c81eD5Cd7E';
@@ -89,6 +89,61 @@ test('the live registration resolves off Sepolia', async () => {
     // is public and unauthenticated, so this entry is what makes the registration self-sufficient
     // rather than a pointer back to our own service.
     assert.match(services.mandates, /mirrornode\.hedera\.com\/api\/v1\/topics\/0\.0\.\d+\/messages$/);
+});
+
+const wellFormed = (over = {}) => ({
+    type: REGISTRATION_TYPE,
+    name: 'Batas',
+    active: true,
+    services: [{ name: 'web', endpoint: 'https://batas-one.vercel.app' }],
+    registrations: [{ agentId: 10123, agentRegistry: `eip155:11155111:${IDENTITY_REGISTRY}` }],
+    ...over,
+});
+
+test('a registration that names its own token is bound to it', () => {
+    assert.deepEqual(checkRegistration(wellFormed(), 10123n), { valid: true, bound: true, issues: [] });
+    const lower = wellFormed({ registrations: [{ agentId: '10123', agentRegistry: `eip155:11155111:${IDENTITY_REGISTRY.toLowerCase()}` }] });
+    assert.equal(checkRegistration(lower, 10123n).bound, true, 'a string id and a lowercase address are the same claim');
+});
+
+test('a registration copied from another agent is not bound to this one', () => {
+    // Decoding proved only that the file was JSON. Pointed at a different token, a perfect
+    // description of somebody else reads as this agent's identity unless the binding is checked.
+    assert.equal(checkRegistration(wellFormed(), 10124n).bound, false);
+    const mainnet = wellFormed({ registrations: [{ agentId: 10123, agentRegistry: `eip155:1:${IDENTITY_REGISTRY}` }] });
+    assert.equal(checkRegistration(mainnet, 10123n).bound, false, 'the same id in another chain is another identity');
+    const none = checkRegistration(wellFormed({ registrations: undefined }), 10123n);
+    assert.equal(none.valid, false);
+    assert.match(none.issues.join('\n'), /does not name agent #10123/);
+    assert.equal(checkRegistration(wellFormed({ registrations: [{ agentId: [], agentRegistry: `eip155:11155111:${IDENTITY_REGISTRY}` }] }), 0n).bound,
+        false, 'an empty array is not agent #0');
+});
+
+test('a registration that is not the spec shape says what is wrong with it', () => {
+    const issues = checkRegistration(wellFormed({
+        type: 'agent', name: '', active: 'yes', supportedTrust: 'reputation',
+        services: [{ name: 'x402' }, { endpoint: 'vitalik.eth' }],
+    }), 10123n).issues.join('\n');
+    assert.match(issues, /type is "agent"/);
+    assert.match(issues, /no name/);
+    assert.match(issues, /active is not a boolean/);
+    assert.match(issues, /supportedTrust is not a list/);
+    assert.match(issues, /service x402 has no endpoint/);
+    assert.match(issues, /service 1 has no name/);
+    assert.doesNotMatch(issues, /vitalik/, 'an ENS name is a legitimate endpoint, not a malformed URL');
+    for (const bad of [null, [], 'Batas', 42]) assert.equal(checkRegistration(bad, 10123n).valid, false);
+});
+
+test('the live registration is the spec shape and bound to its own token', async () => {
+    const agent = await resolveAgent(AGENT_ID);
+    assert.deepEqual(agent.registrationCheck, { valid: true, bound: true, issues: [] });
+});
+
+test('the live agent wallet is read, and is the address that proved control of it', async () => {
+    // Set to the owner at mint and cleared on transfer, so on an identity that never changed hands
+    // it has to be the owner. Anything else would mean the read is looking at the wrong slot.
+    const agent = await resolveAgent(AGENT_ID);
+    assert.equal(agent.agentWallet, OWNER);
 });
 
 test('the live identity vouches for its own operator and for nobody else', async () => {
