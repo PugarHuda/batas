@@ -19,9 +19,20 @@ import { lookupMandate } from './hcs.mjs';
 import { mandateNameStatus } from './ens.mjs';
 import { latestProgramOnChain, programFromStrategy } from './position.mjs';
 import { readReputation } from './reputation.mjs';
+import { parseAgentId } from './erc8004.mjs';
 import { OWNER, ENS_REGISTRY, MANDATE_NAME, HCS_TOPIC, AGENT_ID, SEPOLIA_RPC } from './deployment.mjs';
 
 const HEX = /^0x[0-9a-fA-F]*$/;
+
+/**
+ * An error that is the caller's, with the status that says so.
+ *
+ * The HTTP layer used to guess whose fault a failure was from the wording of its message, and the
+ * guess missed every message nobody had thought to list: an agent id of "abc" and a program cut off
+ * mid-instruction both went out as 502 with `upstream: true`, telling a caller to retry a request
+ * that could never succeed. A status carried on the error is not a guess.
+ */
+const refused = (status, message) => Object.assign(new Error(message), { status });
 
 /**
  * The live position, remembered briefly.
@@ -67,7 +78,7 @@ export function forgetLiveProgram() {
 export async function resolveProgram(program) {
     if (program !== undefined && program !== null && program !== '') {
         if (typeof program !== 'string' || !HEX.test(program)) {
-            throw new Error('program must be a 0x hex string');
+            throw refused(400, 'program must be a 0x hex string');
         }
         return { program, source: 'given' };
     }
@@ -89,7 +100,17 @@ const docking = (answer, docked) => (docked
 /** What these bytes permit. Arithmetic, and therefore free. */
 export async function decodeAnswer(program) {
     const { program: p, source, docked } = await resolveProgram(program);
-    return docking({ source, program: p, ...explain(p) }, docked);
+    let decoded;
+    try {
+        decoded = explain(p);
+    } catch (e) {
+        // Hex that is not a valid instruction stream is a real answer about the bytes, and the same
+        // one the paid route gives them: 422, not a server fault. Only for bytes the caller handed
+        // over; the live position failing to decode would be ours.
+        if (source === 'given') throw refused(422, String(e.message ?? e));
+        throw e;
+    }
+    return docking({ source, program: p, ...decoded }, docked);
 }
 
 /** When these exact bytes became public, from a mirror node that is not ours. */
@@ -107,6 +128,15 @@ export async function publicationAnswer(program) {
  * mandate's own deadline rather than going without.
  */
 export async function authorityAnswer({ label, grantedUntil } = {}) {
+    // Checked before any chain read. A label given twice in a query string arrives as an array and
+    // was looked up as "a,b"; a deadline of "abc" became NaN and was silently dropped, so the caller
+    // was answered a question they had not asked.
+    if (label !== undefined && typeof label !== 'string') throw refused(400, 'label must be a string');
+    if (typeof grantedUntil === 'string' && /^[0-9]+$/.test(grantedUntil)) grantedUntil = Number(grantedUntil);
+    if (grantedUntil !== undefined && !(Number.isSafeInteger(grantedUntil) && grantedUntil >= 0)) {
+        throw refused(400, 'grantedUntil must be a non-negative integer of unix seconds');
+    }
+
     const pub = createPublicClient({
         chain: sepolia,
         transport: http(SEPOLIA_RPC),
@@ -133,5 +163,8 @@ export async function authorityAnswer({ label, grantedUntil } = {}) {
  * rather than as a separate errand.
  */
 export async function reputationAnswer({ agentId } = {}) {
-    return readReputation(agentId || AGENT_ID);
+    if (agentId === undefined || agentId === '') return readReputation(AGENT_ID);
+    const id = parseAgentId(agentId);
+    if (id === null) throw refused(400, 'agentId must be a non-negative integer');
+    return readReputation(String(id));
 }
