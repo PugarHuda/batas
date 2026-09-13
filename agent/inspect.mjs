@@ -9,10 +9,11 @@
 // to over-buy.
 
 import 'dotenv/config';
+import { keccak256, toHex } from 'viem';
 
 import { ROUTER, OWNER, AGENT_ID } from './deployment.mjs';
 import { latestProgramOnChain, programFromStrategy } from './position.mjs';
-import { MIRROR, mirrorGet, consensusToISO } from './hcs.mjs';
+import { MIRROR, mirrorGet, consensusToISO, publishPayment } from './hcs.mjs';
 
 // Finding the position moved to position.mjs so the free path stops loading the payment client.
 // Still exported from here: the walkthrough, the counterparty and the kill switch import them.
@@ -88,12 +89,17 @@ const SERVICE = process.env.BATAS_SERVICE_URL || 'https://batas-one.vercel.app';
  *
  * `log` exists so the CLI can narrate while the MCP server stays silent. An MCP server speaks
  * JSON-RPC over stdout; a stray console.log there corrupts the stream.
+ *
+ * Once the ledger confirms a settlement, the payer records it on HCS: transaction, both accounts,
+ * amount, the resource and a keccak256 of the request and response bodies (`audit`). A failure to
+ * record is reported, never thrown, because the answer was already paid for and is still good.
  */
 export async function payForExplanation(program, {
     log = () => {},
     accountId = process.env.HEDERA_AGENT_ID,
     privateKey = process.env.HEDERA_AGENT_KEY,
     origin = SERVICE,
+    audit = true,
 } = {}) {
     if (!accountId || !privateKey) {
         throw new Error('HEDERA_AGENT_ID and HEDERA_AGENT_KEY missing; create a testnet ECDSA account at https://portal.hedera.com');
@@ -118,6 +124,10 @@ export async function payForExplanation(program, {
             allowedAssets: [{ network: 'hedera:testnet', asset: '0.0.0', maxAmountPerPayment: MAX_PER_CALL }],
         },
     });
+    // What this client actually agreed to pay, and to whom. The receipt header does not carry it,
+    // and the audit record and the payee check both need it from our side, not the service's.
+    let chosen = null;
+    client.onAfterPaymentCreation(async ({ selectedRequirements }) => { chosen = selectedRequirements; });
     log(`budget   at most ${Number(MAX_PER_CALL) / 1e8} HBAR per call`);
     const paidFetch = wrapFetchWithPayment(fetch, client);
 
@@ -127,18 +137,20 @@ export async function payForExplanation(program, {
     // paywall needs runs on that request path. The first caller after an idle period can therefore
     // see a 5xx while a warm one sees the 402 immediately. Retrying once is the honest fix: no
     // payment is created for a failed request, so the retry costs nothing but a second.
-    const post = () => paidFetch(`${origin}/v1/mandate/explain`, {
+    // The operator lookup is opt-in on the service side, so ask for it when we know who to ask
+    // about. Sending the maker alongside turns the answer from "an identity exists" into
+    // "that identity is held by the address that granted this mandate", which is the only form
+    // of it worth anything. Built once, so the bytes hashed into the audit record are the bytes sent.
+    const resource = `${origin}/v1/mandate/explain`;
+    const requestBody = JSON.stringify({
+        program,
+        ...(AGENT_ID ? { agentId: AGENT_ID } : {}),
+        ...(OWNER ? { maker: OWNER } : {}),
+    });
+    const post = () => paidFetch(resource, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // The operator lookup is opt-in on the service side, so ask for it when we know who to ask
-        // about. Sending the maker alongside turns the answer from "an identity exists" into
-        // "that identity is held by the address that granted this mandate", which is the only form
-        // of it worth anything.
-        body: JSON.stringify({
-            program,
-            ...(AGENT_ID ? { agentId: AGENT_ID } : {}),
-            ...(OWNER ? { maker: OWNER } : {}),
-        }),
+        body: requestBody,
     });
 
     let res = await post();
@@ -162,7 +174,7 @@ export async function payForExplanation(program, {
         // against the cap this client set, not the price the service quoted.
         if (receipt?.transaction) {
             try {
-                onLedger = await confirmSettlement(receipt.transaction, { payer: accountId, maxAmount: MAX_PER_CALL });
+                onLedger = await confirmSettlement(receipt.transaction, { payer: accountId, payTo: chosen?.payTo, maxAmount: MAX_PER_CALL });
             } catch (e) {
                 onLedger = { confirmed: null, reason: String(e.message || e) };
             }
@@ -172,10 +184,32 @@ export async function payForExplanation(program, {
         }
     }
 
+    const responseBody = await res.text();
     if (!res.ok) {
-        throw new Error(`service returned ${res.status}: ${await res.text()}`);
+        throw new Error(`service returned ${res.status}: ${responseBody}`);
     }
-    return { body: await res.json(), settlement: settled ?? null, onLedger };
+
+    let auditRecord = null;
+    if (audit && onLedger?.confirmed === true && chosen) {
+        try {
+            auditRecord = await publishPayment(null, {
+                transaction: onLedger.transaction,
+                payer: accountId,
+                payTo: chosen.payTo,
+                amount: chosen.amount,
+                asset: chosen.asset,
+                network: chosen.network,
+                resource,
+                requestHash: keccak256(toHex(requestBody)),
+                responseHash: keccak256(toHex(responseBody)),
+            }, { id: accountId, key: privateKey });
+            log(`audit    recorded on HCS topic ${auditRecord.topicId} #${auditRecord.sequenceNumber}  ${MIRROR}/topics/${auditRecord.topicId}/messages/${auditRecord.sequenceNumber}`);
+        } catch (e) {
+            auditRecord = { published: false, reason: String(e.message || e) };
+            log(`audit    not recorded — ${auditRecord.reason}`);
+        }
+    }
+    return { body: JSON.parse(responseBody), settlement: settled ?? null, onLedger, audit: auditRecord };
 }
 
 async function main() {
