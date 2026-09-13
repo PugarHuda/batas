@@ -172,7 +172,9 @@ test('the client refuses to pay more than its cap, before creating a payment', a
     process.env.HEDERA_AGENT_ID = '0.0.12345';
     process.env.HEDERA_AGENT_KEY = `0x${randomBytes(32).toString('hex')}`;
     process.env.X402_MAX_TINYBAR = '1'; // one tinybar against a price of 100,000
-    process.env.BATAS_SERVICE_URL = 'http://127.0.0.1:4021';
+    // The server this run started, on the port playwright.config.mjs gave it. A fixed 4021 sent the
+    // client to whatever else held that port, or to nothing, in a parallel run.
+    process.env.BATAS_SERVICE_URL = `http://127.0.0.1:${process.env.PORT || 4021}`;
     try {
         const { payForExplanation } = await import('../agent/inspect.mjs');
         await expect(payForExplanation(LIVE_PROGRAM)).rejects.toThrow(/spendControls|maxAmountPerPayment/i);
