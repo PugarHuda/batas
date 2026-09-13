@@ -28,6 +28,7 @@
     "!agent/*.test.mjs"
   ],
   "dependencies": {
+    "@hashgraphonline/standards-sdk": "^0.1.186",
     "@hiero-ledger/sdk": "^2.87.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@x402/express": "^2.25.0",
@@ -50,7 +51,7 @@
   "scripts": {
     "test": "npm run build:contracts && npm run test:sol && npm run test:js && npm run test:api",
     "test:sol": "forge test",
-    "test:js": "node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs agent/inspect-handler.test.mjs agent/counterparty.test.mjs agent/killswitch.test.mjs agent/ui-render.test.mjs agent/reputation.test.mjs agent/health.test.mjs agent/attest.test.mjs agent/index.test.mjs agent/batas-agent.test.mjs agent/a2a.test.mjs agent/hts.test.mjs agent/payment-trail.test.mjs agent/subscribe.test.mjs agent/ens-hierarchy.test.mjs agent/domain-verify.test.mjs agent/sdk-parity.test.mjs",
+    "test:js": "node --test agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs agent/inspect-handler.test.mjs agent/counterparty.test.mjs agent/killswitch.test.mjs agent/ui-render.test.mjs agent/reputation.test.mjs agent/health.test.mjs agent/attest.test.mjs agent/index.test.mjs agent/batas-agent.test.mjs agent/a2a.test.mjs agent/hts.test.mjs agent/payment-trail.test.mjs agent/subscribe.test.mjs agent/ens-hierarchy.test.mjs agent/domain-verify.test.mjs agent/sdk-parity.test.mjs agent/hol.test.mjs",
     "test:api": "playwright test --project=local",
     "service": "node agent/service.mjs",
     "agent": "node agent/batas-agent.mjs",
@@ -60,7 +61,7 @@
     "hcs": "node agent/hcs.mjs",
     "mcp": "node agent/mcp.mjs",
     "walkthrough": "node agent/walkthrough.mjs",
-    "coverage": "node --test --experimental-test-coverage agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs agent/inspect-handler.test.mjs agent/counterparty.test.mjs agent/killswitch.test.mjs agent/ui-render.test.mjs agent/reputation.test.mjs agent/health.test.mjs agent/attest.test.mjs agent/index.test.mjs agent/batas-agent.test.mjs agent/a2a.test.mjs agent/hts.test.mjs agent/payment-trail.test.mjs agent/subscribe.test.mjs agent/ens-hierarchy.test.mjs agent/domain-verify.test.mjs agent/sdk-parity.test.mjs",
+    "coverage": "node --test --experimental-test-coverage agent/swapvm.test.mjs agent/inspect.test.mjs agent/encoder-parity.test.mjs agent/ens.test.mjs agent/decide.test.mjs agent/erc8004.test.mjs agent/hcs.test.mjs agent/mcp.test.mjs agent/readme.test.mjs agent/deployed.test.mjs agent/inspect-handler.test.mjs agent/counterparty.test.mjs agent/killswitch.test.mjs agent/ui-render.test.mjs agent/reputation.test.mjs agent/health.test.mjs agent/attest.test.mjs agent/index.test.mjs agent/batas-agent.test.mjs agent/a2a.test.mjs agent/hts.test.mjs agent/payment-trail.test.mjs agent/subscribe.test.mjs agent/ens-hierarchy.test.mjs agent/domain-verify.test.mjs agent/sdk-parity.test.mjs agent/hol.test.mjs",
     "build:contracts": "forge build --force",
     "killswitch": "node agent/killswitch.mjs",
     "counterparty": "node agent/counterparty.mjs",
@@ -74,6 +75,7 @@
     "test:sdk": "node --test agent/sdk-parity.test.mjs",
     "ens:resolve": "node agent/ens.mjs --resolve",
     "ens:verify": "node agent/ens-hierarchy.mjs --verify",
-    "ens:status": "node agent/ens-hierarchy.mjs --status"
+    "ens:status": "node agent/ens-hierarchy.mjs --status",
+    "hol": "node agent/hol.mjs"
   }
 }
