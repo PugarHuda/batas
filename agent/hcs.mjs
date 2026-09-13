@@ -417,13 +417,14 @@ export async function lookupPayments(topicId, { payer = null, fetchImpl = fetch,
         const record = parsePaymentMessage(m.message);
         if (record) found.push({ record, m });
     });
-    // Only a record whose own payer signed it can claim a transaction, so a stranger's copy filed
-    // first cannot turn the real record into the duplicate.
+    // Only a record that verified can claim a transaction. A stranger's copy, or an inflated one,
+    // filed first must not turn the true record into the duplicate.
     const firstClaim = new Map();
     const payments = [];
     for (const { record, m } of found) {
         const claimedBy = firstClaim.get(record.transaction);
-        if (claimedBy === undefined && m.payer === record.payer) firstClaim.set(record.transaction, m.sequenceNumber);
+        const check = await verifyPayment(record, { hcsPayer: m.payer, claimedBy, fetchImpl, ...(attempts ? { attempts } : {}) });
+        if (check.verified === true) firstClaim.set(record.transaction, m.sequenceNumber);
         payments.push({
             ...record,
             hcsPayer: m.payer,
@@ -431,7 +432,7 @@ export async function lookupPayments(topicId, { payer = null, fetchImpl = fetch,
             consensusTimestamp: m.consensusTimestamp,
             recordedAt: consensusToISO(m.consensusTimestamp),
             mirror: `${MIRROR}/topics/${id}/messages/${m.sequenceNumber}`,
-            ...(await verifyPayment(record, { hcsPayer: m.payer, claimedBy, fetchImpl, ...(attempts ? { attempts } : {}) })),
+            ...check,
         });
     }
     return {
