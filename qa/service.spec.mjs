@@ -338,6 +338,98 @@ test('the MCP server answers over HTTP with the same four tools', async ({ reque
     expect(names).toEqual(['check_agent_authority', 'check_publication', 'inspect_mandate_paid', 'read_mandate']);
 });
 
+// --- the document is held to what the service actually answers ------------------
+//
+// A description nobody checks against the real responses drifts exactly where nobody looks: the
+// health report's alerts were documented as strings while the code sent objects, and it went
+// unnoticed because the live position happened to raise no alert. So each case below is a real
+// request, and its answer must be a status the document lists, with a body its schema accepts.
+//
+// Each case comes from its own forwarded address, so this test neither trips the brake the test
+// below is looking for nor is tripped by it.
+
+const cases = [
+    ['GET', '/', 200],
+    ['GET', '/app', 200],
+    ['GET', '/.well-known/x402', 200],
+    ['GET', '/.well-known/agent-card.json', 200],
+    ['GET', '/openapi.json', 200],
+    ['POST', '/v1/mandate/decode', 200, { program: LIVE_PROGRAM }],
+    ['POST', '/v1/mandate/decode', 400, { program: 'not-hex' }],
+    ['POST', '/v1/mandate/decode', 400, [1, 2]],
+    // Hex, but not whole bytes / cut off mid-header. These answered 502 `upstream: true`.
+    ['POST', '/v1/mandate/decode', 422, { program: '0x5' }],
+    ['POST', '/v1/mandate/decode', 422, { program: '0x00010203' }],
+    ['POST', '/v1/mandate/publication', 200, { program: '0xdeadbeef' }],
+    ['GET', '/v1/agent/authority?label=no-such-mandate-name', 200],
+    // Silently ignored, and looked up as "a,b", respectively.
+    ['GET', '/v1/agent/authority?grantedUntil=abc', 400],
+    ['GET', '/v1/agent/authority?label=a&label=b', 400],
+    ['GET', '/v1/agent/reputation', 200],
+    // Answered 502 `upstream: true`, telling the caller to retry a request that can never succeed.
+    ['GET', '/v1/agent/reputation?agentId=abc', 400],
+    ['GET', '/v1/agent/reputation?agentId=-1', 400],
+    ['GET', '/v1/position/health', 200],
+    ['POST', '/v1/mandate/explain', 402, { program: LIVE_PROGRAM }],
+    ['POST', '/mcp', 200, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { Accept: 'application/json, text/event-stream' }],
+    ['POST', '/mcp', 400, { nope: 1 }, { Accept: 'application/json, text/event-stream' }],
+    ['POST', '/mcp', 406, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { Accept: 'application/json' }],
+];
+
+test('every answer the service gives is one its OpenAPI document describes', async ({ request }) => {
+    const { AjvJsonSchemaValidator } = await import('@modelcontextprotocol/sdk/validation/ajv');
+    const validator = new AjvJsonSchemaValidator();
+    const doc = await (await request.get('/openapi.json')).json();
+    // Refs are resolved against the document the schema is lifted from, so the components ride along.
+    const check = (schema, data) => validator.getValidator({ ...schema, components: doc.components })(data);
+
+    // A validator that accepts everything would pass every case below.
+    expect(check({ $ref: '#/components/schemas/Decoded' }, {}).valid, 'the validator must be able to fail').toBe(false);
+
+    for (const [i, [method, url, expected, data, headers = {}]] of cases.entries()) {
+        const what = `${method} ${url} ${data ? JSON.stringify(data).slice(0, 40) : ''}`;
+        const res = await request.fetch(url, { method, data, headers: { 'X-Forwarded-For': `198.51.100.${i + 1}`, ...headers } });
+        expect(res.status(), what).toBe(expected);
+        expect(res.headers()['content-type'], what).toContain('application/json');
+
+        const documented = doc.paths[url.split('?')[0]]?.[method.toLowerCase()]?.responses?.[res.status()];
+        expect(documented, `${what} answered ${res.status()}, which the document does not list`).toBeTruthy();
+        const result = check(documented.content['application/json'].schema, await res.json());
+        expect(result.valid, `${what}: ${result.errorMessage}`).toBe(true);
+        for (const [name, header] of Object.entries(documented.headers ?? {})) {
+            if (header.required) expect(res.headers()[name.toLowerCase()], `${what} must carry ${name}`).toBeTruthy();
+        }
+    }
+});
+
+test('the document lists every route the app serves, and nothing it does not', async ({ request }) => {
+    // Read from the router itself, so a route added without a row in openapi.mjs fails here rather
+    // than going unadvertised. The service exits without a payee, as the webServer config notes.
+    process.env.HEDERA_SERVICE_ID ||= '0.0.10388560';
+    const { default: app } = await import('../agent/service.mjs');
+    const { METHODS } = await import('node:http');
+    const served = app.router.stack
+        // `app.all('/mcp')` is the 405 for every method but POST, not a route of its own. Express 5
+        // registers it under each method by name, so it is told apart by covering all of them.
+        .filter((layer) => layer.route && Object.keys(layer.route.methods).length < METHODS.length)
+        .flatMap((layer) => Object.keys(layer.route.methods)
+            .map((m) => `${m} ${layer.route.path.replace(/:(\w+)/g, '{$1}')}`))
+        .sort();
+    const doc = await (await request.get('/openapi.json')).json();
+    const documented = Object.entries(doc.paths).flatMap(([path, ops]) => Object.keys(ops).map((m) => `${m} ${path}`)).sort();
+    expect(documented).toEqual(served);
+});
+
+test('the MCP endpoint refuses what it does not serve with 405, not a missing route', async ({ request }) => {
+    for (const method of ['GET', 'DELETE']) {
+        const res = await request.fetch('/mcp', { method, headers: { Accept: 'text/event-stream' } });
+        expect(res.status(), method).toBe(405);
+        expect(res.headers().allow).toBe('POST');
+        expect(res.headers()['content-type']).toContain('application/json');
+        expect((await res.json()).error).toMatch(/POST only/);
+    }
+});
+
 test('the free routes have a brake, and it says how to wait', async ({ request }) => {
     // Counted up to a bound rather than to a number, on purpose. `reuseExistingServer` means this
     // may be talking to a server somebody started by hand with the production limit rather than the
@@ -356,6 +448,11 @@ test('the free routes have a brake, and it says how to wait', async ({ request }
     expect(first.headers()['content-type']).toContain('application/json');
     expect(first.headers()['retry-after']).toBeTruthy();
     const body = await first.json();
+    // The wait is the time left in this caller's window, stated the same way in both places a
+    // client might read it — never zero, never longer than the window.
+    const wait = Number(first.headers()['retry-after']);
+    expect(Number.isInteger(wait) && wait >= 1 && wait <= 60, `Retry-After: ${wait}`).toBe(true);
+    expect(body.retryAfterSeconds).toBe(wait);
     expect(body.error).toMatch(/too many free requests/);
     // And the shape of the offer: the paid route is not what is being limited.
     expect(body.note).toMatch(/paid route is not rate limited/);

@@ -210,9 +210,31 @@ const json = (ref) => ({ 'application/json': { schema: { $ref: `#/components/sch
 const answer = (ref, description) => ({ description, content: json(ref) });
 
 const FREE_ERRORS = {
-    400: answer('Error', 'the request is the problem — a program that is not hex, an id that is not an integer'),
-    429: answer('RateLimited', 'the free routes have a brake; the paid one does not'),
+    400: answer('Error', 'the request is the problem — a program that is not hex, an id that is not a non-negative integer, a parameter given twice, a body that is not a JSON object'),
+    429: {
+        ...answer('RateLimited', 'the free routes have a brake; the paid one does not'),
+        headers: { 'Retry-After': { schema: { type: 'integer', minimum: 1 }, description: 'seconds until this caller\'s window reopens; the same number as retryAfterSeconds' } },
+    },
     502: answer('Error', 'a chain or mirror node would not answer; the request was fine'),
+};
+
+// Body parsing runs before any route, so every route that takes a body can answer these.
+const TOO_LARGE = { 413: answer('Error', 'the body is over 256kb; `limit` carries the size in bytes') };
+
+// What the MCP transport answers when the envelope is wrong, before a tool is ever reached.
+const JSON_RPC_ERROR = {
+    'application/json': {
+        schema: {
+            type: 'object',
+            required: ['jsonrpc', 'error'],
+            properties: {
+                jsonrpc: { const: '2.0' },
+                error: { type: 'object', required: ['code', 'message'], properties: { code: { type: 'integer' }, message: { type: 'string' } }, additionalProperties: true },
+                id: { type: ['string', 'integer', 'null'] },
+            },
+            additionalProperties: true,
+        },
+    },
 };
 
 /**
@@ -227,7 +249,12 @@ export const ROUTES = [
         summary: 'What a program permits',
         description: 'Decode a SwapVM program into the limits it enforces: the size cap, the floor price, the expiry, the fee and the curve. Arithmetic on bytes you already hold. Reports whether PolicyEnvelope is outermost, which is what makes the limits binding rather than advisory.',
         body: 'ProgramBody',
-        responses: { 200: answer('Decoded', 'what these bytes permit'), ...FREE_ERRORS },
+        responses: {
+            200: answer('Decoded', 'what these bytes permit'),
+            ...FREE_ERRORS,
+            422: answer('Error', 'hex, but not a valid instruction stream — a real answer about the bytes, and the one the paid route gives'),
+            ...TOO_LARGE,
+        },
     },
     {
         method: 'post', path: '/v1/mandate/publication', free: true,
@@ -235,7 +262,7 @@ export const ROUTES = [
         summary: 'When those exact bytes became public',
         description: `Ask Hedera Consensus Service topic ${HCS_TOPIC}, through a public mirror node rather than through us, when these exact bytes were first published and by whom. A program that decodes cleanly but has no record is a set of terms somebody handed you a minute ago, which is a different thing from a grant that has been standing.`,
         body: 'ProgramBody',
-        responses: { 200: answer('Publication', 'the record, or the fact that there is none'), ...FREE_ERRORS },
+        responses: { 200: answer('Publication', 'the record, or the fact that there is none'), ...FREE_ERRORS, ...TOO_LARGE },
     },
     {
         method: 'get', path: '/v1/agent/authority', free: true,
@@ -272,8 +299,24 @@ export const ROUTES = [
                             required: ['status', 'headroom', 'alerts'],
                             properties: {
                                 status: { type: 'string' },
+                                reason: { type: 'string', description: 'present when there is no position to report on' },
                                 headroom: { type: ['object', 'null'], additionalProperties: true },
-                                alerts: { type: 'array', items: { type: 'string' } },
+                                // Objects, not strings: this said strings for as long as the live
+                                // position happened to raise no alert, so nothing ever checked it.
+                                alerts: {
+                                    type: 'array',
+                                    items: {
+                                        type: 'object',
+                                        required: ['code', 'severity', 'message'],
+                                        properties: {
+                                            code: { type: 'string', description: 'stable, e.g. FLOOR_INVERTED, NAME_INVALID' },
+                                            severity: { type: 'string', enum: ['info', 'warn', 'critical'] },
+                                            since: NULLABLE_STRING,
+                                            message: { type: 'string' },
+                                        },
+                                        additionalProperties: true,
+                                    },
+                                },
                                 trades: { type: 'array', items: { type: 'object', additionalProperties: true } },
                             },
                             additionalProperties: true,
@@ -301,13 +344,37 @@ export const ROUTES = [
         },
         responses: {
             200: answer('Explanation', 'the paid answer'),
+            // The body is an empty object; the requirement travels only in the header. This used to
+            // say "and the body", and a client written from the document would have read `{}`.
             402: {
-                description: 'no payment carried. The requirement is in the PAYMENT-REQUIRED header, base64 JSON, and the body.',
-                headers: { 'PAYMENT-REQUIRED': { schema: { type: 'string' }, description: 'base64 of the x402 PaymentRequired object' } },
-                content: json('PaymentRequired'),
+                description: 'no payment carried. The requirement is in the PAYMENT-REQUIRED header as base64 JSON; the body is an empty object.',
+                headers: { 'PAYMENT-REQUIRED': { required: true, schema: { type: 'string' }, description: 'base64 of the x402 PaymentRequired object, #/components/schemas/PaymentRequired' } },
+                content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } },
             },
-            400: answer('Error', 'paid, but the body was not { program: "0x…" }'),
+            400: answer('Error', 'paid, but the body was not { program: "0x…" }, or was not valid JSON'),
             422: answer('Error', 'paid, and the bytes are not a valid instruction stream — that is a real answer'),
+            ...TOO_LARGE,
+        },
+    },
+    {
+        method: 'get', path: '/app', free: true,
+        summary: 'The instrument',
+        description: 'A page to a browser that says Accept: text/html; to anything else, the list of free routes the page reads.',
+        responses: {
+            200: {
+                description: 'the free routes behind the page',
+                content: { 'application/json': { schema: { type: 'object', required: ['page', 'free'], properties: { page: { const: 'app' }, free: { type: 'array', items: { type: 'string' } } }, additionalProperties: true } } },
+            },
+        },
+    },
+    {
+        method: 'get', path: '/assets/fonts/{name}.woff2', free: true,
+        summary: 'The faces both pages use',
+        description: 'Served from here so neither page fetches anything from a third party. Immutable under a name that changes when the bytes do.',
+        parameters: [{ name: 'name', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+            200: { description: 'the font', content: { 'font/woff2': { schema: { type: 'string', contentEncoding: 'binary' } } } },
+            404: answer('Error', 'no font by that name'),
         },
     },
     {
@@ -339,8 +406,11 @@ export const ROUTES = [
         description: 'The same four tools the stdio server offers, as JSON-RPC over HTTP. Stateless: every request is its own session. Send Accept: application/json, text/event-stream. The paid tool needs a funded Hedera key on the server, which the public deployment does not hold; use the HTTP route for that.',
         body: { type: 'object', description: 'a JSON-RPC 2.0 request', additionalProperties: true },
         responses: {
-            200: { description: 'a JSON-RPC 2.0 response', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
-            429: answer('RateLimited', 'the same brake as the other free routes'),
+            200: { description: 'a JSON-RPC 2.0 response; a tool that fails answers here too, with result.isError', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+            400: { description: 'not a JSON-RPC 2.0 message', content: JSON_RPC_ERROR },
+            406: { description: 'the Accept header does not name both application/json and text/event-stream', content: JSON_RPC_ERROR },
+            ...TOO_LARGE,
+            429: FREE_ERRORS[429],
         },
     },
 ];

@@ -203,27 +203,37 @@ function overLimit(req) {
         return false;
     }
     bucket.count += 1;
-    return bucket.count > MAX_PER_WINDOW;
+    // The seconds until this caller's window actually reopens, rather than a flat minute: a caller
+    // refused with two seconds left was told to sit out sixty, and a client that honours Retry-After
+    // exactly — which is the point of sending it — waited the whole time for nothing.
+    return bucket.count > MAX_PER_WINDOW ? Math.max(1, Math.ceil((bucket.start + WINDOW_MS - now) / 1000)) : 0;
 }
 
-const refuse = (res) => res.status(429)
-    .set('Retry-After', String(Math.ceil(WINDOW_MS / 1000)))
+const refuse = (res, wait) => res.status(429)
+    .set('Retry-After', String(wait))
     .json({
         error: `too many free requests; at most ${MAX_PER_WINDOW} per ${WINDOW_MS / 1000}s`,
-        retryAfterSeconds: Math.ceil(WINDOW_MS / 1000),
+        retryAfterSeconds: wait,
         note: 'the paid route is not rate limited — a settled payment is the quota',
     });
 
 const freely = (handler) => async (req, res) => {
-    if (overLimit(req)) return refuse(res);
+    const wait = overLimit(req);
+    if (wait) return refuse(res, wait);
+    // express.json accepts a top-level array, and every free route reads fields off an object, so
+    // `[1,2]` used to fall through to "no program given" and answer about the live position.
+    if (Array.isArray(req.body)) return res.status(400).json({ error: 'body must be a JSON object' });
     try {
         res.json(await handler(req));
     } catch (e) {
         // Whose fault. A program that is not hex is the caller's; a chain that would not answer is
-        // not, and reporting it as 400 told the caller to fix a request that was fine.
+        // not, and reporting it as 400 told the caller to fix a request that was fine. free.mjs
+        // states the status on the errors that are the caller's; the message match stays for the
+        // ones thrown deeper down that do not carry one.
         const message = String(e.shortMessage ?? e.message ?? e);
-        const theirs = /must be|needs|not a valid|hex string|non-negative/i.test(message) && !e.scanExhausted;
-        res.status(theirs ? 400 : 502).json({ error: message, ...(theirs ? {} : { upstream: true }) });
+        const status = Number.isInteger(e.status) && e.status >= 400 && e.status < 500 ? e.status
+            : /must be|needs|not a valid|hex string|non-negative/i.test(message) && !e.scanExhausted ? 400 : 502;
+        res.status(status).json({ error: message, ...(status >= 500 ? { upstream: true } : {}) });
     }
 };
 
@@ -231,9 +241,11 @@ app.post('/v1/mandate/decode', freely((req) => decodeAnswer(req.body?.program)))
 app.post('/v1/mandate/publication', freely((req) => publicationAnswer(req.body?.program)));
 app.get('/v1/agent/reputation', freely((req) => reputationAnswer({ agentId: req.query?.agentId })));
 app.get('/v1/position/health', freely(() => healthAnswer()));
+// Passed through as the query string gave them; authorityAnswer decides what a valid deadline is, so
+// "abc" is refused there rather than becoming NaN here and being quietly ignored.
 app.get('/v1/agent/authority', freely((req) => authorityAnswer({
     label: req.query?.label,
-    grantedUntil: req.query?.grantedUntil === undefined ? undefined : Number(req.query.grantedUntil),
+    grantedUntil: req.query?.grantedUntil,
 })));
 
 // Discovery, per draft-hawkins-x402-dns-discovery. A manifest at this path is how an indexer or a
@@ -285,7 +297,8 @@ app.get('/.well-known/agent-card.json', (_req, res) => res.json(agentCard(descri
 // questions, and the one that pays does so from the server's own key, which the deployment does
 // not hold.
 app.post('/mcp', async (req, res) => {
-    if (overLimit(req)) return refuse(res);
+    const wait = overLimit(req);
+    if (wait) return refuse(res, wait);
     const server = createMcpServer();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { transport.close(); server.close(); });
@@ -295,6 +308,13 @@ app.post('/mcp', async (req, res) => {
     } catch (e) {
         if (!res.headersSent) res.status(500).json({ error: String(e.message ?? e) });
     }
+});
+
+// Streamable HTTP says a server that offers no SSE stream must answer GET with 405, and a stateless
+// one has no session for DELETE to end. A 404 here told an MCP client probing for the stream that
+// the endpoint it had just been pointed at did not exist.
+app.all('/mcp', (req, res) => {
+    res.status(405).set('Allow', 'POST').json({ error: `${req.method} /mcp is not served; this MCP endpoint is stateless and takes POST only` });
 });
 
 app.use(
@@ -425,6 +445,7 @@ app.use((req, res) => {
         error: `no route for ${req.method} ${req.path}`,
         free: [
             'GET /',
+            'GET /app',
             'GET /.well-known/x402',
             'POST /v1/mandate/decode',
             'POST /v1/mandate/publication',

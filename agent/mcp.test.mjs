@@ -15,7 +15,10 @@ import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
+
 import { createServer } from './mcp.mjs';
+import { openapiDocument } from './openapi.mjs';
 import { xycSwap, salt } from './swapvm.mjs';
 
 const LIVE_PROGRAM =
@@ -152,6 +155,59 @@ test('the publication tool agrees with the mandate tool about which position tha
     const read = parse(await client.callTool({ name: 'read_mandate', arguments: {} }));
     const pub = parse(await client.callTool({ name: 'check_publication', arguments: {} }));
     assert.equal(pub.source, read.source);
+});
+
+// --- the tools and the HTTP document describe one interface ------------------
+//
+// An assistant reads the tool schema and a code generator reads the OpenAPI document, and both are
+// told they are asking the same question. So a tool may not take an input its route does not, and
+// what a tool returns must be a body its route's schema accepts.
+
+const described = openapiDocument({ origin: 'https://example.invalid', price: '0.001 HBAR', network: 'hedera:testnet', payTo: '0.0.1' });
+const operation = (id) => Object.values(described.paths).flatMap((ops) => Object.values(ops)).find((op) => op.operationId === id);
+const resolve = (schema) => (schema?.$ref ? described.components.schemas[schema.$ref.split('/').pop()] : schema);
+const validator = new AjvJsonSchemaValidator();
+const conforms = (ref, data) => validator.getValidator({ $ref: `#/components/schemas/${ref}`, components: described.components })(data);
+
+test('every tool input is one its HTTP route also takes', async () => {
+    const client = await connected();
+    const { tools } = await client.listTools();
+    for (const tool of tools) {
+        const op = operation(tool.name);
+        assert.ok(op, `${tool.name} has no operation of the same id in /openapi.json`);
+        const http = new Set([
+            ...(op.parameters ?? []).map((p) => p.name),
+            ...Object.keys(resolve(op.requestBody?.content['application/json'].schema)?.properties ?? {}),
+        ]);
+        for (const input of Object.keys(tool.inputSchema.properties ?? {})) {
+            assert.ok(http.has(input), `${tool.name} takes "${input}", which ${op.operationId} over HTTP does not`);
+        }
+    }
+});
+
+test('what the tools return is what the document says the routes return', async () => {
+    const client = await connected();
+    const decoded = await client.callTool({ name: 'read_mandate', arguments: { program: LIVE_PROGRAM } });
+    const d = conforms('Decoded', decoded.structuredContent);
+    assert.ok(d.valid, d.errorMessage);
+
+    const authority = await client.callTool({ name: 'check_agent_authority', arguments: { label: 'no-such-mandate-name' } });
+    const a = conforms('Authority', authority.structuredContent);
+    assert.ok(a.valid, a.errorMessage);
+
+    // And the check can fail, or the two above prove nothing.
+    assert.equal(conforms('Authority', { label: 'agent' }).valid, false);
+});
+
+test('a deadline that is not unix seconds is refused before the chain is asked', async () => {
+    // It used to be dropped: the HTTP route turned "abc" into NaN and the answer quietly ignored it,
+    // so the caller was told about a question they had not asked.
+    const client = await connected();
+    for (const grantedUntil of [-1, 1.5]) {
+        const res = await client.callTool({ name: 'check_agent_authority', arguments: { grantedUntil } });
+        assert.equal(res.isError, true, `${grantedUntil} must be refused`);
+        assert.match(res.content[0].text, /non-negative integer/);
+    }
 });
 
 test('answers go out structured as well as as text, and the two agree', async () => {
