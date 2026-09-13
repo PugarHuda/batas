@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import { Test } from "forge-std/Test.sol";
+import { stdError } from "forge-std/StdError.sol";
 import { TokenMock } from "@1inch/solidity-utils/contracts/mocks/TokenMock.sol";
 
 import { Aqua } from "@1inch/aqua/src/Aqua.sol";
@@ -597,5 +598,105 @@ contract BatasAppTest is Test, IBatasCallback {
 
         // Whatever the maker has left is still theirs, in their own wallet, and it is not dust.
         assertGt(tokenOut.balanceOf(maker), RESERVE_OUT / 2, "the floor should stop the drain well before the reserve does");
+    }
+
+    // --- boundaries -----------------------------------------------------------------------------
+    //
+    // Every refusal above is tested one step past its limit. A limit is two facts, where it refuses
+    // and where it still allows, and a `<=` that drifts to `<` only shows up on the second one.
+
+    /// @notice A trade of exactly the cap settles; the cap is the largest allowed input, not the
+    ///   smallest refused one.
+    function test_ExactlyTheCapSettles() public {
+        Mandate memory m = _mandate();
+        _ship(m);
+
+        uint256 expected = app.quote(m, m.maxAmountIn);
+        assertEq(app.swap(m, m.maxAmountIn, 0, address(this), ""), expected, "the cap itself is inside the grant");
+    }
+
+    /// @notice A trade that lands exactly on the floor settles, and a floor one wei higher refuses
+    ///   the same trade with the exact numbers it judged.
+    /// @dev An input of 1e18 makes the cross-multiplication an equality the test can hit on
+    ///   purpose: the trade clears a floor of `minRateE18` exactly when `amountOut >= minRateE18`.
+    ///   Pricing does not read the floor, so the output is the same under either mandate.
+    function test_ExactlyTheFloorSettlesAndOneWeiHigherIsRefused() public {
+        Mandate memory m = _mandate();
+        uint256 amountIn = 1e18;
+        uint256 amountOut = MandateLib.quoteExactIn(m, RESERVE_IN, RESERVE_OUT, amountIn);
+
+        Mandate memory tooHigh = _mandate();
+        tooHigh.minRateE18 = uint128(amountOut + 1);
+        _ship(tooHigh);
+        vm.expectRevert(
+            abi.encodeWithSelector(BatasApp.MandateRateTooLow.selector, amountOut, amountIn, tooHigh.minRateE18)
+        );
+        app.swap(tooHigh, amountIn, 0, address(this), "");
+
+        m.minRateE18 = uint128(amountOut);
+        _ship(m);
+        assertEq(app.swap(m, amountIn, 0, address(this), ""), amountOut, "a trade exactly on the floor is allowed");
+    }
+
+    /// @notice The expiry second settles a real swap, not only a quote, and the settlement is on
+    ///   record with the terms that allowed it.
+    /// @dev `MandateEnforced` is the one event this contract emits and nothing had asserted it. It
+    ///   is what an indexer reads to attribute a trade to a mandate, so a wrong taker or a swapped
+    ///   pair of amounts would misreport every settlement while every balance check still passed.
+    function test_TheExpirySecondSettlesAndIsRecorded() public {
+        Mandate memory m = _mandate();
+        bytes32 mandateHash = _ship(m);
+
+        vm.warp(m.expiry);
+        uint256 amountIn = 10e18;
+        uint256 expected = app.quote(m, amountIn);
+
+        vm.expectEmit(address(app));
+        emit BatasApp.MandateEnforced(mandateHash, maker, address(this), amountIn, expected);
+        assertEq(app.swap(m, amountIn, 0, address(this), ""), expected, "the expiry second is still inside the grant");
+    }
+
+    /// @notice With no fee the app prices the bare constant-product curve, to the wei.
+    function test_AZeroFeePricesTheBareCurve() public {
+        Mandate memory m = _mandate();
+        m.feeBps = 0;
+        _ship(m);
+
+        uint256 amountIn = 10e18;
+        assertEq(app.quote(m, amountIn), amountIn * RESERVE_OUT / (RESERVE_IN + amountIn), "no fee, no haircut");
+    }
+
+    /// @notice The app has no compile step, so it meets fees the compiler would refuse; it refuses
+    ///   them too, each for its own arithmetic reason, and one wei under the basis still prices.
+    /// @dev `MandateLib.toProgram` declines `feeBps >= BPS`, but nothing stops a maker shipping such a
+    ///   mandate to `BatasApp` directly — Aqua hashes whatever bytes it is given. At the basis the
+    ///   fee is the whole input and the output is zero, which `ZeroAmountOut` names. Past it the fee
+    ///   is larger than the input and the subtraction in `quoteExactIn` underflows. Both refuse
+    ///   before `pull`, which is the only property that matters for the maker's wallet; this pins
+    ///   which refusal, so a change that made either one settle fails here.
+    function test_FeesAtAndPastTheBasisAreRefusedByTheApp() public {
+        uint256 amountIn = 10e18;
+
+        Mandate memory atBasis = _mandate();
+        atBasis.feeBps = uint24(MandateLib.BPS);
+        _ship(atBasis);
+        vm.expectRevert(abi.encodeWithSelector(BatasApp.ZeroAmountOut.selector, amountIn));
+        app.swap(atBasis, amountIn, 0, address(this), "");
+
+        Mandate memory pastBasis = _mandate();
+        pastBasis.feeBps = uint24(MandateLib.BPS + 1);
+        _ship(pastBasis);
+        vm.expectRevert(stdError.arithmeticError);
+        app.swap(pastBasis, amountIn, 0, address(this), "");
+
+        // The largest fee the compiler accepts leaves a millionth of the input to price. With no
+        // floor that is a real, tiny trade rather than a refusal.
+        Mandate memory justUnder = _mandate();
+        justUnder.feeBps = uint24(MandateLib.BPS - 1);
+        justUnder.minRateE18 = 0;
+        _ship(justUnder);
+        uint256 expected = MandateLib.quoteExactIn(justUnder, RESERVE_IN, RESERVE_OUT, amountIn);
+        assertGt(expected, 0, "a millionth of the input still prices");
+        assertEq(app.swap(justUnder, amountIn, 0, address(this), ""), expected);
     }
 }
