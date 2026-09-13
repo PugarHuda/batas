@@ -70,6 +70,11 @@ jobs:
       # test files simply stopped being run by CI without anything going red.
       - run: npm run test:js
 
+      # The browser tests drive a real Chromium — the landing's envelope probe, the live columns, and
+      # the check that neither page fetches anything from a third party. `npm ci` installs the
+      # Playwright library but not the browser it launches, and a runner has no cached copy.
+      - run: npx playwright install --with-deps chromium
+
       # The paid HTTP surface, including what its 402 promises.
       - run: npm run test:api
 
