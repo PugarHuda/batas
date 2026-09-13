@@ -98,11 +98,11 @@ Two implementation notes on reading chains that cost real time. Aqua's Shipped e
 tracks both require that.
 
 **The rules the form restates, and where this stands on each:** started from scratch — first
-commit 6 September, the event opened on the 4th; version control with frequent commits — 100 across
+commit 6 September, the event opened on the 4th; version control with frequent commits — 141 across
 seven days, each one a single argued change; public repository — yes; video under four
 minutes with no speed-ups — the storyboard below runs 3:50 and says which waits to cut rather than
 accelerate. The suites at last count: `forge test` 72 passing, `node --test agent/*.test.mjs`
-268 of 268 passing, Playwright 46 passing.
+340 passing and 1 skipped (the paid A2A round, which spends real HBAR), Playwright 47 passing.
 
 **AI disclosure.** The commits carry Claude co-author trailers: this was AI-assisted development,
 and all code was reviewed, tested and deployed by the author.
@@ -140,7 +140,7 @@ against a paraphrase of it.
 | "If you use SwapVM, you may modify SwapVM opcodes and define your own instructions" (scored higher) | `BatasRouter` carries two new instructions: `PolicyEnvelope` at `0x21` and `MandateName` at `0x22` |
 | "Official Aqua/SwapVM contracts must be used (redeployments of a modified SwapVM contract is allowed)" | Aqua used as-is at `0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`; nothing in `node_modules/@1inch/**` edited |
 | "Onchain execution of token transfers should be presented during the final demo" | on Sepolia: ship [`0x9408b60a…`](https://sepolia.etherscan.io/tx/0x9408b60a7bfc5345f9909153f5d5bf97feb193b5716f3c0fae21c33b89830060), swap [`0x8cdec703…`](https://sepolia.etherscan.io/tx/0x8cdec703361527046d60199bae327b8db7e784d55622897eace87b51c5909275) — real ERC-20 transfers, no mocked settlement |
-| "Proper Git commit history (no single-commit entries on the final day)" | 100 commits across seven days from 6 September, each one a single argued change |
+| "Proper Git commit history (no single-commit entries on the final day)" | 141 commits across seven days from 6 September, each one a single argued change |
 
 ### 3. ENS — Best Use of ENSv2 ($4,500)
 
