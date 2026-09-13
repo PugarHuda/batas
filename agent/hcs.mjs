@@ -20,11 +20,12 @@
 //   node agent/hcs.mjs --revocations agent  every time that name was taken back
 //   node agent/hcs.mjs --name-grants agent  every time it was granted, or granted again
 //   node agent/hcs.mjs --publish-name-grant agent  record the grant the registry holds right now
+//   node agent/hcs.mjs --payments [0.0.x]  every x402 payment recorded, checked against the ledger
 
 import 'dotenv/config';
 import { createPublicClient, http, keccak256, toHex } from 'viem';
 import { sepolia } from 'viem/chains';
-import { PUBLISHER, ENS_REGISTRY, SEPOLIA_RPC } from './deployment.mjs';
+import { PUBLISHER, ENS_REGISTRY, SEPOLIA_RPC, HCS_TOPIC } from './deployment.mjs';
 
 // Mirror nodes are public and unauthenticated: anyone verifying a mandate reads the record without
 // an account, a key, or our permission. That is the property that makes this worth doing.
@@ -99,7 +100,9 @@ function assemble(pending, m) {
     if (!info || !(info.total > 1)) return whole(m.message, [m.sequence_number]);
 
     const t = info.initial_transaction_id ?? {};
-    const key = `${t.account_id}@${t.transaction_valid_start}/${t.nonce ?? 0}/${t.scheduled ? 1 : 0}`;
+    // The payer is part of the key so that, on a walk that reads every account, one payer's chunk
+    // can never be counted into another payer's message.
+    const key = `${m.payer_account_id}|${t.account_id}@${t.transaction_valid_start}/${t.nonce ?? 0}/${t.scheduled ? 1 : 0}`;
     const group = pending.get(key) ?? { total: info.total, parts: new Map() };
     pending.set(key, group);
     if (group.broken) return null;
@@ -128,6 +131,9 @@ function assemble(pending, m) {
  * key, so a stranger can post a chunk that claims one of our initial transaction ids; filtering
  * first means such a chunk can neither complete one of our messages nor poison it.
  *
+ * `publisher: null` reads every payer instead, for records whose author is checked per record
+ * rather than assumed. Chunk groups are keyed by payer, so the same guarantee holds there.
+ *
  * Ascending order is an assumption every caller builds on — "earliest" and "newest" both mean
  * position in this walk — so it is checked rather than trusted: a mirror that hands back a
  * sequence number at or below one it already gave is refused, not read.
@@ -148,7 +154,7 @@ export async function readTopic(topicId, { fetchImpl = fetch, maxPages = 10, pub
                 throw new Error(`mirror node returned topic ${topicId} out of order: #${m.sequence_number} after #${last}`);
             }
             last = m.sequence_number;
-            if (m.payer_account_id !== publisher) continue;
+            if (publisher !== null && m.payer_account_id !== publisher) continue;
             const message = assemble(pending, m);
             if (message && onMessage(message) === true) return { searched: 'stopped', pagesWalked, lastSequence: last };
         }
@@ -290,6 +296,153 @@ export function parseNameGrantMessage(base64) {
     return parsed;
 }
 
+// --- payments ----------------------------------------------------------------
+
+const ACCOUNT_ID = /^\d+\.\d+\.\d+$/;
+const TRANSACTION_ID = /^(\d+\.\d+\.\d+)[@-](\d+)[.-](\d+)$/;
+const DIGEST = /^0x[0-9a-f]{64}$/;
+const TINYBARS = /^[1-9]\d*$/;
+
+/**
+ * An audit record of one settled x402 payment, published by the account that paid.
+ *
+ * The x402 settlement is already a public Hedera transaction, but the transaction says only that
+ * HBAR moved. It does not say what was bought. This record ties the two together: the transaction
+ * id, who paid whom and how much, the resource that was called, and a keccak256 of the exact bytes
+ * sent and received. Either party holding the bodies can then show that this payment bought that
+ * answer, at a consensus time neither of them controls.
+ *
+ * The payer publishes it, not the service. The payer already holds a Hedera key, so recording its
+ * own payment needs no new secret on the paid service's deployment.
+ */
+export function paymentMessage({ transaction, payer, payTo, amount, asset, network, resource, requestHash, responseHash }) {
+    const tx = TRANSACTION_ID.exec(String(transaction ?? ''));
+    if (!tx) throw new Error(`transaction must be a Hedera transaction id, not ${transaction}`);
+    for (const [name, value] of [['payer', payer], ['payTo', payTo]]) {
+        if (!ACCOUNT_ID.test(String(value))) throw new Error(`${name} must be a shard.realm.num account id`);
+    }
+    if (!TINYBARS.test(String(amount))) throw new Error('amount must be a positive whole number of tinybars');
+    for (const [name, value] of [['requestHash', requestHash], ['responseHash', responseHash]]) {
+        if (!DIGEST.test(String(value).toLowerCase())) throw new Error(`${name} must be a 0x-prefixed 32-byte digest`);
+    }
+    if (typeof asset !== 'string' || !asset || typeof network !== 'string' || !network) throw new Error('asset and network are required');
+    if (!/^https?:\/\//.test(String(resource))) throw new Error('resource must be an http(s) URL');
+    return JSON.stringify({
+        v: MESSAGE_VERSION,
+        kind: 'batas.payment',
+        transaction: `${tx[1]}@${tx[2]}.${tx[3]}`,
+        payer,
+        payTo,
+        amount: String(amount),
+        asset,
+        network,
+        resource,
+        requestHash: requestHash.toLowerCase(),
+        responseHash: responseHash.toLowerCase(),
+    });
+}
+
+/**
+ * A payment record, or null. Every field the ledger check reads has to be present and well formed,
+ * because a record that cannot be checked is not a record of anything.
+ */
+export function parsePaymentMessage(base64) {
+    let parsed;
+    try {
+        parsed = JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
+    } catch {
+        return null;
+    }
+    if (parsed?.kind !== 'batas.payment' || parsed.v !== MESSAGE_VERSION) return null;
+    if (!TRANSACTION_ID.test(String(parsed.transaction)) || !ACCOUNT_ID.test(String(parsed.payer)) || !ACCOUNT_ID.test(String(parsed.payTo))) return null;
+    if (!TINYBARS.test(String(parsed.amount)) || typeof parsed.asset !== 'string' || typeof parsed.network !== 'string') return null;
+    if (typeof parsed.resource !== 'string' || !DIGEST.test(String(parsed.requestHash)) || !DIGEST.test(String(parsed.responseHash))) return null;
+    return parsed;
+}
+
+/** Publish a payment record, signed and paid for by `operator` ({ id, key }), normally the payer. */
+export async function publishPayment(topicId, record, operator) {
+    return publishMessage(topicId || HCS_TOPIC, paymentMessage(record), operator);
+}
+
+/**
+ * Check one payment record against the ledger.
+ *
+ * The record is a claim, and the topic has no submit key, so anyone can make one. It is verified
+ * only when all of this holds: the HCS message was paid for by the account the record names as
+ * payer (so nobody can file a payment in someone else's name), no earlier record already claimed
+ * the same transaction, and the mirror node shows that transaction succeeded and moved at least the
+ * stated HBAR out of the payer and into the payee. `verified` is null when the mirror could not
+ * answer, which is not the same as false.
+ */
+export async function verifyPayment(record, { hcsPayer, claimedBy, fetchImpl = fetch, attempts = 2, delayMs = 1000 } = {}) {
+    if (hcsPayer !== record.payer) {
+        return { verified: false, reason: `the HCS message was paid by ${hcsPayer}, not by the payer it names (${record.payer})` };
+    }
+    if (claimedBy !== undefined) {
+        return { verified: false, reason: `transaction ${record.transaction} was already recorded at #${claimedBy}` };
+    }
+    if (record.asset !== '0.0.0') return { verified: false, reason: `only HBAR (0.0.0) settlements can be checked, not ${record.asset}` };
+    if (record.network !== 'hedera:testnet') return { verified: false, reason: `this mirror node is hedera:testnet, the record says ${record.network}` };
+
+    // Loaded here: inspect.mjs imports this file, so a static import would be a cycle.
+    const { confirmSettlement } = await import('./inspect.mjs');
+    const ledger = await confirmSettlement(record.transaction, { payer: record.payer, payTo: record.payTo, fetchImpl, attempts, delayMs });
+    const facts = {
+        result: ledger.result ?? null,
+        paid: ledger.paid ?? null,
+        received: ledger.received ?? null,
+        settledAt: ledger.settledAt ?? null,
+        ledger: ledger.mirror ?? null,
+    };
+    if (ledger.confirmed !== true) return { verified: ledger.confirmed, reason: ledger.reason, ...facts };
+    const amount = Number(record.amount);
+    if (ledger.paid < amount) return { verified: false, reason: `${ledger.paid} tinybar left ${record.payer}, less than the ${amount} recorded`, ...facts };
+    if (ledger.received < amount) return { verified: false, reason: `${ledger.received} tinybar reached ${record.payTo}, less than the ${amount} recorded`, ...facts };
+    return { verified: true, ...facts };
+}
+
+/**
+ * The payment trail on a topic, oldest first, each record checked against the ledger.
+ *
+ * Every payment record is returned, verified or not. Dropping the ones that fail would make a
+ * forged record indistinguishable from no record, and a reader auditing the trail needs to see the
+ * forgery. `payer` narrows the walk to one account; without it every account's records are read,
+ * and the per-record payer check is what keeps a stranger's record from counting as a payment.
+ */
+export async function lookupPayments(topicId, { payer = null, fetchImpl = fetch, maxPages = 10, attempts } = {}) {
+    const id = topicId || HCS_TOPIC;
+    const found = [];
+    const walk = await readTopic(id, { fetchImpl, maxPages, publisher: payer }, (m) => {
+        const record = parsePaymentMessage(m.message);
+        if (record) found.push({ record, m });
+    });
+    // Only a record that verified can claim a transaction. A stranger's copy, or an inflated one,
+    // filed first must not turn the true record into the duplicate.
+    const firstClaim = new Map();
+    const payments = [];
+    for (const { record, m } of found) {
+        const claimedBy = firstClaim.get(record.transaction);
+        const check = await verifyPayment(record, { hcsPayer: m.payer, claimedBy, fetchImpl, ...(attempts ? { attempts } : {}) });
+        if (check.verified === true) firstClaim.set(record.transaction, m.sequenceNumber);
+        payments.push({
+            ...record,
+            hcsPayer: m.payer,
+            sequenceNumber: m.sequenceNumber,
+            consensusTimestamp: m.consensusTimestamp,
+            recordedAt: consensusToISO(m.consensusTimestamp),
+            mirror: `${MIRROR}/topics/${id}/messages/${m.sequenceNumber}`,
+            ...check,
+        });
+    }
+    return {
+        topic: String(id),
+        payments,
+        searched: walk.searched,
+        ...(walk.searched === 'incomplete' ? { reason: `stopped after ${maxPages} pages with more to read` } : {}),
+    };
+}
+
 /** A Hedera consensus timestamp is `seconds.nanos`; ISO is what a reader actually wants. */
 export function consensusToISO(consensusTimestamp) {
     const [seconds, nanos = '0'] = String(consensusTimestamp).split('.');
@@ -300,10 +453,10 @@ export function consensusToISO(consensusTimestamp) {
 // The Hedera SDK is loaded only on the write path. Reading a publication needs nothing but fetch
 // and a topic id, and the inspection service only ever reads — dragging a signing SDK into its
 // cold start would cost every caller time for a code path they never reach.
-async function client() {
-    const id = process.env.HEDERA_SERVICE_ID;
-    const key = process.env.HEDERA_SERVICE_KEY;
-    if (!id || !key) throw new Error('HEDERA_SERVICE_ID and HEDERA_SERVICE_KEY are required to publish');
+// The service account signs mandates and names; a payment record is signed by whoever paid, so
+// the account is a parameter rather than always the service's.
+async function client({ id = process.env.HEDERA_SERVICE_ID, key = process.env.HEDERA_SERVICE_KEY } = {}) {
+    if (!id || !key) throw new Error('a Hedera account id and key are required to publish (HEDERA_SERVICE_ID and HEDERA_SERVICE_KEY by default)');
     const { Client, PrivateKey, AccountId } = await import('@hiero-ledger/sdk');
     // Portal accounts hand out ECDSA keys as DER or as raw hex; accept what the operator has
     // rather than making them convert it.
@@ -343,11 +496,11 @@ export async function publishNameGrant(topicId, record) {
     return publishMessage(topicId, nameGrantMessage(record));
 }
 
-async function publishMessage(topicId, message) {
+async function publishMessage(topicId, message, operator) {
     const id = topicId || process.env.BATAS_HCS_TOPIC;
     if (!id) throw new Error('no topic: set BATAS_HCS_TOPIC or pass one');
     const { TopicMessageSubmitTransaction } = await import('@hiero-ledger/sdk');
-    const c = await client();
+    const c = await client(operator);
     try {
         const submit = new TopicMessageSubmitTransaction().setTopicId(id).setMessage(message);
         const response = await submit.execute(c);
@@ -576,6 +729,22 @@ async function main() {
         return;
     }
 
+    if (flag === '--payments') {
+        const { topic, payments, searched } = await lookupPayments(undefined, { payer: value || null });
+        const ok = payments.filter((p) => p.verified === true).length;
+        console.log(`topic ${topic}: ${payments.length} payment record(s), ${ok} verified against the ledger${searched === 'incomplete' ? ' (walk incomplete)' : ''}`);
+        for (const p of payments) {
+            const state = p.verified === true ? 'VERIFIED' : p.verified === false ? 'UNVERIFIED' : 'UNCHECKED';
+            console.log(`  #${p.sequenceNumber}  ${p.recordedAt}  ${state}  ${Number(p.amount) / 1e8} HBAR  ${p.payer} -> ${p.payTo}`);
+            console.log(`     tx        ${p.transaction}  ${p.verified === true ? `${p.result}, settled ${p.settledAt}` : p.reason}`);
+            console.log(`     resource  ${p.resource}`);
+            console.log(`     request   ${p.requestHash}`);
+            console.log(`     response  ${p.responseHash}`);
+            console.log(`     record    ${p.mirror}`);
+            if (p.ledger) console.log(`     ledger    ${p.ledger}`);
+        }
+        return;
+    }
     if (flag === '--publish' && value) {
         const out = await publishMandate(null, { program: value, chainId: 11155111 });
         console.log(out);
@@ -585,7 +754,7 @@ async function main() {
         console.log(await lookupMandate(null, value));
         return;
     }
-    console.log('usage: node agent/hcs.mjs [--create-topic | --publish 0x… | --lookup 0x… | --revocations <label> | --name-grants <label> | --publish-name-grant <label>]');
+    console.log('usage: node agent/hcs.mjs [--create-topic | --publish 0x… | --lookup 0x… | --revocations <label> | --name-grants <label> | --publish-name-grant <label> | --payments [account]]');
 }
 
 if (import.meta.filename === process.argv[1]) {
