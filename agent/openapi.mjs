@@ -424,9 +424,15 @@ export const ROUTES = [
         responses: { 200: { description: 'the card', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } } },
     },
     {
+        method: 'get', path: '/.well-known/agent-registration.json', free: true,
+        summary: 'ERC-8004 endpoint-domain proof',
+        description: 'The registration ERC-8004 agent #10123 holds on chain, served from the domain it names, so a verifier can treat this host as the agent\x27s. Read from the registry on request, never a copy.',
+        responses: { 200: { description: 'the registration', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } } },
+    },
+    {
         method: 'post', path: '/a2a', free: true,
         summary: 'A2A JSON-RPC: negotiate a fill, then pay for the firm quote inside the task',
-        description: 'message/send, tasks/get and tasks/cancel. A proposal { direction, amountIn, minAmountOut or limitRate } is priced against the live position: outside the mandate the task stays input-required with a counter-offer; inside it the task asks for payment under the a2a-x402 extension (x402.payment.required), and completes with the firm quote once the x402.payment.payload has settled on Hedera. Negotiating is free and rate limited; the deliverable costs the same as the paid route.',
+        description: 'message/send, tasks/get and tasks/cancel. A proposal { direction, amountIn, minAmountOut or limitRate } is priced against the live position: outside the mandate the task stays input-required with a counter-offer; inside it the task asks for payment under the a2a-x402 extension (x402.payment.required), and completes with the firm quote once the x402.payment.payload has settled on Hedera. Negotiating is free and rate limited; the firm quote costs 0.001 HBAR, what the paid route charges for the live mandate alone.',
         body: { type: 'object', description: 'a JSON-RPC 2.0 request', additionalProperties: true },
         responses: {
             200: { description: 'a JSON-RPC 2.0 response; protocol errors answer here too, with error.code', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
