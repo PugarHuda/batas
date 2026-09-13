@@ -1179,10 +1179,29 @@ reaches for Blocky402 only on mainnet. The Hedera track requires Blocky402. It d
 under the `/v1` path the site advertises. Copy the PoC as-is and you settle through the wrong
 facilitator with everything appearing to work.
 
-Payment is priced in **HBAR rather than USDC**. An HTS token has to be associated with an account
-before it can be received; HBAR does not. That is one less step between a caller and an answer,
-which is the entire point of paying per request. The client also caps itself at 0.01 HBAR per call
-through x402 spend controls — the same idea the contracts enforce, one layer up.
+Payment is priced in **HBAR first**. An HTS token has to be associated with an account before it
+can be received; HBAR does not. That is one less step between a caller and an answer, which is the
+entire point of paying per request. The client also caps itself at 0.01 HBAR per call through x402
+spend controls — the same idea the contracts enforce, one layer up. A caller that has already
+associated the project's own token can pay in it instead, and that path carries a fee schedule:
+
+#### Pay in an HTS token with a custom fee schedule
+
+`POST /v1/mandate/explain` accepts two payments. HBAR comes first (0.001 HBAR, no association needed). Second is **Batas Inspection Credit (BIC)**, HTS token [`0.0.10523367`](https://hashscan.io/testnet/token/0.0.10523367): 1.00 BIC per answer, 2 decimals, treasury `0.0.10388560`. Both options appear in the 402 and in `/.well-known/x402`, and both settle through the Blocky402 facilitator, which pays the network fee. The hosted deployment needs no Hedera key for either.
+
+The token carries a **custom fee schedule**: a fixed 0.01 BIC fee, paid in BIC by the sender and collected by the service account `0.0.10388560`. The x402 payload only moves 1.00 BIC. The network adds the fee at consensus, so every settlement in BIC pays the fee schedule on the ledger, and the mirror node records it in `assessed_custom_fees`:
+
+- settlement [`0.0.7162784@1789303940.461488375`](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1789303940-461488375): 1.01 BIC left the agent `0.0.10388401`; 1.00 is the price and 0.01 is the fee assessed to `0.0.10388560`
+- token created in `0.0.10388560@1789303696.616126043`; fee schedule set in `0.0.10388560@1789303922.098182218`
+
+We found out why it is a fixed fee on the ledger. The token started with a 1% fractional fee, and the first BIC settlement (`0.0.7162784@1789303799.767974862`) succeeded but assessed nothing. The receiver is the treasury and the collector, and a fractional fee is not charged on a credit to that account. A fixed fee falls on the sender, so it is assessed every time.
+
+```
+npm run hts -- --status                                              # token, fee schedule, balances from the mirror node
+BATAS_SERVICE_URL=http://127.0.0.1:4021 node agent/hts-pay.mjs       # pay in BIC, then check the credits moved and the fee was assessed
+```
+
+Only accounts associated with BIC can pay this way (`node agent/hts.mjs --create` associated and funded the demo agent).
 
 ## The other agent
 
@@ -1268,6 +1287,20 @@ position's own spot. A counterparty with its own view of the market sets `BATAS_
 for the operator's identity is a separate decision, `shouldPay`, made only after every free check is
 clean: it buys the answer when the grant is under an hour old or when told to with `--paranoid`, and
 otherwise trades without spending.
+
+### Agent-to-agent: negotiate a fill, settle it over x402 (A2A)
+
+The Batas agent speaks A2A. Its Agent Card at `/.well-known/agent-card.json` lists a JSON-RPC interface at `/a2a`, the skills `negotiate-fill` and `inspect-mandate`, and marks the [a2a-x402 extension](https://github.com/google-agentic-commerce/a2a-x402) (`https://github.com/google-a2a/a2a-x402/v0.1`) as required.
+
+A counterparty agent sends a proposal as a `message/send` data part: `{ direction, amountIn, minAmountOut | limitRate }`. The Batas agent checks it against the live Aqua position at one Sepolia block. It reads the size cap and floor from the PolicyEnvelope bytes, finds the largest input that still clears the floor, and gets the output from the router's own `quote()`. If the proposal is outside the mandate, the task stays `input-required` with a counter-offer: a size over the cap gets the largest clearing size, and a limit under the floor gets a limit at the floor. If it is inside, the terms are accepted and the task asks for payment in `status.message.metadata`: `x402.payment.status: "payment-required"` plus real x402 `PaymentRequirements` (exact, `hedera:testnet`, HBAR, fee payer named by Blocky402). The counterparty signs and returns `x402.payment.payload` in the same task. The server checks the terms again, then verifies and settles through the facilitator. The task completes with `x402.payment.receipts` and a firm-quote artifact: the exact amountOut, the mandate limits it respects, and the block it was read at.
+
+```
+npm run a2a        # BATAS_SERVICE_URL=http://localhost:4021 to target a local service
+```
+
+A real run: the counterparty opened at 14.33 A with a 1.747 limit. The agent countered with 5.1538 A, the largest input that clears now under the 7.16 A cap, at the 1.9410 floor. The counterparty accepted and paid 0.001 HBAR. The firm quote was 10.003783 B out at Sepolia block 11696032. Settlement tx: [`0.0.7162784@1789304188.020204394`](https://hashscan.io/testnet/transaction/1789304198.075219104), which the mirror node shows as SUCCESS: 100000 tinybar from 0.0.10388401 to 0.0.10388560.
+
+Negotiation needs no key on the service side. The payer signs and the facilitator pays the Hedera fee.
 
 ## What the service does not keep
 
