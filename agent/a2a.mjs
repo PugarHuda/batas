@@ -381,6 +381,14 @@ export function mountA2A(app, { card, resourceServer, origin, payTo, price, over
         }
         if (!requirement) return refuse('INVALID_AMOUNT', 'That payload does not answer the requirement this task issued; nothing was charged.');
 
+        // Verified before any chain is read. Matching the requirement only compares the payload with
+        // a requirement anyone can copy from a 402, and this path skips the free routes' rate limit,
+        // so an unsigned copy would otherwise buy unlimited Sepolia reads before being refused.
+        const verified = await resourceServer.verifyPayment(payload, requirement);
+        if (!verified.isValid) {
+            return refuse(verified.invalidReason ?? 'INVALID_SIGNATURE', `The facilitator did not verify this payment (${verified.invalidMessage ?? verified.invalidReason}); nothing was charged.`);
+        }
+
         // The deliverable is produced before the payment is settled, so a chain that moved or an
         // upstream that failed costs the caller nothing.
         let deliverable;
@@ -399,10 +407,6 @@ export function mountA2A(app, { card, resourceServer, origin, payTo, price, over
             deliverable = { name: 'firm-quote', data: firmQuote(result, live) };
         }
 
-        const verified = await resourceServer.verifyPayment(payload, requirement);
-        if (!verified.isValid) {
-            return refuse(verified.invalidReason ?? 'INVALID_SIGNATURE', `The facilitator did not verify this payment (${verified.invalidMessage ?? verified.invalidReason}); nothing was charged.`);
-        }
         const receipt = await resourceServer.settlePayment(payload, requirement);
         const all = [...receipts, receipt];
         if (!receipt.success) {
