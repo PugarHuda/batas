@@ -18,6 +18,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
 
 import { createServer } from './mcp.mjs';
+import { TOOLS } from './tools.mjs';
 import { openapiDocument } from './openapi.mjs';
 import { xycSwap, salt } from './swapvm.mjs';
 
@@ -37,7 +38,9 @@ test('the tools an assistant would see', async () => {
     const client = await connected();
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ['check_agent_authority', 'check_publication', 'inspect_mandate_paid', 'read_mandate']);
+    assert.deepEqual(names, [
+        'check_agent_authority', 'check_payment_trail', 'check_publication', 'inspect_mandate_paid', 'read_mandate', 'resolve_agent_name',
+    ]);
 
     // The paid one has to announce itself as paid in the text the model reads, not only in its
     // name. A model that discovers the cost by being charged has discovered it too late.
@@ -46,9 +49,16 @@ test('the tools an assistant would see', async () => {
     assert.match(paid.description, /0\.001 HBAR/);
     assert.match(paid.description, /free tools first/i);
 
-    for (const free of ['read_mandate', 'check_publication', 'check_agent_authority']) {
-        assert.match(tools.find((t) => t.name === free).description, /\bFree\b/i, `${free} must say it is free`);
+    for (const free of ['read_mandate', 'check_publication', 'check_agent_authority', 'resolve_agent_name', 'check_payment_trail']) {
+        const t = tools.find((x) => x.name === free);
+        assert.match(t.description, /\bFree\b/i, `${free} must say it is free`);
+        // A client that honours hints would otherwise treat a read as a write and ask before each call.
+        assert.equal(t.annotations.readOnlyHint, true, `${free} is read-only`);
+        assert.equal(t.annotations.destructiveHint, false, `${free} is not destructive`);
     }
+    // And the two newest say what they do not cost, not only that they are free.
+    assert.match(tools.find((t) => t.name === 'resolve_agent_name').description, /no payment is asked for or made/);
+    assert.match(tools.find((t) => t.name === 'check_payment_trail').description, /nothing is paid/);
 });
 
 test('read_mandate decodes a program without touching the network', async () => {
@@ -195,8 +205,17 @@ test('what the tools return is what the document says the routes return', async 
     const a = conforms('Authority', authority.structuredContent);
     assert.ok(a.valid, a.errorMessage);
 
-    // And the check can fail, or the two above prove nothing.
+    const name = await client.callTool({ name: 'resolve_agent_name', arguments: {} });
+    const n = conforms('Name', name.structuredContent);
+    assert.ok(n.valid, n.errorMessage);
+
+    const trail = await client.callTool({ name: 'check_payment_trail', arguments: { limit: 2 } });
+    const p = conforms('Payments', trail.structuredContent);
+    assert.ok(p.valid, p.errorMessage);
+
+    // And the check can fail, or the ones above prove nothing.
     assert.equal(conforms('Authority', { label: 'agent' }).valid, false);
+    assert.equal(conforms('Payments', { ...trail.structuredContent, payments: [{ payer: '0.0.1' }] }).valid, false);
 });
 
 test('a deadline that is not unix seconds is refused before the chain is asked', async () => {
@@ -217,4 +236,89 @@ test('answers go out structured as well as as text, and the two agree', async ()
     const res = await client.callTool({ name: 'read_mandate', arguments: { program: LIVE_PROGRAM } });
     assert.deepEqual(res.structuredContent, parse(res));
     assert.equal(res.structuredContent.guarded, true);
+});
+
+// --- the name and the payment trail -----------------------------------------
+
+// The first recorded payment, the same one agent/payment-trail.test.mjs pins.
+const AGENT_ACCOUNT = '0.0.10388401';
+const FIRST_PAYMENT = { sequenceNumber: 16, transaction: '0.0.7162784@1789303433.642299625' };
+
+test('resolve_agent_name resolves the agent and checks its ENSIP-25 link both ways', async () => {
+    const client = await connected();
+    const out = parse(await client.callTool({ name: 'resolve_agent_name', arguments: {} }));
+    assert.equal(out.name, 'agent.batas.eth');
+    assert.match(out.text['agent-endpoint[mcp]'], /\/mcp$/);
+    assert.equal(out.erc8004.forward, true);
+    assert.equal(out.erc8004.reverse, true);
+    assert.equal(out.erc8004.linked, true);
+});
+
+test('resolve_agent_name refuses names that are not the project\'s', async () => {
+    // A free tool that resolved any name would be a Sepolia RPC relay for whoever holds the client.
+    const client = await connected();
+    const res = await client.callTool({ name: 'resolve_agent_name', arguments: { name: 'vitalik.eth' } });
+    assert.equal(res.isError, true);
+    assert.match(res.content[0].text, /under batas\.eth/);
+});
+
+test('check_payment_trail lists the recorded payment as verified against the ledger', async () => {
+    const client = await connected();
+    const out = parse(await client.callTool({ name: 'check_payment_trail', arguments: { payer: AGENT_ACCOUNT, limit: 100 } }));
+    const first = out.payments.find((p) => p.sequenceNumber === FIRST_PAYMENT.sequenceNumber);
+    assert.ok(first, `record #${FIRST_PAYMENT.sequenceNumber} is in the trail`);
+    assert.equal(first.verified, true, first.reason);
+    assert.equal(first.transaction, FIRST_PAYMENT.transaction);
+    assert.match(first.ledger, /mirrornode\.hedera\.com/);
+    assert.ok(out.total >= 2, `at least the two recorded payments; saw ${out.total}`);
+});
+
+test('check_payment_trail holds limit to its bounds, over MCP as over HTTP', async () => {
+    const client = await connected();
+    const one = parse(await client.callTool({ name: 'check_payment_trail', arguments: { limit: 1 } }));
+    assert.equal(one.payments.length, 1);
+    for (const limit of [0, 101, 1.5]) {
+        // The schema refuses these before the handler runs. Whether the SDK reports that as a tool
+        // error or a protocol error, it must not come back as an answer.
+        const res = await client.callTool({ name: 'check_payment_trail', arguments: { limit } })
+            .catch((e) => ({ isError: true, content: [{ text: e.message }] }));
+        assert.equal(res.isError, true, `limit ${limit} must be refused`);
+    }
+});
+
+// --- the Hedera Agent Kit plugin ---------------------------------------------
+//
+// Driven through the kit's own LangChain toolkit, which is how a kit user reaches it: the toolkit
+// registers the plugin, wraps each tool and stringifies what `execute` returns. Batas does not
+// depend on the kit, so without it installed this is skipped and says so; any other import failure
+// is a failure.
+
+const kitAdapter = await import('./adapters/hedera-agent-kit.mjs').catch((e) => e);
+const kitMissing = kitAdapter instanceof Error && kitAdapter.code === 'ERR_MODULE_NOT_FOUND' && /'hedera-agent-kit'/.test(kitAdapter.message);
+
+test('the Hedera Agent Kit plugin offers every tool, and the new ones answer through the kit', {
+    skip: kitMissing && 'hedera-agent-kit is not installed; Batas does not depend on it',
+}, async (t) => {
+    if (kitAdapter instanceof Error) throw kitAdapter;
+    const { HederaLangchainToolkit } = await import('hedera-agent-kit');
+    const { Client } = await import('@hashgraph/sdk');
+    // A client with no operator: the kit insists on a network, and no Batas tool signs with it.
+    // Closed afterwards, because an open client keeps the test process alive after the last test.
+    const client = Client.forTestnet();
+    t.after(() => client.close());
+    const toolkit = new HederaLangchainToolkit({ client, configuration: { plugins: [kitAdapter.batasPlugin] } });
+    const tools = Object.fromEntries(toolkit.getTools().map((t) => [t.name, t]));
+    assert.deepEqual(Object.keys(tools).sort(), Object.keys(TOOLS).sort());
+
+    const name = JSON.parse(await tools.resolve_agent_name.invoke({}));
+    assert.equal(name.raw.name, 'agent.batas.eth');
+    assert.equal(name.raw.erc8004.linked, true);
+
+    const trail = JSON.parse(await tools.check_payment_trail.invoke({ payer: AGENT_ACCOUNT, limit: 100 }));
+    const first = trail.raw.payments.find((p) => p.sequenceNumber === FIRST_PAYMENT.sequenceNumber);
+    assert.equal(first?.verified, true, first?.reason);
+
+    // A refusal reaches the kit in the kit's own error shape rather than as an exception it cannot parse.
+    const refused = JSON.parse(await tools.resolve_agent_name.invoke({ name: 'vitalik.eth' }));
+    assert.match(refused.raw.error, /under batas\.eth/);
 });

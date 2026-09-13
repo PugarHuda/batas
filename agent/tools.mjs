@@ -1,4 +1,4 @@
-// The four questions, as one table.
+// The questions, as one table.
 //
 // mcp.mjs used to hold these inline. Now the same names, descriptions, schemas and handlers are
 // read by the MCP server, by the AI SDK adapter, by LangChain's, and by whichever framework comes
@@ -12,7 +12,10 @@
 
 import { z } from 'zod';
 
-import { decodeAnswer, publicationAnswer, authorityAnswer, resolveProgram } from './free.mjs';
+import {
+    decodeAnswer, publicationAnswer, authorityAnswer, nameAnswer, paymentsAnswer, resolveProgram, PAYMENTS_DEFAULT, PAYMENTS_MAX,
+} from './free.mjs';
+import { AGENT_ID, ENS_NAME, ENS_PARENT_LABEL, HCS_TOPIC } from './deployment.mjs';
 
 // Unannotated, a tool is presumed destructive and non-idempotent by clients that honour hints —
 // the spec's defaults — so a free read looked like a write until this was said.
@@ -57,6 +60,39 @@ export const TOOLS = {
                 .describe('the mandate\'s own deadline, unix seconds; supply it to tell revocation from lapse'),
         },
         run: ({ label, grantedUntil }) => authorityAnswer({ label, grantedUntil }),
+    },
+
+    resolve_agent_name: {
+        title: 'Resolve the agent\'s ENS name',
+        annotations: FREE,
+        description:
+            `Resolve ${ENS_NAME}, or another name under ${ENS_PARENT_LABEL}.eth, through the ENS UniversalResolver on Sepolia:`
+            + ' its resolver, address and ENSIP-26 agent records, including the web, MCP and x402 endpoints.'
+            + ' Free — a handful of Sepolia reads, and no payment is asked for or made.'
+            + ` It also checks the ENSIP-25 link to ERC-8004 agent #${AGENT_ID} in both directions: \`erc8004.linked\``
+            + ' is true only when the name names the identity and the identity names the name back. Names outside'
+            + ` ${ENS_PARENT_LABEL}.eth are refused; this is not a general ENS resolver.`,
+        shape: { name: z.string().optional().describe(`a name under ${ENS_PARENT_LABEL}.eth, default ${ENS_NAME}`) },
+        run: ({ name }) => nameAnswer({ name }),
+    },
+
+    check_payment_trail: {
+        title: 'Check the x402 payment audit trail',
+        annotations: FREE,
+        description:
+            `Read the batas.payment records on Hedera Consensus Service topic ${HCS_TOPIC} from a public mirror node,`
+            + ' each checked against the ledger: the HCS message was paid for by the account the record names as payer,'
+            + ' no earlier verified record claimed the same transaction, and the transaction succeeded and moved at least'
+            + ' the stated HBAR from payer to payee. Free — mirror node reads only; nothing is paid, and reading the trail'
+            + ' adds nothing to it. A record that fails is listed with `verified: false` and its reason rather than'
+            + ' dropped, and `verified: null` means the mirror node could not answer. Returns the newest `limit` records'
+            + ` (default ${PAYMENTS_DEFAULT}, at most ${PAYMENTS_MAX}), oldest first, with \`total\` and \`verifiedCount\` for the whole trail.`,
+        shape: {
+            payer: z.string().optional().describe('a Hedera account id, shard.realm.num; only the records that account published'),
+            limit: z.number().int().min(1).max(PAYMENTS_MAX).optional()
+                .describe(`how many of the newest records to return, 1 to ${PAYMENTS_MAX}; default ${PAYMENTS_DEFAULT}`),
+        },
+        run: ({ payer, limit }) => paymentsAnswer({ payer, limit }),
     },
 
     inspect_mandate_paid: {

@@ -12,7 +12,7 @@ export { mandateNameStatus, classifyName } from './ens.mjs';
 export { resolveAgent, vouchesFor } from './erc8004.mjs';
 export { readReputation, feedbackFromTrade } from './reputation.mjs';
 export { latestProgramOnChain, programFromStrategy } from './position.mjs';
-export { decodeAnswer, publicationAnswer, authorityAnswer, reputationAnswer } from './free.mjs';
+export { decodeAnswer, publicationAnswer, authorityAnswer, reputationAnswer, nameAnswer, paymentsAnswer } from './free.mjs';
 export * as deployment from './deployment.mjs';
 
 /**
@@ -36,6 +36,10 @@ export function client(origin = 'https://batas-one.vercel.app') {
         publication: (program) => post('/v1/mandate/publication', { program }),
         authority: ({ label, grantedUntil } = {}) => get('/v1/agent/authority', { ...(label && { label }), ...(grantedUntil && { grantedUntil }) }),
         reputation: ({ agentId } = {}) => get('/v1/agent/reputation', agentId ? { agentId } : {}),
+        name: ({ name } = {}) => get('/v1/agent/name', name ? { name } : {}),
+        // `limit` is sent whenever it is given, so an out-of-range one is refused by the service
+        // rather than silently replaced by the default.
+        payments: ({ payer, limit } = {}) => get('/v1/payments', { ...(payer && { payer }), ...(limit !== undefined && { limit }) }),
         inspect: async (program, opts = {}) => (await import('./inspect.mjs')).payForExplanation(program, { ...opts, origin }),
     };
 }

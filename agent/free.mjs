@@ -16,7 +16,7 @@ import { normalize } from 'viem/ens';
 import { sepolia } from 'viem/chains';
 
 import { explain, decodeProgram, readMandate } from './swapvm.mjs';
-import { lookupMandate } from './hcs.mjs';
+import { lookupMandate, lookupPayments } from './hcs.mjs';
 import { mandateNameStatus, resolveName } from './ens.mjs';
 import { verifyAgentLink } from './ens-hierarchy.mjs';
 import { latestProgramOnChain, programFromStrategy } from './position.mjs';
@@ -199,4 +199,54 @@ export async function reputationAnswer({ agentId } = {}) {
     const id = parseAgentId(agentId);
     if (id === null) throw refused(400, 'agentId must be a non-negative integer');
     return readReputation(String(id));
+}
+
+/** How many payment records one answer carries when not asked, and the most it will carry. */
+export const PAYMENTS_DEFAULT = 20;
+export const PAYMENTS_MAX = 100;
+const ACCOUNT_ID = /^\d+\.\d+\.\d+$/;
+const trails = new Map();
+
+/**
+ * The x402 payment audit trail on the project's HCS topic, each record checked against the ledger.
+ *
+ * The same reader `node agent/hcs.mjs --payments` prints, so the CLI, this route and the MCP tool
+ * cannot disagree about which records verified. Every record is still verified in topic order and
+ * only then cut to the newest `limit`, because whether a record is a replay depends on the records
+ * before it: `limit` bounds the answer, not the walk.
+ *
+ * Remembered for the same minute as the live position, per payer asked about. A record never changes
+ * once it is on the topic, so a stale read can only be missing a payment settled in the last minute.
+ */
+export async function paymentsAnswer({ payer, limit } = {}) {
+    // Checked before the mirror node is asked, for the reason authorityAnswer gives: a parameter given
+    // twice arrives as an array, and "abc" must be refused rather than read as the default.
+    if (payer !== undefined && payer !== '' && !(typeof payer === 'string' && ACCOUNT_ID.test(payer))) {
+        throw refused(400, 'payer must be a shard.realm.num Hedera account id');
+    }
+    if (typeof limit === 'string' && /^[0-9]+$/.test(limit)) limit = Number(limit);
+    if (limit !== undefined && !(Number.isSafeInteger(limit) && limit >= 1 && limit <= PAYMENTS_MAX)) {
+        throw refused(400, `limit must be an integer from 1 to ${PAYMENTS_MAX}`);
+    }
+
+    const key = payer || '';
+    let hit = trails.get(key);
+    if (!hit || Date.now() - hit.at >= TTL_MS) {
+        // ponytail: a miss verifies every record on the topic, one mirror read each; when the trail
+        // grows past what one request can walk, lookupPayments needs an option to verify only the tail.
+        hit = { at: Date.now(), trail: await lookupPayments(HCS_TOPIC, { payer: key || null }) };
+        // Keys are validated account ids, so this only grows with distinct payers asked about.
+        if (trails.size >= 1000) trails.clear();
+        trails.set(key, hit);
+    }
+
+    const { payments, ...trail } = hit.trail;
+    const kept = limit ?? PAYMENTS_DEFAULT;
+    return {
+        ...trail,
+        total: payments.length,
+        verifiedCount: payments.filter((p) => p.verified === true).length,
+        limit: kept,
+        payments: payments.slice(-kept),
+    };
 }

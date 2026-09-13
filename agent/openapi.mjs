@@ -11,6 +11,7 @@
 // reporting, and a schema that refused the growth would make an honest answer invalid.
 
 import { AGENT_ID, IDENTITY_REGISTRY, HCS_TOPIC } from './deployment.mjs';
+import { PAYMENTS_DEFAULT, PAYMENTS_MAX } from './free.mjs';
 
 export const ATTRIBUTION = 'Powered by SwapVM — © Degensoft Ltd 2025. Powered by Aqua — © Degensoft Ltd 2025.';
 
@@ -18,6 +19,8 @@ const HEX = { type: 'string', pattern: '^0x[0-9a-fA-F]*$', description: 'a SwapV
 const ADDRESS = { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' };
 const NULLABLE_STRING = { type: ['string', 'null'] };
 const NULLABLE_INT = { type: ['integer', 'null'] };
+const ACCOUNT = { type: 'string', pattern: '^[0-9]+\\.[0-9]+\\.[0-9]+$', description: 'a Hedera account id' };
+const DIGEST = { type: 'string', pattern: '^0x[0-9a-f]{64}$' };
 
 const schemas = {
     Error: {
@@ -223,6 +226,72 @@ const schemas = {
         },
         additionalProperties: false,
     },
+    Name: {
+        type: 'object',
+        description: 'A name under batas.eth as ENS clients resolve it, with its ENSIP-25 link to the ERC-8004 identity',
+        required: ['name', 'text', 'erc8004'],
+        properties: {
+            name: { type: 'string' },
+            resolver: { type: ['string', 'null'], pattern: ADDRESS.pattern },
+            address: { type: ['string', 'null'], pattern: ADDRESS.pattern },
+            text: { type: 'object', additionalProperties: NULLABLE_STRING, description: 'ENSIP-26 agent records and url, by key; null where the record is unset' },
+            erc8004: {
+                type: 'object',
+                properties: {
+                    agentId: { type: 'string' },
+                    registry: { type: 'string', description: 'CAIP-10 of the identity registry' },
+                    forward: { type: 'boolean', description: 'the name carries the ENSIP-25 record for the agent' },
+                    reverse: { type: 'boolean', description: 'the agent\'s registration names the name' },
+                    linked: { type: 'boolean', description: 'both directions hold' },
+                },
+                additionalProperties: true,
+            },
+        },
+        additionalProperties: true,
+    },
+    Payment: {
+        type: 'object',
+        description: 'One batas.payment record from the HCS topic, and what the ledger says about it. The ledger fields are absent when the record failed before the ledger was asked.',
+        required: ['transaction', 'payer', 'payTo', 'amount', 'asset', 'network', 'resource', 'requestHash', 'responseHash', 'hcsPayer', 'sequenceNumber', 'recordedAt', 'mirror', 'verified'],
+        properties: {
+            transaction: { type: 'string', description: 'Hedera transaction id, shard.realm.num@seconds.nanos' },
+            payer: ACCOUNT,
+            payTo: ACCOUNT,
+            amount: { type: 'string', pattern: '^[1-9][0-9]*$', description: 'tinybar, as the record states it' },
+            asset: { type: 'string' },
+            network: { type: 'string' },
+            resource: { type: 'string', description: 'the URL that was paid for' },
+            requestHash: DIGEST,
+            responseHash: DIGEST,
+            hcsPayer: { ...ACCOUNT, description: 'the account that paid for the HCS message; a record verifies only when it is the payer' },
+            sequenceNumber: { type: 'integer', minimum: 1 },
+            consensusTimestamp: { type: 'string' },
+            recordedAt: { type: 'string', description: 'consensus time of the record, ISO 8601' },
+            mirror: { type: 'string', description: 'the record on the mirror node' },
+            verified: { type: ['boolean', 'null'], description: 'null when the mirror node could not answer, which is not the same as false' },
+            reason: { type: 'string', description: 'why the record did not verify' },
+            result: NULLABLE_STRING,
+            paid: { ...NULLABLE_INT, description: 'tinybar that left the payer' },
+            received: { ...NULLABLE_INT, description: 'tinybar that reached the payee' },
+            settledAt: NULLABLE_STRING,
+            ledger: { ...NULLABLE_STRING, description: 'the transaction on the mirror node' },
+        },
+        additionalProperties: true,
+    },
+    Payments: {
+        type: 'object',
+        required: ['topic', 'searched', 'total', 'verifiedCount', 'limit', 'payments'],
+        properties: {
+            topic: ACCOUNT,
+            searched: { type: 'string', description: '"incomplete" when the walk stopped with more of the topic to read; `reason` then says where' },
+            reason: { type: 'string' },
+            total: { type: 'integer', minimum: 0, description: 'payment records on the topic, or those the given payer published' },
+            verifiedCount: { type: 'integer', minimum: 0, description: 'how many of `total` verified against the ledger' },
+            limit: { type: 'integer', minimum: 1, maximum: PAYMENTS_MAX },
+            payments: { type: 'array', maxItems: PAYMENTS_MAX, items: { $ref: '#/components/schemas/Payment' }, description: 'the newest `limit` records, oldest first' },
+        },
+        additionalProperties: true,
+    },
     PaymentRequired: {
         type: 'object',
         description: 'The x402 payment requirement, also carried base64-encoded in the PAYMENT-REQUIRED header',
@@ -304,13 +373,23 @@ export const ROUTES = [
         responses: { 200: answer('Authority', 'held, lapsed, or revoked'), ...FREE_ERRORS },
     },
     {
-        method: 'get', path: '/v1/agent/name', free: true,
+        method: 'get', path: '/v1/agent/name', free: true, operationId: 'resolve_agent_name',
         summary: 'The agent as ENS resolves it',
         description: 'Resolve agent.batas.eth, or any name under batas.eth, through the ENS UniversalResolver on Sepolia: its resolver, address and ENSIP-26 agent records, followed through record aliases and wildcard resolution. Also checks the ENSIP-25 link to ERC-8004 agent #10123 in both directions, so the name and the identity each vouch for the other or neither does.',
         parameters: [
             { name: 'name', in: 'query', schema: { type: 'string' }, description: 'a name under batas.eth; default agent.batas.eth' },
         ],
-        responses: { 200: { description: 'the resolved records and the ENSIP-25 link', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } }, ...FREE_ERRORS },
+        responses: { 200: answer('Name', 'the resolved records and the ENSIP-25 link'), ...FREE_ERRORS },
+    },
+    {
+        method: 'get', path: '/v1/payments', free: true, operationId: 'check_payment_trail',
+        summary: 'The x402 payment audit trail, checked against the ledger',
+        description: `The batas.payment records on Hedera Consensus Service topic ${HCS_TOPIC}, read from a public mirror node and each checked against the ledger: the HCS message was paid for by the account the record names as payer, no earlier verified record claimed the same transaction, and the transaction succeeded and moved at least the stated HBAR from payer to payee. A record that fails is listed with its reason, never hidden. Returns the newest \`limit\` records, oldest first. Read at most once a minute per payer, so a payment settled in the last minute may not appear yet.`,
+        parameters: [
+            { name: 'payer', in: 'query', schema: { type: 'string', pattern: '^[0-9]+\\.[0-9]+\\.[0-9]+$' }, description: 'only the records this Hedera account published' },
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: PAYMENTS_MAX, default: PAYMENTS_DEFAULT }, description: `how many of the newest records to return; at most ${PAYMENTS_MAX}` },
+        ],
+        responses: { 200: answer('Payments', 'the trail, with totals for all of it'), ...FREE_ERRORS },
     },
     {
         method: 'get', path: '/v1/agent/reputation', free: true,
@@ -458,7 +537,7 @@ export const ROUTES = [
     {
         method: 'post', path: '/mcp', free: true,
         summary: 'MCP over Streamable HTTP',
-        description: 'The same four tools the stdio server offers, as JSON-RPC over HTTP. Stateless: every request is its own session. Send Accept: application/json, text/event-stream. The paid tool needs a funded Hedera key on the server, which the public deployment does not hold; use the HTTP route for that.',
+        description: 'The same tools the stdio server offers, as JSON-RPC over HTTP. Stateless: every request is its own session. Send Accept: application/json, text/event-stream. The paid tool needs a funded Hedera key on the server, which the public deployment does not hold; use the HTTP route for that.',
         body: { type: 'object', description: 'a JSON-RPC 2.0 request', additionalProperties: true },
         responses: {
             200: { description: 'a JSON-RPC 2.0 response; a tool that fails answers here too, with result.isError', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
@@ -475,7 +554,9 @@ export function openapiDocument({ origin, price, network, payTo }) {
     const paths = {};
     for (const r of ROUTES) {
         const op = {
-            operationId: r.skill?.id ?? (r.path.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '') || 'root'),
+            // A row may name its operation without being an Agent Card skill: the MCP tools are
+            // matched to routes by this id, and the card's skill list is pinned by its own suite.
+            operationId: r.operationId ?? r.skill?.id ?? (r.path.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '') || 'root'),
             summary: r.summary,
             ...(r.description ? { description: r.description } : {}),
             tags: [r.free ? 'free' : 'paid'],
