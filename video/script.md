@@ -84,8 +84,8 @@ None of this is hard-coded. The live service resolves the name on every request,
 
 On screen:
 - 1:46 GET /v1/agent/name on the live service [E-Q3, E-F7]
-- 1:53 terminal: `npm run ens:verify` [E-F7]
-- 1:58 Sepolia Etherscan, ERC-8004 registration uri tx 0x224e89f8… [E-F7]
+- 1:52 terminal: `npm run ens:verify` [E-F7]
+- 1:56 Sepolia Etherscan, ERC-8004 registration uri tx 0x224e89f8… [E-F7]
 
 ## 9. A stranger agent pays over x402 (2:00–2:17, 16.7 s)
 

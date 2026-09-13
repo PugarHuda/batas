@@ -88,8 +88,8 @@ export const SCENES = [
         en: "None of this is hard-coded. The live service resolves the name on every request, and checks its link to ERC-8004 agent 10123, both ways. The agent is a namespace with its own identity.",
         id_: 'Semua ini tidak di-hard-code. Layanan live me-resolve nama itu di setiap request, dan memeriksa tautannya ke agen ERC-8004 10123, dua arah. Agen ini adalah namespace dengan identitasnya sendiri.',
         shots: [
-            { clip: 'name', from: 3, dur: 7, rows: ['E-Q3', 'E-F7'] },
-            { term: 'ens-verify', dur: 5, rows: ['E-F7'] },
+            { clip: 'name', from: 3, dur: 6, rows: ['E-Q3', 'E-F7'] },
+            { term: 'ens-verify', dur: 4.5, rows: ['E-F7'] },
             { clip: 'uri', from: 4, dur: 99, rows: ['E-F7'] },
         ],
     },

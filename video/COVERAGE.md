@@ -42,4 +42,4 @@ Every row of the three prize tables in SUBMISSION.md, with the timestamps in `ou
 | E-F4 | Subname with its own PermissionedResolver | 1:31 | Sepolia Etherscan, PermissionedResolver 0x671C506A… |
 | E-F5 | Wildcard resolution off the parent resolver | 1:43 | terminal: `npm run ens:resolve` |
 | E-F6 | Record aliasing at the resolver | 1:40 | Sepolia Etherscan, aliasing multicall 0x9d141f70… |
-| E-F7 | Agent as a namespace: ENSIP-25 link to ERC-8004 | 1:46, 1:53, 1:58 | GET /v1/agent/name on the live service; terminal: `npm run ens:verify`; Sepolia Etherscan, ERC-8004 registration uri tx 0x224e89f8… |
+| E-F7 | Agent as a namespace: ENSIP-25 link to ERC-8004 | 1:46, 1:52, 1:56 | GET /v1/agent/name on the live service; terminal: `npm run ens:verify`; Sepolia Etherscan, ERC-8004 registration uri tx 0x224e89f8… |
