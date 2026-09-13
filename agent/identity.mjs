@@ -18,7 +18,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import 'dotenv/config';
 
-import { AQUA, ROUTER, APP, IDENTITY_REGISTRY, HCS_TOPIC, ENS_REGISTRY, AGENT_ID, SEPOLIA_RPC } from './deployment.mjs';
+import { AQUA, ROUTER, APP, IDENTITY_REGISTRY, HCS_TOPIC, ENS_REGISTRY, ENS_NAME, AGENT_ID, SEPOLIA_RPC } from './deployment.mjs';
 import { resolveAgent } from './erc8004.mjs';
 
 const REGISTRY_ABI = [
@@ -103,6 +103,10 @@ function registrationFile(operator, agentId = AGENT_ID) {
             // neither this repository nor the paid endpoint can still check a grant: the mirror
             // node is public, unauthenticated, and not ours.
             { name: 'mandates', endpoint: MIRROR_TOPIC, version: '1' },
+            // ENSIP-25's registry half. The name carries an `agent-registration` record naming this
+            // agent id; this entry names the name back, and a verifier accepts the link only when
+            // both halves agree. Either one alone is a claim anyone could make.
+            { name: 'ENS', endpoint: ENS_NAME, version: 'v1' },
         ],
         operator,
         registrations: [
@@ -126,6 +130,9 @@ function metadataEntries() {
         // The kill switch, so that revocation is discoverable from the identity rather than only
         // from this repository.
         { metadataKey: 'batas.ens.registry', metadataValue: utf8(ENS_REGISTRY) },
+        // And the name that registry answers to, so the kill switch resolves from the identity
+        // through ENS rather than only by address.
+        { metadataKey: 'batas.ens.name', metadataValue: utf8(ENS_NAME) },
     ].filter((m) => m.metadataValue !== '0x');
 }
 

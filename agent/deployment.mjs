@@ -97,3 +97,17 @@ export const TOKENS = [TOKEN_A, TOKEN_B].sort((a, b) => (BigInt(a) < BigInt(b) ?
  * rather than by anything this service runs. Created by `node agent/hts.mjs --create`.
  */
 export const HTS_TOKEN = env('BATAS_HTS_TOKEN', '0.0.10523367');
+
+/**
+ * Where the mandate registry sits in the ENS hierarchy: `<MANDATE_NAME>.<ENS_PARENT_LABEL>.eth`.
+ *
+ * ENS_REGISTRY above is batas.eth's subregistry, so the label the settlement reads is also a name ENS
+ * clients resolve. The resolver is batas.eth's PermissionedResolver, deployed through ENS's
+ * VerifiableFactory. ETH_REGISTRY and ETH_REGISTRAR are the ENSv2 beta's own, checked for code before
+ * use because the beta has moved before.
+ */
+export const ENS_PARENT_LABEL = env('BATAS_ENS_PARENT_LABEL', 'batas');
+export const ENS_NAME = `${MANDATE_NAME}.${ENS_PARENT_LABEL}.eth`;
+export const ENS_RESOLVER = getAddress(env('BATAS_ENS_RESOLVER', '0x671C506Aaa2a123bE802Fe51975Ca9515AEC2516'));
+export const ETH_REGISTRY = getAddress('0xbdc85dd5b15d7ecb354cd7cb6f2c50b4f2c4f0e2');
+export const ETH_REGISTRAR = getAddress('0xa88553f454b77203b0d036a05c894d555eaaa2cc');

@@ -24,7 +24,14 @@ import 'dotenv/config';
 
 import { decodeProgram, readMandate } from './swapvm.mjs';
 import { programFromStrategy } from './position.mjs';
-import { AQUA, ROUTER, OWNER, ENS_REGISTRY, SEPOLIA_RPC } from './deployment.mjs';
+import { normalize } from 'viem/ens';
+import { AQUA, ROUTER, OWNER, ENS_REGISTRY, SEPOLIA_RPC, ENS_NAME } from './deployment.mjs';
+import { agentRegistrationKey } from './ens-hierarchy.mjs';
+
+/** What `resolveName` asks for by default: the ENSIP-26 agent records and the ENSIP-25 link. */
+export const RESOLVED_TEXT_KEYS = [
+    'agent-context', 'agent-endpoint[web]', 'agent-endpoint[mcp]', 'agent-endpoint[x402]', 'url', agentRegistrationKey(10123),
+];
 
 // ENSv2 beta on Sepolia. Checked for code before use; these moved once already during the beta.
 const VERIFIABLE_FACTORY = getAddress('0x10Dc6333cDfe1FCEF624c6E0A8221b91804cD7ef');
@@ -296,6 +303,26 @@ export async function mandateNameStatus(pub, registry, label, holder, { grantedU
     };
 }
 
+/**
+ * The records ENS clients read for a name, resolved the way they resolve it.
+ *
+ * Through the UniversalResolver viem ships for Sepolia, which walks root -> eth -> batas -> the
+ * mandate registry and asks the deepest resolver it finds. Nothing is read off our resolver
+ * directly: a record that only answers when you already know which contract to ask is not resolvable,
+ * and the alias and wildcard answers exist only on the UniversalResolver path. `strict` makes a
+ * failed read throw rather than come back as an unset record.
+ */
+export async function resolveName(pub, name = ENS_NAME, keys = RESOLVED_TEXT_KEYS) {
+    const normalized = normalize(name);
+    const [resolver, address, ...values] = await Promise.all([
+        pub.getEnsResolver({ name: normalized }),
+        pub.getEnsAddress({ name: normalized, strict: true }),
+        ...keys.map((key) => pub.getEnsText({ name: normalized, key, strict: true })),
+    ]);
+    const text = Object.fromEntries(keys.map((key, i) => [key, values[i] || null]));
+    return { name: normalized, resolver, address: address ?? null, text };
+}
+
 async function deploy() {
     const { account, pub, wallet } = clients();
     for (const [name, addr] of [['factory', VERIFIABLE_FACTORY], ['implementation', USER_REGISTRY_IMPL]]) {
@@ -473,8 +500,13 @@ async function main() {
     if (at('--grant') !== -1) return grant(argv[at('--grant') + 1] || 'agent');
     if (at('--read') !== -1) return read(argv[at('--read') + 1] || 'agent');
     if (at('--revoke') !== -1) return revoke(argv[at('--revoke') + 1] || 'agent');
+    if (at('--resolve') !== -1) {
+        const pub = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) });
+        const name = argv[at('--resolve') + 1];
+        return console.log(JSON.stringify(await resolveName(pub, name && !name.startsWith('--') ? name : ENS_NAME), null, 2));
+    }
 
-    console.log('usage: --deploy | --grant <label> | --read <label> | --revoke <label>');
+    console.log('usage: --deploy | --grant <label> | --read <label> | --revoke <label> | --resolve [name]');
 }
 
 if (import.meta.filename === process.argv[1]) {

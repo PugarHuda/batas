@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 import {
     ROLE, admin, ROLE_CAN_TRANSFER_ADMIN, holderRoles, grantorRootRoles, isSoulbound, labelId,
-    classifyName, mandateNameStatus, ZERO, STATUS, decodeRoles,
+    classifyName, mandateNameStatus, ZERO, STATUS, decodeRoles, resolveName,
 } from './ens.mjs';
 
 const NOW = 1_800_000_000;
@@ -268,6 +268,23 @@ test('an address with no registry behind it is an error, never "no mandate name"
     // not decode into expiry 0 and be reported as a name that was never granted.
     const { pub, OWNER } = await live();
     await assert.rejects(mandateNameStatus(pub, OWNER, 'agent', OWNER), /returned no data/);
+});
+
+test('resolveName reads the live mandate name through the UniversalResolver', async () => {
+    const { pub, OWNER } = await live();
+    const { ENS_NAME, ENS_RESOLVER } = await import('./deployment.mjs');
+    const r = await resolveName(pub, ENS_NAME);
+    assert.equal(r.name, 'agent.batas.eth');
+    assert.equal(r.resolver, ENS_RESOLVER);
+    assert.equal(r.address, OWNER);
+    assert.match(r.text['agent-endpoint[mcp]'], /^https:\/\/.+\/mcp$/);
+    assert.doesNotThrow(() => JSON.stringify(r));
+});
+
+test('resolveName over a dead RPC is an error, never a name with no records', async () => {
+    const { sepolia, createPublicClient, http } = await live();
+    const dead = createPublicClient({ chain: sepolia, transport: http('http://127.0.0.1:1', { retryCount: 0 }) });
+    await assert.rejects(resolveName(dead, 'agent.batas.eth'));
 });
 
 test('a name held by somebody else does not authorise this agent', () => {
