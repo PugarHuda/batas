@@ -12,10 +12,68 @@ import 'dotenv/config';
 
 import { ROUTER, OWNER, AGENT_ID } from './deployment.mjs';
 import { latestProgramOnChain, programFromStrategy } from './position.mjs';
+import { MIRROR, mirrorGet, consensusToISO } from './hcs.mjs';
 
 // Finding the position moved to position.mjs so the free path stops loading the payment client.
 // Still exported from here: the walkthrough, the counterparty and the kill switch import them.
 export { latestProgramOnChain, programFromStrategy };
+
+/**
+ * Read a settlement back from the ledger instead of from the service that was paid.
+ *
+ * The `PAYMENT-RESPONSE` header is the service's account of what the facilitator did. It names a
+ * transaction, and until now the client printed that name and moved on — so an over-charge, a
+ * failed transfer or a made-up id read exactly like a payment. The mirror node is nobody's party
+ * to the trade: it says whether the transaction succeeded, how much HBAR actually left `payer`,
+ * and how much reached `payTo` when the caller knows who that should be.
+ *
+ * `confirmed` is true, false, or null. Null is "could not check": the mirror has not indexed the
+ * transaction yet after a few seconds of asking, or would not answer. A settlement lands on the
+ * mirror a few seconds after consensus, which is why a 404 is asked again rather than believed.
+ */
+export async function confirmSettlement(transaction, {
+    payer, payTo, maxAmount, fetchImpl = fetch, attempts = 6, delayMs = 1500,
+} = {}) {
+    // The SDK prints `0.0.1@seconds.nanos`; the mirror's path wants `0.0.1-seconds-nanos`.
+    const parts = /^(\d+\.\d+\.\d+)[@-](\d+)[.-](\d+)$/.exec(String(transaction ?? ''));
+    if (!parts) return { confirmed: false, reason: `not a Hedera transaction id: ${transaction}` };
+    const id = `${parts[1]}-${parts[2]}-${parts[3]}`;
+    const url = `${MIRROR}/transactions/${id}`;
+
+    let res;
+    for (let i = 0; i < attempts; i++) {
+        if (i > 0) await new Promise((r) => setTimeout(r, delayMs));
+        res = await mirrorGet(url, { fetchImpl });
+        if (res.status !== 404) break;
+    }
+    if (res.status === 404) return { confirmed: null, transaction: id, reason: 'the mirror node has not seen this transaction' };
+    if (!res.ok) return { confirmed: null, transaction: id, reason: `mirror node ${res.status}` };
+
+    // A transaction id can name child records too; the transfer is the top-level one.
+    const rows = (await res.json()).transactions ?? [];
+    const tx = rows.find((t) => !t.parent_consensus_timestamp && !(t.nonce > 0)) ?? rows[0];
+    if (!tx) return { confirmed: null, transaction: id, reason: 'the mirror node returned no record for this id' };
+
+    const net = (account) => (tx.transfers ?? []).filter((t) => t.account === account).reduce((s, t) => s + Number(t.amount), 0);
+    const paid = payer ? -net(payer) : null;
+    const received = payTo ? net(payTo) : null;
+    const facts = {
+        transaction: id,
+        result: tx.result,
+        consensusTimestamp: tx.consensus_timestamp,
+        settledAt: consensusToISO(tx.consensus_timestamp),
+        paid,
+        received,
+        mirror: url,
+    };
+    if (tx.result !== 'SUCCESS') return { confirmed: false, ...facts, reason: `the transaction did not succeed: ${tx.result}` };
+    if (payer && !(paid > 0)) return { confirmed: false, ...facts, reason: `no HBAR left ${payer} in this transaction` };
+    if (payer && maxAmount !== undefined && paid > Number(maxAmount)) {
+        return { confirmed: false, ...facts, reason: `${paid} tinybar left ${payer}, above the ${maxAmount} cap` };
+    }
+    if (payTo && !(received > 0)) return { confirmed: false, ...facts, reason: `no HBAR reached ${payTo} in this transaction` };
+    return { confirmed: true, ...facts };
+}
 
 // The deployed service, not a local one. counterparty.mjs already defaulted here, and the two
 // disagreeing meant `--paid` walked up to a port nobody was listening on.
@@ -91,19 +149,33 @@ export async function payForExplanation(program, {
     }
 
     const settled = res.headers.get('PAYMENT-RESPONSE') || res.headers.get('X-PAYMENT-RESPONSE');
+    let onLedger = null;
     if (settled) {
+        let receipt = null;
         try {
-            const receipt = decodePaymentResponseHeader(settled);
+            receipt = decodePaymentResponseHeader(settled);
             log(`settled  ${receipt.transaction ?? JSON.stringify(receipt)}`);
         } catch {
             log(`settled  ${settled}`);
+        }
+        // The header is the paid party's word. Check it where neither party keeps the books, and
+        // against the cap this client set, not the price the service quoted.
+        if (receipt?.transaction) {
+            try {
+                onLedger = await confirmSettlement(receipt.transaction, { payer: accountId, maxAmount: MAX_PER_CALL });
+            } catch (e) {
+                onLedger = { confirmed: null, reason: String(e.message || e) };
+            }
+            log(onLedger.confirmed
+                ? `ledger   ${onLedger.paid / 1e8} HBAR left ${accountId} at ${onLedger.settledAt}  ${onLedger.mirror}`
+                : `ledger   ${onLedger.confirmed === false ? 'NOT confirmed' : 'not checked'} — ${onLedger.reason}`);
         }
     }
 
     if (!res.ok) {
         throw new Error(`service returned ${res.status}: ${await res.text()}`);
     }
-    return { body: await res.json(), settlement: settled ?? null };
+    return { body: await res.json(), settlement: settled ?? null, onLedger };
 }
 
 async function main() {
