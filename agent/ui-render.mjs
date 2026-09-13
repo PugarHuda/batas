@@ -67,15 +67,35 @@ export function renderMandate(a) {
     const guarded = a && a.guarded
         ? '<span class="tag yes">guarded</span>'
         : '<span class="tag no">not guarded</span>';
+    // Declared in here rather than beside esc: the page carries these functions by `.toString()`,
+    // so anything renderMandate calls must be one of the injected functions or live inside it.
+    const cap = (v, unit) => (v == null
+        ? '<span class="no">no cap — one trade may take the whole reserve</span>'
+        : num(v) + (unit ? ' <span class="muted">' + unit + '</span>' : ''));
+    const floor = (v, unit) => (v == null
+        ? '<span class="no">no floor — any rate the curve produces</span>'
+        : num(v) + ' <span class="muted">' + unit + '</span>');
+    // A band's top-level cap and floor are null, because a cap in A and a cap in B are not one
+    // number. Rendered as they stand, they would read "no cap" on a position capped both ways, so
+    // a band shows each side's terms, in that side's own tokens, instead.
+    const sides = Array.isArray(m.sides) && m.sides.length ? m.sides : null;
+    const terms = sides
+        ? sides.flatMap((s, i) => {
+            const inA = s.direction === 'aToB';
+            const [tin, tout] = inA ? ['A', 'B'] : ['B', 'A'];
+            const dir = ' <span class="muted">side ' + (i + 1) + ', ' + esc(s.direction) + ': ' + tin + ' in, ' + tout + ' out</span>';
+            return [
+                ['cap', cap(s.maxAmountInFormatted, tin) + dir, s.maxAmountInFormatted != null],
+                ['floor', floor(s.minRateFormatted, tout + ' per ' + tin) + dir, s.minRateFormatted != null],
+            ];
+        })
+        : [
+            ['cap', cap(m.maxAmountInFormatted, null), m.maxAmountInFormatted != null],
+            ['floor', floor(m.minRateFormatted, 'B per A'), m.minRateFormatted != null],
+        ];
     const rows = [
         ['guard', guarded + ' <span class="muted">PolicyEnvelope outermost, so later instructions run inside it</span>', false],
-        ['cap', m.maxAmountInFormatted == null
-            ? '<span class="no">no cap — one trade may take the whole reserve</span>' : num(m.maxAmountInFormatted),
-        m.maxAmountInFormatted != null],
-        ['floor', m.minRateFormatted == null
-            ? '<span class="no">no floor — any rate the curve produces</span>'
-            : num(m.minRateFormatted) + ' <span class="muted">B per A</span>',
-        m.minRateFormatted != null],
+        ...terms,
         ['fee', m.feePercent == null ? '—' : esc(m.feePercent) + '%', true],
         ['curve', m.curve == null ? '—' : esc(m.curve), false],
         ['expires', m.expiryISO == null
