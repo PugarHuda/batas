@@ -18,7 +18,11 @@ test('the free description says what is sold and what it costs', async ({ reques
     const body = await res.json();
     expect(body.endpoint).toBe('POST /v1/mandate/explain');
     expect(body.network).toBe('hedera:testnet');
-    expect(body.price).toBe('0.001 HBAR');
+    // Metered: no single number is the price, so the description gives the range and the formula.
+    expect(body.price).toMatch(/^metered, 0\.00094 to 0\.0037 HBAR/);
+    expect(body.metering.unit).toBe('tinybar');
+    expect(body.metering.rates.perInstruction).toBeGreaterThan(0);
+    expect(body.metering.formula).toMatch(/per instruction/);
     // The Hedera track requires Blocky402 specifically; the official PoC points testnet at
     // x402.org, so this assertion is guarding against the easiest mistake in the integration.
     expect(body.facilitator).toContain('blocky402.com');
@@ -47,7 +51,7 @@ test('an unpaid request is refused with a payment requirement, not an error', as
     const [accepts] = requirement.accepts;
     expect(accepts.scheme).toBe('exact');
     expect(accepts.network).toBe('hedera:testnet');
-    expect(accepts.amount).toBe('100000'); // 0.001 HBAR in tinybars
+    expect(accepts.amount).toBe('100000'); // the live mandate alone, metered: 0.001 HBAR in tinybars
     expect(accepts.asset).toBe('0.0.0'); // HBAR, so no HTS association is needed to pay
     expect(accepts.payTo).toMatch(/^0\.0\.\d+$/);
     // Blocky402's testnet fee payer. Settling against x402.org would carry a different one.
@@ -122,13 +126,42 @@ test('the discovery manifest is free, well formed, and outside the paywall', asy
     expect(r.method).toBe('POST');
     expect(r.url.endsWith('/v1/mandate/explain'), 'must name the route the paywall actually covers').toBe(true);
 
-    // And the advertised price must be the one the 402 will demand, or the manifest is bait.
+    // And the advertised price must be the one the 402 will demand, or the manifest is bait. The price
+    // is metered, so the manifest states a ceiling and the formula; the 402 for the live mandate must
+    // be what that formula gives for its six instructions, and never above the ceiling.
     const unpaid = await request.post('/v1/mandate/explain', { data: { program: LIVE_PROGRAM } });
     const demanded = decodeRequirement(unpaid.headers()['payment-required']).accepts[0];
-    expect(r.accepts[0].amount).toBe(demanded.amount);
+    const { rates } = r.metered;
+    expect(Number(demanded.amount)).toBe(rates.decode + 6 * rates.perInstruction + rates.publication + rates.authority);
+    expect(r.accepts[0].amount).toBe(r.metered.max);
+    expect(Number(demanded.amount)).toBeLessThanOrEqual(Number(r.accepts[0].amount));
     expect(r.accepts[0].asset).toBe(demanded.asset);
     expect(r.accepts[0].network).toBe(demanded.network);
     expect(r.accepts[0].payTo).toBe(demanded.payTo);
+});
+
+test('the 402 is metered: a heavier body is quoted a larger amount than a light one', async ({ request }) => {
+    // Not a tier table. The same route, priced per request by what the body asks the service to do:
+    // more instructions to decode, and an operator identity to resolve on chain.
+    const quote = async (data) => {
+        const res = await request.post('/v1/mandate/explain', { data });
+        expect(res.status()).toBe(402);
+        return decodeRequirement(res.headers()['payment-required']).accepts[0];
+    };
+    const { rates } = (await (await request.get('/.well-known/x402')).json()).resources[0].metered;
+
+    const light = await quote({ program: LIVE_PROGRAM });
+    const withOperator = await quote({ program: LIVE_PROGRAM, agentId: '1', maker: '0x0000000000000000000000000000000000000001' });
+    const longer = await quote({ program: `0x${'5000'.repeat(40)}`, agentId: '1' });
+
+    expect(Number(withOperator.amount)).toBe(Number(light.amount) + rates.operator);
+    expect(Number(longer.amount)).toBe(Number(light.amount) + 34 * rates.perInstruction + rates.operator);
+    expect(Number(longer.amount)).toBeGreaterThan(Number(withOperator.amount));
+    // Everything else about the requirement is unchanged: only the amount is metered.
+    for (const q of [withOperator, longer]) {
+        expect({ ...q, amount: light.amount }).toEqual(light);
+        expect(Number(q.amount)).toBeLessThanOrEqual(1_000_000); // the paying client's default cap
+    }
 });
 
 test('the client refuses to pay more than its cap, before creating a payment', async () => {
@@ -143,7 +176,9 @@ test('the client refuses to pay more than its cap, before creating a payment', a
     process.env.HEDERA_AGENT_ID = '0.0.12345';
     process.env.HEDERA_AGENT_KEY = `0x${randomBytes(32).toString('hex')}`;
     process.env.X402_MAX_TINYBAR = '1'; // one tinybar against a price of 100,000
-    process.env.BATAS_SERVICE_URL = 'http://127.0.0.1:4021';
+    // The server this run started, on the port playwright.config.mjs gave it. A fixed 4021 sent the
+    // client to whatever else held that port, or to nothing, in a parallel run.
+    process.env.BATAS_SERVICE_URL = `http://127.0.0.1:${process.env.PORT || 4021}`;
     try {
         const { payForExplanation } = await import('../agent/inspect.mjs');
         await expect(payForExplanation(LIVE_PROGRAM)).rejects.toThrow(/spendControls|maxAmountPerPayment/i);
@@ -282,7 +317,7 @@ test('the OpenAPI document names every route, and says which one costs money', a
         expect(doc.paths[path], `${path} is missing from the document`).toBeTruthy();
     }
     const paid = doc.paths['/v1/mandate/explain'].post;
-    expect(paid['x-cost']).toContain('0.001 HBAR');
+    expect(paid['x-cost']).toMatch(/^metered, .* HBAR per call/);
     expect(paid.responses['402'], 'the 402 is the interface; it has to be documented').toBeTruthy();
     expect(paid.responses['402'].headers['PAYMENT-REQUIRED']).toBeTruthy();
     expect(doc.paths['/v1/mandate/decode'].post['x-cost']).toBe('free');

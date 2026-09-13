@@ -190,10 +190,38 @@ const schemas = {
                     authority: { $ref: '#/components/schemas/Authority' },
                     reputation: { $ref: '#/components/schemas/Reputation' },
                     attestation: { $ref: '#/components/schemas/Attestation' },
+                    metering: { $ref: '#/components/schemas/Metering' },
                 },
                 additionalProperties: true,
             },
         ],
+    },
+    Metering: {
+        type: 'object',
+        description: 'The bill for this call: each unit of work the body asked for and what it cost. `total` is the amount the 402 demanded and the payment settled.',
+        required: ['unit', 'asset', 'components', 'total', 'hbar'],
+        properties: {
+            unit: { const: 'tinybar' },
+            asset: { const: '0.0.0' },
+            components: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    required: ['component', 'tinybar'],
+                    properties: {
+                        component: { enum: ['decode', 'instructions', 'publication', 'authority', 'operator'] },
+                        tinybar: { type: 'integer', minimum: 0 },
+                        count: { type: 'integer', minimum: 0, description: 'instructions decoded' },
+                        billed: { type: 'integer', minimum: 0, description: 'instructions charged for, at most the listing cap' },
+                        rate: { type: 'integer', minimum: 0, description: 'tinybar per billed instruction' },
+                    },
+                    additionalProperties: false,
+                },
+            },
+            total: { type: 'string', pattern: '^[0-9]+$', description: 'the sum of the components, in tinybar' },
+            hbar: { type: 'number' },
+        },
+        additionalProperties: false,
     },
     PaymentRequired: {
         type: 'object',
