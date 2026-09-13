@@ -41,6 +41,16 @@ async function explorer(page, url, extra, marks) {
     await wait(page, 3000);
 }
 
+// A raw JSON response is one unbroken line of 10px text, unreadable once framed in a video. Chromium's
+// own Pretty-print toggle indents it and a page zoom enlarges it; the response itself is untouched.
+async function readableJson(page, scrollTo) {
+    const toggle = page.getByLabel(/pretty-print/i);
+    if (await toggle.isVisible().catch(() => false)) await toggle.check();
+    await page.evaluate(() => { document.body.style.zoom = '1.7'; });
+    await wait(page, 2500);
+    await glide(page, scrollTo, 3500);
+}
+
 // GitHub renders a long README slowly; wait for the text itself, then glide to it.
 async function toReadmeText(page, marks, needle, holdMs) {
     await page.goto('https://github.com/PugarHuda/batas', { waitUntil: 'load', timeout: 90000 });
@@ -106,10 +116,10 @@ const clips = {
     aqua: (p) => explorer(p, `${ETHERSCAN}/address/0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`),
     token: (p, m) => explorer(p, 'https://hashscan.io/testnet/token/0.0.10523367', (pg) => wait(pg, 4000).then(() => glide(pg, 600, 3000)), m),
     schedule: (p, m) => explorer(p, 'https://hashscan.io/testnet/schedule/0.0.10523344', (pg) => wait(pg, 3000).then(() => glide(pg, 400, 2500)), m),
-    mirror: (p) => explorer(p, 'https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages?order=desc&limit=3', (pg) => glide(pg, 600, 3000)),
-    name: (p) => explorer(p, `${SITE}/v1/agent/name`, (pg) => glide(pg, 500, 3000)),
-    x402: (p) => explorer(p, `${SITE}/.well-known/x402`, (pg) => glide(pg, 500, 3000)),
-    card: (p) => explorer(p, `${SITE}/.well-known/agent-card.json`, (pg) => glide(pg, 600, 3000)),
+    mirror: (p) => explorer(p, 'https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10394165/messages?order=desc&limit=3', (pg) => readableJson(pg, 700)),
+    name: (p) => explorer(p, `${SITE}/v1/agent/name`, (pg) => readableJson(pg, 500)),
+    x402: (p) => explorer(p, `${SITE}/.well-known/x402`, (pg) => readableJson(pg, 700)),
+    card: (p) => explorer(p, `${SITE}/.well-known/agent-card.json`, (pg) => readableJson(pg, 700)),
     // The kill switch's recorded run, as the README publishes it, rather than a fresh revoke of the
     // live name that other people are relying on.
     killswitch: (page, marks) => toReadmeText(page, marks, 'quote 1 A, name revoked', 16000),

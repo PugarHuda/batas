@@ -14,6 +14,8 @@ export const LEAD = 0.5;
 export const TAIL = 0.6;
 
 const PLATE = { x: 330, y: 60, w: 1240, h: 640 };
+// A JSON response fills only the top of the page; framing that band keeps its text near full size.
+const JSON_TOP = { x: 0, y: 0, w: 1920, h: 760 };
 
 export const SCENES = [
     {
@@ -88,7 +90,7 @@ export const SCENES = [
         en: "None of this is hard-coded. The live service resolves the name on every request, and checks its link to ERC-8004 agent 10123, both ways. The agent is a namespace with its own identity.",
         id_: 'Semua ini tidak di-hard-code. Layanan live me-resolve nama itu di setiap request, dan memeriksa tautannya ke agen ERC-8004 10123, dua arah. Agen ini adalah namespace dengan identitasnya sendiri.',
         shots: [
-            { clip: 'name', from: 3, dur: 6, rows: ['E-Q3', 'E-F7'] },
+            { clip: 'name', from: 18.7, zoom: JSON_TOP, dur: 6, rows: ['E-Q3', 'E-F7'] },
             { term: 'ens-verify', dur: 4.5, rows: ['E-F7'] },
             { clip: 'uri', from: 4, dur: 99, rows: ['E-F7'] },
         ],
@@ -99,7 +101,7 @@ export const SCENES = [
         en: "Now Hedera. This is a different agent, with its own wallet. It finds the service in the ERC-8004 registry and checks the x402 manifest agrees. The checks are free, but in paranoid mode it pays for the full answer.",
         id_: 'Sekarang Hedera. Ini agen yang berbeda, dengan dompetnya sendiri. Ia menemukan layanan di registry ERC-8004 dan memeriksa manifest x402 cocok. Pemeriksaannya gratis, tapi dalam mode paranoid ia membayar untuk jawaban lengkap.',
         shots: [
-            { clip: 'x402', from: 3, dur: 6, rows: ['H-E4', 'H-Q2'] },
+            { clip: 'x402', from: 17.2, zoom: JSON_TOP, dur: 6, rows: ['H-E4', 'H-Q2'] },
             { term: 'counterparty-paranoid', env: 'BATAS_SERVICE_URL=',dur: 99, rows: ['H-Q1', 'H-E4'] },
         ],
     },
@@ -110,7 +112,7 @@ export const SCENES = [
         id_: 'Pembayaran itu diselesaikan di Hedera testnet lewat Blocky402. Harganya dihitung dari request, jadi panggilan ini seharga 0.0012 HBAR. Dan identitas ERC-8004 operatornya valid.',
         shots: [
             { term: 'counterparty-paranoid', env: 'BATAS_SERVICE_URL=', hold: true, pin: 38, dur: 8, rows: ['H-Q1', 'H-E2', 'H-E1'] },
-            { clip: 'card', from: 3, dur: 99, rows: ['H-E1'] },
+            { clip: 'card', from: 12.5, zoom: JSON_TOP, dur: 99, rows: ['H-E1'] },
         ],
     },
     {
@@ -137,7 +139,7 @@ export const SCENES = [
         id_: 'Setelah setiap pembayaran, pembayar menulis catatan ke topik HCS, dengan hash dari request dan response. Pemeriksa saya memverifikasi setiap catatan terhadap ledger.',
         shots: [
             { term: 'payments-after', dur: 7, rows: ['H-E6'] },
-            { clip: 'mirror', from: 3, dur: 99, rows: ['H-E6'] },
+            { clip: 'mirror', from: 15.5, zoom: JSON_TOP, dur: 99, rows: ['H-E6'] },
         ],
     },
     {
