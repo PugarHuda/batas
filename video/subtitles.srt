@@ -1,0 +1,242 @@
+1
+00:00:00,500 --> 00:00:03,912
+Hi, this is Batas.
+It's an Indonesian word.
+
+2
+00:00:03,912 --> 00:00:07,826
+It means a mandate: authority with limits
+you can't cross.
+
+3
+00:00:07,826 --> 00:00:13,200
+If an AI agent runs your liquidity, what
+actually stops it?
+
+4
+00:00:13,200 --> 00:00:18,764
+On 1inch Aqua, your tokens stay in your
+wallet, and the app pulls them at
+
+5
+00:00:18,764 --> 00:00:23,330
+settlement. Batas puts the limits inside
+that swap. Watch the probe.
+
+6
+00:00:23,330 --> 00:00:27,539
+Inside the envelope, it settles.
+Under the floor, it's refused.
+
+7
+00:00:27,539 --> 00:00:31,100
+Past the size cap, refused again.
+
+8
+00:00:31,100 --> 00:00:35,815
+This isn't a simulation.
+Here's the ship and a swap on Sepolia,
+
+9
+00:00:35,815 --> 00:00:39,654
+real token transfers.
+Aqua is the official contract, untouched.
+
+10
+00:00:39,654 --> 00:00:46,200
+What I added is a router with two new
+SwapVM instructions, 0x21 and 0x22.
+
+11
+00:00:46,200 --> 00:00:51,879
+It's tested. Forge runs seventy-two tests,
+all passing. The harder one is a banded
+
+12
+00:00:51,879 --> 00:00:58,182
+position. This test ships it to the real
+Aqua on a Sepolia fork, trades both ways,
+
+13
+00:00:58,182 --> 00:01:01,700
+and gets refused past every limit.
+
+14
+00:01:01,700 --> 00:01:06,307
+So who's allowed to trade?
+An ENS name, agent.batas.eth, on ENSv2.
+
+15
+00:01:06,307 --> 00:01:09,870
+I registered batas.eth, and its
+subregistry is my own.
+
+16
+00:01:09,870 --> 00:01:16,800
+The name expires with the mandate, I can
+revoke it, and nobody can transfer it.
+
+17
+00:01:16,800 --> 00:01:20,431
+Here's the key part.
+The settlement reads that registry.
+
+18
+00:01:20,431 --> 00:01:26,199
+Revoke the name and every swap is refused,
+for every caller, not just my agent.
+
+19
+00:01:26,199 --> 00:01:31,500
+This is the recorded run: quote, revoke,
+refused, grant back.
+
+20
+00:01:31,500 --> 00:01:36,511
+The name has its own permissioned
+resolver. A second account may write one
+
+21
+00:01:36,511 --> 00:01:39,900
+text record, nothing more.
+mandate.batas.eth is registered nowhere,
+
+22
+00:01:39,900 --> 00:01:44,911
+but it answers with the agent's records.
+And other labels resolve through the
+
+23
+00:01:44,911 --> 00:01:46,600
+parent.
+
+24
+00:01:46,600 --> 00:01:51,298
+None of this is hard-coded.
+The live service resolves the name on
+
+25
+00:01:51,298 --> 00:01:56,220
+every request, and checks its link to
+ERC-8004 agent 10123, both ways.
+
+26
+00:01:56,220 --> 00:02:00,900
+The agent is a namespace with its own
+identity.
+
+27
+00:02:00,900 --> 00:02:05,543
+Now Hedera. This is a different agent,
+with its own wallet.
+
+28
+00:02:05,543 --> 00:02:10,371
+It finds the service in the ERC-8004
+registry and checks the x402 manifest
+
+29
+00:02:10,371 --> 00:02:17,600
+agrees. The checks are free, but in
+paranoid mode it pays for the full answer.
+
+30
+00:02:17,600 --> 00:02:20,800
+That payment settled on Hedera testnet
+through Blocky402.
+
+31
+00:02:20,800 --> 00:02:25,972
+The price is metered from the request, so
+this call cost 0.0012 HBAR.
+
+32
+00:02:25,972 --> 00:02:29,900
+And the operator's ERC-8004 identity
+checks out.
+
+33
+00:02:29,900 --> 00:02:34,187
+Agents can negotiate, too.
+My client asks for fourteen tokens.
+
+34
+00:02:34,187 --> 00:02:39,779
+The Batas agent says that's over the cap
+and counters with the largest size that
+
+35
+00:02:39,779 --> 00:02:44,104
+clears the floor.
+The client accepts and pays in the same
+
+36
+00:02:44,104 --> 00:02:45,800
+task.
+
+37
+00:02:45,800 --> 00:02:51,070
+It doesn't have to be HBAR.
+Here it pays with our HTS token.
+
+38
+00:02:51,070 --> 00:02:57,700
+The token has a fixed custom fee, and it's
+charged right in the settlement.
+
+39
+00:02:57,700 --> 00:03:03,925
+After every payment, the payer writes a
+record to an HCS topic, with hashes of the
+
+40
+00:03:03,925 --> 00:03:07,525
+request and response.
+My checker verifies each record against
+
+41
+00:03:07,525 --> 00:03:09,600
+the ledger.
+
+42
+00:03:09,600 --> 00:03:13,523
+Payments can repeat.
+This order paid three times by scheduled
+
+43
+00:03:13,523 --> 00:03:18,668
+transactions, and another was cancelled.
+Other agents can also find Batas in the
+
+44
+00:03:18,668 --> 00:03:21,100
+Hashgraph Online directory.
+
+45
+00:03:21,100 --> 00:03:26,632
+There's a Hedera Agent Kit adapter in the
+package. The README covers setup, the
+
+46
+00:03:26,632 --> 00:03:31,792
+architecture, and how the payment flow
+works. And it's a hundred and forty-two
+
+47
+00:03:31,792 --> 00:03:34,600
+commits over seven days.
+
+48
+00:03:34,600 --> 00:03:39,036
+Last, the live app.
+Every number here is read from Sepolia,
+
+49
+00:03:39,036 --> 00:03:44,455
+Hedera and ENS when the page loads.
+The agent trades, the settlement holds the
+
+50
+00:03:44,455 --> 00:03:49,400
+limits, and I can take the authority back.
+Thanks for watching.
