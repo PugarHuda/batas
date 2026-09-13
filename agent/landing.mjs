@@ -54,14 +54,14 @@ ${BASE}
     border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
     padding: .75rem 0; margin: 1.2rem 0 1.5rem; max-width: 36rem;
   }
-  .meaning dt { font: 700 1.55rem/1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
+  .meaning dt { font: 700 clamp(2rem, 3.4vw, 2.8rem)/1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
   .meaning dd { margin: 0; color: var(--ink-2); font-size: .92rem; }
   .meaning .say { font-family: var(--figure); color: var(--dim); font-size: .8rem; }
   .cta { display: flex; flex-wrap: wrap; gap: .7rem; }
 
   /* The envelope plate. A chart panel, not a card: hairline frame, tick marks on the edges. */
   .plate {
-    position: relative; background: var(--paper); border: 1px solid var(--edge); border-radius: 4px;
+    margin: 0; position: relative; background: var(--paper); border: 1px solid var(--edge); border-radius: 4px;
     box-shadow: var(--shadow); padding: 1.1rem 1.2rem 1rem;
   }
   .plate-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: .25rem 1rem; margin-bottom: .5rem; }
@@ -81,7 +81,9 @@ ${BASE}
   .env .lbl-floor { fill: var(--never); font-weight: 700; }
   .env .lbl-cap { fill: var(--boundary); font-weight: 700; }
   .env .lbl-curve { fill: var(--structure); }
-  .env .marker { fill: var(--paper); stroke: var(--ink); stroke-width: 2; transition: cx .12s ease-out, cy .12s ease-out; }
+  .env .marker { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
+  .env .trade { fill: var(--inside); stroke: var(--paper); stroke-width: 2; }
+  .env .lbl-trade { fill: var(--inside); font-weight: 700; }
   .env .guide { stroke: var(--ink-2); stroke-width: 1; stroke-dasharray: 2 3; }
 
   .probe { margin-top: .6rem; padding-top: .8rem; border-top: 1px solid var(--rule); display: grid; gap: .55rem; }
@@ -112,10 +114,9 @@ ${BASE}
     position: relative; height: 2.6rem; border: 1px solid var(--edge); border-radius: 2px; overflow: hidden;
     background: repeating-linear-gradient(135deg, var(--sunk) 0 6px, color-mix(in oklab, var(--never) 22%, var(--sunk)) 6px 8px);
   }
-  .tape-fill { position: absolute; inset: 0 auto 0 0; background: var(--inside); transform-origin: left; animation: fill 1.2s cubic-bezier(.16,1,.3,1) both; }
+  .tape-fill { position: absolute; inset: 0 auto 0 0; background: var(--inside); }
   .tape-fill.lost { background: var(--never); }
   .tape-scale { display: flex; justify-content: space-between; font-family: var(--figure); font-size: .7rem; color: var(--dim); margin-top: .25rem; }
-  @keyframes fill { from { transform: scaleX(0); } }
   .tape-foot { font-size: .84rem; color: var(--ink-2); margin-top: .35rem; }
 
   /* The operating limitations placard: the artefact a pilot reads before touching anything. */
@@ -161,6 +162,8 @@ ${BASE}
   .final { background: var(--ink); color: var(--paper); }
   .final .band h2, .final h2 { color: var(--paper); }
   .final-in { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: clamp(2rem, 5vw, 4rem); align-items: center; padding: clamp(3.5rem, 8vw, 6rem) 1.25rem; max-width: 76rem; margin: 0 auto; }
+  .final h2 { font: 700 clamp(2rem, 4vw, 3.1rem)/.95 var(--display); text-transform: uppercase; margin: 0 0 1rem; color: var(--paper); }
+  .final .cta { margin-top: 1.6rem; }
   .final p { color: color-mix(in oklab, var(--paper) 80%, var(--ink)); max-width: 48ch; }
   .final pre { background: color-mix(in oklab, var(--ink) 80%, var(--paper)); border-color: color-mix(in oklab, var(--ink) 60%, var(--paper)); color: var(--paper); }
   .final .btn.quiet { color: var(--paper); border-color: color-mix(in oklab, var(--paper) 40%, var(--ink)); }
@@ -175,10 +178,16 @@ ${BASE}
 
   @media (max-width: 60rem) {
     .hero-in, .split, .final-in { grid-template-columns: 1fr; }
+    .hero-in { row-gap: 0; }
+    .hero-in > div:first-child { display: contents; }
+    .hero h1 { order: 0; }
+    .plate { order: 1; margin: 0 0 1.75rem; }
+    .hero .lead, .meaning, .cta { order: 2; }
     .legend { grid-template-columns: 1fr; }
     .legend li, .legend li + li { padding: 1.3rem 0; border-right: 0; border-bottom: 1px solid var(--rule); }
   }
   @media (max-width: 40rem) {
+    .env text { font-size: 18px; }
     .placard th { width: auto; display: block; padding-bottom: 0; }
     .placard td { display: block; border-top: 0; padding-top: .2rem; }
     .placard td.how { padding-bottom: .9rem; }
@@ -210,7 +219,7 @@ ${topBar('landing')}
         <dd>Indonesian for <strong>mandate</strong>: authority entrusted within limits that must not be exceeded. <span class="say">/ˈba.tas/</span></dd>
       </dl>
       <div class="cta">
-        <a class="btn" href="/app">Check the live position <span class="arrow" aria-hidden="true">→</span></a>
+        <a class="btn" href="/app">Check the live position</a>
         <a class="btn quiet" href="#proof">See what it stops</a>
       </div>
     </div>
@@ -327,10 +336,10 @@ ${topBar('landing')}
 <section class="final" aria-labelledby="final-title">
   <div class="final-in">
     <div>
-      <h2 id="final-title" style="font:700 clamp(2rem,4vw,3.1rem)/.95 var(--display);text-transform:uppercase;margin:0 0 1rem">Don't take our word for the limits.</h2>
+      <h2 id="final-title">Don't take our word for the limits.</h2>
       <p>Open the app to decode the live position, watch its publication and kill switch update from chain, and paste any program to read what it actually enforces.</p>
-      <div class="cta" style="margin-top:1.6rem">
-        <a class="btn" href="/app">Open the app <span class="arrow" aria-hidden="true">→</span></a>
+      <div class="cta">
+        <a class="btn" href="/app">Open the app</a>
         <a class="btn quiet" href="https://github.com/PugarHuda/batas" rel="noopener">Read the source</a>
       </div>
     </div>
@@ -363,8 +372,9 @@ function drawEnvelope(h) {
     const cap = Number(h.terms.maxAmountInFormatted), floor = Number(h.terms.minRateFormatted);
     const rate = (x) => (B * (1 - f)) / (A + x * (1 - f));
     const floorAt = Math.max(0, (B * (1 - f) / floor - A) / (1 - f));
-    const xMax = Math.max(cap, floorAt) * 1.45;
-    const yTop = rate(0) * 1.0025, yBot = Math.min(floor, rate(xMax)) * 0.9975;
+    const trades = (h.trades || []).map((t) => ({ x: Number(t.amountIn), y: Number(t.rate) })).filter((t) => t.x > 0 && t.y > 0);
+    const xMax = Math.max(cap, floorAt, ...trades.map((t) => t.x)) * 1.45;
+    const yTop = Math.max(rate(0), ...trades.map((t) => t.y)) * 1.0025, yBot = Math.min(floor, rate(xMax)) * 0.9975;
 
     const W = 560, H = 340, L = 58, R = 18, T = 30, Bm = 42;
     const sx = (x) => L + (x / xMax) * (W - L - R);
@@ -394,7 +404,11 @@ function drawEnvelope(h) {
         + '<line class="cap" x1="' + sx(cap) + '" x2="' + sx(cap) + '" y1="' + T + '" y2="' + (H - Bm) + '"/>'
         + '<text class="lbl-cap" x="' + (sx(cap) + 6) + '" y="' + (T + 12) + '">cap ' + fmt(cap, 2) + '</text>'
         + '<path class="curve" d="' + path + '"/>'
-        + '<text class="lbl-curve" x="' + (L + 8) + '" y="' + (sy(rate(0)) - 7) + '">what the pool pays</text>'
+        + '<text class="lbl-curve" x="' + (L + 8) + '" y="' + (sy(rate(0)) + 18) + '">what the pool pays today</text>'
+        // Trades the position actually settled, at the size and rate they got. They sit off today's
+        // curve because each one moved the reserves the curve is drawn from.
+        + trades.map((t) => '<circle class="trade" r="5.5" cx="' + sx(t.x) + '" cy="' + sy(t.y) + '"><title>settled: ' + fmt(t.x, 2) + ' A at ' + fmt(t.y, 4) + '</title></circle>').join('')
+        + (trades.length ? '<text class="lbl-trade" x="' + (sx(trades[0].x) + 9) + '" y="' + (sy(trades[0].y) - 8) + '">' + trades.length + ' settled trade' + (trades.length === 1 ? '' : 's') + '</text>' : '')
         + '<text x="' + (W - R) + '" y="' + (H - 6) + '" text-anchor="end">trade size, token A</text>'
         + '<text x="' + L + '" y="' + (T - 14) + '">rate, B per A</text>'
         + '<line class="guide" id="gX" x1="0" x2="0" y1="' + T + '" y2="' + (H - Bm) + '"/>'

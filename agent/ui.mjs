@@ -30,7 +30,7 @@ ${FONT_FACES}
 ${TOKENS}
 ${BASE}
   /* The instrument. Same chart world as the landing, set for work: the task first, dense and quiet,
-     every figure in the cockpit mono, states carried by a mark as well as a colour. */
+     every figure in the cockpit face with tabular numerals, states carried by a mark as well as a colour. */
   main { max-width: 76rem; margin: 0 auto; padding: 0 1.25rem 5rem; }
   .app-head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: .5rem 2rem; padding: 2.2rem 0 1.4rem; border-bottom: 2px solid var(--ink); }
   .app-head h1 { font: 700 clamp(2rem, 4vw, 2.9rem)/.95 var(--display); text-transform: uppercase; letter-spacing: .01em; margin: 0; }
@@ -80,7 +80,7 @@ ${BASE}
   .no  { color: var(--never); }
   .tag.yes::before { content: ""; width: .45rem; height: .45rem; border-radius: 50%; background: currentColor; }
   .tag.no::before { content: "×"; font-weight: 700; }
-  .note { border-left: 2px solid var(--structure); padding: .1rem 0 .1rem 1rem; margin: 1.2rem 0 0; color: var(--ink-2); font-size: .9rem; max-width: 68ch; }
+  .note { border-left: 1px solid var(--rule); padding: .1rem 0 .1rem 1rem; margin: 1.2rem 0 0; color: var(--ink-2); font-size: .9rem; max-width: 68ch; }
   table { border-collapse: collapse; width: 100%; font-size: .9rem; }
   th, td { text-align: left; padding: .6rem .75rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
   th:first-child, td:first-child { padding-left: 0; }
@@ -90,8 +90,7 @@ ${BASE}
   .muted { color: var(--dim); }
   .small { font-size: .84rem; }
   .spin { display: grid; gap: .6rem; padding: .35rem 0; }
-  .spin i { display: block; height: .75rem; border-radius: 2px; background: linear-gradient(90deg, var(--sunk), var(--grid), var(--sunk)); background-size: 200% 100%; animation: sweep 1.4s ease-in-out infinite; }
-  @keyframes sweep { to { background-position: -200% 0; } }
+  .spin i { display: block; height: .75rem; border-radius: 2px; background: var(--sunk); border: 1px solid var(--rule); }
   .err { color: var(--never); margin: 0 0 .5rem; }
   .cols { display: grid; gap: 0 2.5rem; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); border-top: 2px solid var(--ink); }
   .cols > section { padding: 1.2rem 0 1.4rem; }

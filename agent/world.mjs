@@ -30,7 +30,6 @@ export const TOKENS = `
     --boundary: #a0146c;
     --boundary-soft: #f6e3ee;
     --structure: #1b4d99;
-    --structure-soft: #e2eaf6;
     --inside: #17753b;
     --caution: #8f5c00;
     --caution-fill: #f0b429;
@@ -56,7 +55,6 @@ export const TOKENS = `
       --boundary: #f26cbd;
       --boundary-soft: #3a1830;
       --structure: #86b4ff;
-      --structure-soft: #16263d;
       --inside: #63d58e;
       --caution: #f2b632;
       --caution-fill: #f2b632;
@@ -127,7 +125,6 @@ export const BASE = `
   .btn:active { transform: translateY(1px); }
   .btn.quiet { background: transparent; color: var(--ink); border-color: var(--edge); box-shadow: none; }
   .btn.quiet:hover { border-color: var(--ink); background: var(--paper); }
-  .btn .arrow { font-family: var(--figure); }
 
   /* Airspeed-indicator states. Colour is never the only carrier: every state also has a mark. */
   .state { display: inline-flex; align-items: center; gap: .4rem; font-size: .8rem; font-weight: 700; }
@@ -174,7 +171,7 @@ export function topBar(current) {
     <a href="https://github.com/PugarHuda/batas" rel="noopener">Source</a>
     ${current === 'app'
         ? '<a class="btn quiet" href="/">About Batas</a>'
-        : '<a class="btn" href="/app">Open the app <span class="arrow" aria-hidden="true">→</span></a>'}
+        : '<a class="btn" href="/app">Open the app</a>'}
   </nav>
 </div></header>`;
 }
