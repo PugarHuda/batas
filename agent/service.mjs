@@ -31,6 +31,7 @@ import { HCS_TOPIC } from './deployment.mjs';
 import { openapiDocument, agentCard, ATTRIBUTION } from './openapi.mjs';
 import { attest } from './attest.mjs';
 import { createServer as createMcpServer } from './mcp.mjs';
+import { agentRegistrationRoute } from './agent-registration.mjs';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 const PORT = Number(process.env.PORT || 4021);
@@ -290,6 +291,8 @@ app.get('/.well-known/x402', (_req, res) => {
 const described = { origin: PUBLIC_ORIGIN, price: `${Number(PRICE.amount) / 1e8} HBAR`, network: 'hedera:testnet', payTo: PAY_TO };
 app.get('/openapi.json', (_req, res) => res.json(openapiDocument(described)));
 app.get('/.well-known/agent-card.json', (_req, res) => res.json(agentCard(described)));
+// ERC-8004 endpoint-domain proof: the on-chain registration, served from the domain it names.
+app.get('/.well-known/agent-registration.json', agentRegistrationRoute);
 
 // The MCP server, over HTTP rather than stdio. Same factory, same four tools, one server per
 // request and no session: a Vercel function may not be the same instance twice, so there is nothing
