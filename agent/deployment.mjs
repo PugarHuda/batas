@@ -111,3 +111,16 @@ export const ENS_NAME = `${MANDATE_NAME}.${ENS_PARENT_LABEL}.eth`;
 export const ENS_RESOLVER = getAddress(env('BATAS_ENS_RESOLVER', '0x671C506Aaa2a123bE802Fe51975Ca9515AEC2516'));
 export const ETH_REGISTRY = getAddress('0xbdc85dd5b15d7ecb354cd7cb6f2c50b4f2c4f0e2');
 export const ETH_REGISTRAR = getAddress('0xa88553f454b77203b0d036a05c894d555eaaa2cc');
+
+/**
+ * The second agent namespace under batas.eth: `<COUNTERPARTY_LABEL>.<ENS_PARENT_LABEL>.eth`.
+ *
+ * agent/counterparty.mjs trades, pays and writes reputation from this address. It holds its own name in
+ * the mandate registry, granted by OWNER on the same terms as the maker's label: expiring, soulbound, and
+ * revocable by the grantor. It also holds its own ERC-8004 identity, which it minted with its own key.
+ * Both are written by `node agent/namespaces.mjs`.
+ */
+export const COUNTERPARTY = getAddress(env('BATAS_COUNTERPARTY_ADDRESS', '0x1437aF5722D5Dfe6BAEda25f3A7A39aeCA374614'));
+export const COUNTERPARTY_LABEL = env('BATAS_COUNTERPARTY_LABEL', 'counterparty');
+export const COUNTERPARTY_NAME = `${COUNTERPARTY_LABEL}.${ENS_PARENT_LABEL}.eth`;
+export const COUNTERPARTY_AGENT_ID = env('BATAS_COUNTERPARTY_AGENT_ID', undefined);
