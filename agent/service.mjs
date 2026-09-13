@@ -19,7 +19,7 @@ import { ExactHederaScheme } from '@x402/hedera/exact/server';
 import { paymentMiddleware } from '@x402/express';
 import 'dotenv/config';
 
-import { explain } from './swapvm.mjs';
+import { explain, MAX_LISTED_INSTRUCTIONS } from './swapvm.mjs';
 import { resolveAgent, vouchesFor, parseAgentId } from './erc8004.mjs';
 import { lookupMandate } from './hcs.mjs';
 import { decodeAnswer, publicationAnswer, authorityAnswer, reputationAnswer } from './free.mjs';
@@ -43,7 +43,85 @@ const HBAR = '0.0.0';
 // Where this service answers from. The discovery manifest must name absolute HTTPS URLs on this
 // host, so it cannot be derived from a request that may have arrived through a proxy.
 const PUBLIC_ORIGIN = process.env.BATAS_PUBLIC_ORIGIN || 'https://batas-one.vercel.app';
-const PRICE = { asset: HBAR, amount: process.env.X402_PRICE_TINYBAR || '100000' }; // 0.001 HBAR
+/**
+ * What each part of the paid answer costs, in tinybar.
+ *
+ * The answer is not one unit of work. A program is walked instruction by instruction, the
+ * publication lookup pages a mirror node, the authority check makes Sepolia reads, and the operator
+ * check makes more of them only when the caller names an agent. A flat charge billed a six
+ * instruction mandate and a 256 instruction stream with an identity check alike, so the price is
+ * now the sum of the work the body actually asks for.
+ *
+ * The rates are set so that the live mandate on its own (six instructions, no agentId) still costs
+ * exactly 0.001 HBAR, which is what every client and suite already knows. The ceiling, a program
+ * past the instruction cap with a well-formed agent, is 0.0037 HBAR: under the 0.01 HBAR cap the
+ * paying client in inspect.mjs sets by default, so no request this service accepts is one its own
+ * client would refuse to pay.
+ */
+export const METER = Object.freeze({
+    decode: 40_000,
+    perInstruction: 1_000,
+    // Billed up to the number the answer lists. Past it the stream is still read for its terms, but
+    // it is not a mandate any more, and the price must not grow with a payload the answer bounds.
+    instructionCap: MAX_LISTED_INSTRUCTIONS,
+    publication: 34_000,
+    authority: 20_000,
+    operator: 20_000,
+});
+
+/**
+ * The bill for one request, derived from its body alone.
+ *
+ * It mirrors `inspect` step for step, so the caller pays for the reads that answer will make and for
+ * nothing it will not: a program that is not hex or does not decode is refused before any lookup, so
+ * it is billed the decode only; the operator is billed only when `inspect` would actually go to the
+ * chain for it. The paywall calls this for the 402, and again on the paid retry — x402 then requires
+ * the signed payment to match the recomputed requirement, so a light price cannot be replayed
+ * against a heavy body.
+ */
+export function priceFor(body) {
+    const components = [{ component: 'decode', tinybar: METER.decode }];
+    const program = body?.program;
+    let count = null;
+    if (typeof program === 'string' && /^0x[0-9a-fA-F]*$/.test(program)) {
+        try {
+            count = explain(program).instructionCount;
+        } catch {
+            // A 422: nothing past the decode is looked up, and x402 does not settle a 4xx answer.
+        }
+    }
+    if (count !== null) {
+        const billed = Math.min(count, METER.instructionCap);
+        components.push(
+            { component: 'instructions', count, billed, rate: METER.perInstruction, tinybar: billed * METER.perInstruction },
+            { component: 'publication', tinybar: METER.publication },
+            { component: 'authority', tinybar: METER.authority },
+        );
+        const { agentId, maker } = body;
+        if (agentId !== undefined && parseAgentId(agentId) !== null && (maker === undefined || isAddress(maker))) {
+            components.push({ component: 'operator', tinybar: METER.operator });
+        }
+    }
+    const total = components.reduce((sum, c) => sum + c.tinybar, 0);
+    return { unit: 'tinybar', asset: HBAR, components, total: String(total), hbar: total / 1e8 };
+}
+
+// The cheapest answer a caller can be charged for, and the most any request can cost. Stated on
+// every surface that names a price, since no single number is the price any more.
+const METER_MIN = METER.decode + METER.publication + METER.authority;
+const METER_MAX = METER_MIN + METER.instructionCap * METER.perInstruction + METER.operator;
+const PRICE_TEXT = `metered, ${METER_MIN / 1e8} to ${METER_MAX / 1e8} HBAR per call by the work the body asks for`;
+const METERING = {
+    unit: 'tinybar',
+    min: String(METER_MIN),
+    max: String(METER_MAX),
+    rates: METER,
+    formula: `decode ${METER.decode} + ${METER.perInstruction} per instruction (at most ${METER.instructionCap} billed)`
+        + ` + publication ${METER.publication} + authority ${METER.authority}`
+        + ` + operator ${METER.operator} when a well-formed agentId (and maker, if given) is sent.`
+        + ' A program that is not hex or does not decode is billed the decode only, and x402 settles no 4xx answer.',
+    exact: 'the 402 for a body states the exact amount; the paid answer carries the same breakdown as `metering`',
+};
 // The key that signs paid answers, or nothing. No fallback to any other key on purpose: a signature
 // from the trading key or the Hedera key would be a different claim than "this service said so".
 const ATTEST_KEY = process.env.BATAS_ATTEST_KEY || null;
@@ -105,7 +183,8 @@ const wantsHtml = (req) =>
 // asks for `/` still gets JSON, exactly as before; only a browser is shown either page.
 const pageArgs = () => ({
     origin: PUBLIC_ORIGIN,
-    price: Number(PRICE.amount) / 1e8,
+    // The floor, because the pages say "from": the exact bill depends on the body sent.
+    price: METER_MIN / 1e8,
     payTo: PAY_TO,
     topic: HCS_TOPIC,
     facilitator: FACILITATOR,
@@ -144,7 +223,8 @@ app.get('/', (req, res) => {
             agentId: 'optional — an ERC-8004 id to resolve the operator behind the position',
             maker: 'optional — the address that granted the mandate, to check the identity vouches for it',
         },
-        price: `${Number(PRICE.amount) / 1e8} HBAR`,
+        price: PRICE_TEXT,
+        metering: METERING,
         network: 'hedera:testnet',
         facilitator: FACILITATOR,
         payTo: PAY_TO,
@@ -271,8 +351,11 @@ app.get('/.well-known/x402', (_req, res) => {
                 description: 'Decode a SwapVM program into the mandate it enforces',
                 // Not part of the draft's required shape, and unknown fields must be ignored — but
                 // an indexer that does read it learns the price without spending a request to be
-                // told 402.
-                accepts: [{ scheme: 'exact', network: 'hedera:testnet', asset: HBAR, amount: PRICE.amount, payTo: PAY_TO }],
+                // told 402. The manifest cannot see a body, so `amount` is the most any request can
+                // cost, which is the number a client budgeting ahead needs; `metered` gives the
+                // formula that produces the exact figure the 402 will state.
+                accepts: [{ scheme: 'exact', network: 'hedera:testnet', asset: HBAR, amount: String(METER_MAX), payTo: PAY_TO }],
+                metered: METERING,
             },
         ],
         docs: 'https://github.com/PugarHuda/batas',
@@ -287,7 +370,7 @@ app.get('/.well-known/x402', (_req, res) => {
 //
 // Both documents come from one route table in openapi.mjs, and neither is rate limited: they are
 // constants, and a directory that crawls them is exactly the caller they exist for.
-const described = { origin: PUBLIC_ORIGIN, price: `${Number(PRICE.amount) / 1e8} HBAR`, network: 'hedera:testnet', payTo: PAY_TO };
+const described = { origin: PUBLIC_ORIGIN, price: PRICE_TEXT, network: 'hedera:testnet', payTo: PAY_TO, metering: METERING };
 app.get('/openapi.json', (_req, res) => res.json(openapiDocument(described)));
 app.get('/.well-known/agent-card.json', (_req, res) => res.json(agentCard(described)));
 
@@ -321,7 +404,14 @@ app.use(
     paymentMiddleware(
         {
             'POST /v1/mandate/explain': {
-                accepts: [{ scheme: 'exact', price: PRICE, network: 'hedera:testnet', payTo: PAY_TO }],
+                // A function of the request, which @x402/core resolves per call (DynamicPrice). The
+                // body is already parsed: express.json runs before this middleware.
+                accepts: [{
+                    scheme: 'exact',
+                    price: (context) => ({ asset: HBAR, amount: priceFor(context.adapter.getBody?.()).total }),
+                    network: 'hedera:testnet',
+                    payTo: PAY_TO,
+                }],
                 description: 'Decode a SwapVM program into the mandate it enforces',
                 mimeType: 'application/json',
                 // Stated, not derived. Left to itself the middleware builds the resource identity
@@ -416,6 +506,11 @@ export async function inspect(body) {
         }
     }
 
+    // The bill, itemised. The route is behind a paywall whose requirement came from this same function
+    // over this same body, so this is what the caller settled, and each line can be checked against
+    // the rates in the discovery manifest. Set last and before the attestation, so it is signed too.
+    answer.metering = priceFor(body);
+
     return statusAnd(200, answer);
 }
 
@@ -472,7 +567,7 @@ export default app;
 if (!process.env.VERCEL && import.meta.filename === process.argv[1]) {
     app.listen(PORT, () => {
         console.log(`batas mandate inspection on http://localhost:${PORT}`);
-        console.log(`  paid route  POST /v1/mandate/explain   ${Number(PRICE.amount) / 1e8} HBAR on hedera:testnet`);
+        console.log(`  paid route  POST /v1/mandate/explain   ${PRICE_TEXT} on hedera:testnet`);
         console.log(`  facilitator ${FACILITATOR}`);
         console.log(`  payTo       ${PAY_TO}`);
     });

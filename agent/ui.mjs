@@ -268,7 +268,7 @@ ${topBar('app')}
       <tr>
         <td>Who is operating this, and does their identity vouch for the maker?</td>
         <td>ERC-8004 identity registry, joined to the two answers above</td>
-        <td><strong>${price} HBAR</strong></td>
+        <td><strong>from ${price} HBAR</strong>, metered per instruction and lookup</td>
       </tr>
     </tbody>
   </table>

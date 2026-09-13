@@ -13,7 +13,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { inspect } from './service.mjs';
+import { inspect, priceFor, METER } from './service.mjs';
 import { OWNER, AGENT_ID } from './deployment.mjs';
 
 const LIVE_PROGRAM =
@@ -33,6 +33,55 @@ test('a well formed request returns the terms and the publication', async () => 
     assert.equal(body.instructionCount, 6);
     assert.equal(body.publication.published, true);
     assert.equal(body.operator, undefined, 'the operator lookup is opt-in and was not asked for');
+    // The bill rides in the answer, and it is the one the paywall computed from the same body.
+    assert.deepEqual(body.metering, priceFor({ program: LIVE_PROGRAM }));
+    assert.equal(body.metering.total, String(body.metering.components.reduce((s, c) => s + c.tinybar, 0)));
+});
+
+// --- the meter ----------------------------------------------------------------
+//
+// The price is a function of the body, so these pin that it moves with the work asked for, that it
+// stays where every client already expects it for the live mandate, and that it never climbs past
+// the cap the paying client in inspect.mjs sets by default.
+
+const CLIENT_DEFAULT_CAP = 1_000_000; // X402_MAX_TINYBAR's default in agent/inspect.mjs, 0.01 HBAR
+
+test('the live mandate on its own still costs exactly 0.001 HBAR, itemised', () => {
+    const bill = priceFor({ program: LIVE_PROGRAM });
+    assert.equal(bill.total, '100000');
+    assert.equal(bill.hbar, 0.001);
+    assert.deepEqual(bill.components.map((c) => c.component), ['decode', 'instructions', 'publication', 'authority']);
+    const lines = bill.components.find((c) => c.component === 'instructions');
+    assert.equal(lines.count, 6);
+    assert.equal(lines.tinybar, 6 * METER.perInstruction);
+});
+
+test('asking who operates it adds the chain reads that answer takes, and only when they will be made', () => {
+    const light = Number(priceFor({ program: LIVE_PROGRAM }).total);
+    const asked = priceFor({ program: LIVE_PROGRAM, agentId: AGENT_ID, maker: OWNER });
+    assert.equal(Number(asked.total), light + METER.operator);
+    assert.ok(asked.components.some((c) => c.component === 'operator'));
+    // A malformed id or maker is answered without going to the chain, so it is not billed as if it were.
+    for (const body of [{ agentId: 'abc' }, { agentId: AGENT_ID, maker: 'not-an-address' }]) {
+        assert.equal(Number(priceFor({ program: LIVE_PROGRAM, ...body }).total), light, JSON.stringify(body));
+    }
+});
+
+test('a longer program costs more, up to the listing cap and never past the client cap', () => {
+    const forty = Number(priceFor({ program: `0x${'5000'.repeat(40)}` }).total);
+    assert.equal(forty, Number(priceFor({ program: LIVE_PROGRAM }).total) + 34 * METER.perInstruction);
+    const capped = priceFor({ program: `0x${'5000'.repeat(60_000)}`, agentId: AGENT_ID });
+    const lines = capped.components.find((c) => c.component === 'instructions');
+    assert.equal(lines.count, 60_000);
+    assert.equal(lines.billed, 256);
+    assert.ok(Number(capped.total) <= CLIENT_DEFAULT_CAP, `${capped.total} is past the client's default cap`);
+});
+
+test('a body that is refused before any lookup is billed the decode alone', () => {
+    // x402 settles no 4xx answer, so this is only what the 402 states; it must still not claim reads.
+    for (const body of [undefined, {}, [1, 2], { program: 'not hex' }, { program: '0x5' }]) {
+        assert.deepEqual(priceFor(body).components, [{ component: 'decode', tinybar: METER.decode }], JSON.stringify(body));
+    }
 });
 
 test('a malformed agentId is reported as a bad parameter, not as an unregistered identity', async () => {

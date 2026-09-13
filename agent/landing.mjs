@@ -364,7 +364,7 @@ ${topBar('landing')}
 
 <section class="band" id="cost" aria-labelledby="cost-title">
   <div class="wrap">
-    <h2 id="cost-title">Four answers are free. One costs ${price} HBAR.</h2>
+    <h2 id="cost-title">Four answers are free. One is metered, from ${price} HBAR.</h2>
     <p class="intro">
       Anything you can work out from bytes you already hold costs nothing — charging for it would be
       charging for arithmetic. The paid answer is the one a stranger cannot assemble alone. It settles
@@ -378,7 +378,7 @@ ${topBar('landing')}
         <tr><td>When did they become public?</td><td class="src">Hedera Consensus Service, via a public mirror node</td><td class="price"><span class="free">free</span></td></tr>
         <tr><td>May the agent still act?</td><td class="src">the ENSv2 registry on Sepolia</td><td class="price"><span class="free">free</span></td></tr>
         <tr><td>What do counterparties say?</td><td class="src">ERC-8004's reputation registry</td><td class="price"><span class="free">free</span></td></tr>
-        <tr class="paid"><td>Who operates this, and does their identity vouch for the maker?</td><td class="src">ERC-8004 identity, joined to the answers above</td><td class="price"><span class="cost">${price} HBAR</span></td></tr>
+        <tr class="paid"><td>Who operates this, and does their identity vouch for the maker?</td><td class="src">ERC-8004 identity, joined to the answers above</td><td class="price"><span class="cost">from ${price} HBAR</span></td></tr>
       </tbody>
     </table>
   </div>
