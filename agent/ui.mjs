@@ -16,6 +16,7 @@
 
 import { asBrowserSource } from './ui-render.mjs';
 import { FONT_FACES, TOKENS, BASE, FAVICON, topBar } from './world.mjs';
+import { surfaceSource, HOL_LISTING, HTS_TOKEN_ID } from './surface-render.mjs';
 
 export function page({ origin, price, payTo, topic, facilitator, network }) {
     return `<!doctype html>
@@ -219,6 +220,37 @@ ${topBar('app')}
     </section>
   </div>
 
+  <h2>Who it is, how it is paid, who can find it</h2>
+  <p>
+    The name the agent answers to, the price the paid answer is metered at, how another agent reaches
+    it, and every payment recorded so far. Read from this service's own discovery documents and,
+    for anything on Hedera, straight from the public mirror node.
+  </p>
+  <div class="cols">
+    <section>
+      <h3>ENS identity</h3>
+      <p class="lead">agent.batas.eth on ENSv2, its records, and whether ENSIP-25 ties it to ERC-8004 #10123 in both directions.</p>
+      <div id="sName" aria-busy="true"><span class="state caution">reading the ENS name</span></div>
+    </section>
+    <section>
+      <h3>Paying</h3>
+      <p class="lead">The x402 manifest: the metered range, what builds the bill, and both assets it accepts.</p>
+      <div id="sPrice" aria-busy="true"><span class="state caution">reading the x402 manifest</span></div>
+    </section>
+    <section>
+      <h3>Agent to agent</h3>
+      <p class="lead">A2A with payment inside the task, and the Hashgraph Online directory entry that lists the agent.</p>
+      <div id="sReach" aria-busy="true"><span class="state caution">reading the agent card and the directory</span></div>
+    </section>
+  </div>
+  <div class="cols">
+    <section>
+      <h3>Payment audit trail</h3>
+      <p class="lead">Each payer records its settled x402 payment on Hedera Consensus Service. The newest five, with the payment transaction and the record.</p>
+      <div id="sTrail" aria-busy="true"><span class="state caution">reading the payment trail</span></div>
+    </section>
+  </div>
+
   <h2>What a mandate is worth</h2>
   <p>
     The same attacker against the same reserves, twice — once under a mandate, once under a position
@@ -268,7 +300,7 @@ ${topBar('app')}
       <tr>
         <td>Who is operating this, and does their identity vouch for the maker?</td>
         <td>ERC-8004 identity registry, joined to the two answers above</td>
-        <td><strong>from ${price} HBAR</strong>, metered per instruction and lookup</td>
+        <td><strong data-x402-range>reading the manifest…</strong><br>metered per instruction and lookup</td>
       </tr>
     </tbody>
   </table>
@@ -464,6 +496,10 @@ loadPub();
 loadAuth();
 loadRep();
 loadHealth();
+
+${surfaceSource()}
+
+loadSurface({ topic: ${JSON.stringify(topic)}, token: ${JSON.stringify(HTS_TOKEN_ID)}, listing: ${JSON.stringify(HOL_LISTING)}, again: 'ghost small' });
 </script>
 </body>
 </html>`;

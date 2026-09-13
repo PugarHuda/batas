@@ -9,6 +9,7 @@
 // It never names the paid route — qa/service.spec.mjs holds the page to reaching only free answers.
 
 import { FONT_FACES, TOKENS, BASE, FAVICON, topBar, foot } from './world.mjs';
+import { surfaceSource, HOL_LISTING, HTS_TOKEN_ID } from './surface-render.mjs';
 
 // The linework behind the hero, drawn the way a sectional chart draws it: a VOR compass rose ticked
 // every 5 degrees (longer every 10, longest every 30) and turned off true north, as a rose is printed
@@ -214,6 +215,14 @@ ${BASE}
   .legend p { margin: 0; color: var(--ink-2); font-size: .9rem; }
   .legend .live { margin-top: .9rem; font-size: .82rem; }
 
+  /* Who it is, how it is paid, who can find it: four live readings under one 2px rule, two columns
+     of ruled registers, the same legend grammar as the band above rather than a card row. */
+  .caps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 clamp(2rem, 5vw, 4rem); border-top: 2px solid var(--ink); }
+  .caps > div { padding: 1.4rem 0 1.6rem; border-bottom: 1px solid var(--rule); min-width: 0; }
+  .caps h3 { font: 700 1.35rem/1.05 var(--display); text-transform: uppercase; letter-spacing: .03em; margin: 0 0 .4rem; }
+  .caps .say-what { color: var(--ink-2); font-size: .9rem; margin: 0 0 .9rem; max-width: 52ch; }
+  .caps .btn { margin-top: .6rem; }
+
   /* The last word: open the instrument. A paper band opened by a 2px ink rule, the way every major
      group here opens. An ink-black band would be the one dark surface on a daylight chart, and the
      page would end on the black ground it exists not to be. */
@@ -248,6 +257,11 @@ ${BASE}
     .fares td.src { grid-column: 1 / -1; grid-row: 2; font-size: .86rem; padding-top: .2rem; }
     .fares tr.paid { border-top: 2px solid var(--boundary); }
     .fares tr.paid td { border: 0; }
+    /* The metered range is wider than a phone leaves beside the question, so it takes its own row. */
+    .fares tr.paid td.price { grid-column: 1 / -1; grid-row: 3; text-align: left; padding-top: .45rem; }
+  }
+  @media (max-width: 60rem) {
+    .caps { grid-template-columns: minmax(0, 1fr); }
   }
 </style>
 </head>
@@ -364,7 +378,7 @@ ${topBar('landing')}
 
 <section class="band" id="cost" aria-labelledby="cost-title">
   <div class="wrap">
-    <h2 id="cost-title">Four answers are free. One is metered, from ${price} HBAR.</h2>
+    <h2 id="cost-title">Four answers are free. One is metered by the work it asks for.</h2>
     <p class="intro">
       Anything you can work out from bytes you already hold costs nothing — charging for it would be
       charging for arithmetic. The paid answer is the one a stranger cannot assemble alone. It settles
@@ -378,9 +392,42 @@ ${topBar('landing')}
         <tr><td>When did they become public?</td><td class="src">Hedera Consensus Service, via a public mirror node</td><td class="price"><span class="free">free</span></td></tr>
         <tr><td>May the agent still act?</td><td class="src">the ENSv2 registry on Sepolia</td><td class="price"><span class="free">free</span></td></tr>
         <tr><td>What do counterparties say?</td><td class="src">ERC-8004's reputation registry</td><td class="price"><span class="free">free</span></td></tr>
-        <tr class="paid"><td>Who operates this, and does their identity vouch for the maker?</td><td class="src">ERC-8004 identity, joined to the answers above</td><td class="price"><span class="cost">from ${price} HBAR</span></td></tr>
+        <tr class="paid"><td>Who operates this, and does their identity vouch for the maker?</td><td class="src">ERC-8004 identity, joined to the answers above</td><td class="price"><span class="cost" data-x402-range>reading…</span></td></tr>
       </tbody>
     </table>
+  </div>
+</section>
+
+<section class="band sunk" id="agents" aria-labelledby="agents-title">
+  <div class="wrap">
+    <h2 id="agents-title">Who it is, how it is paid, who can find it.</h2>
+    <p class="intro">
+      Read as this page loads: the ENS name from Sepolia, the price from the x402 manifest an indexer
+      reads, the agent card an A2A client reads, and the directory entry, token fee schedule and
+      payment records straight from the public Hedera mirror node.
+    </p>
+    <div class="caps">
+      <div>
+        <h3>ENS identity</h3>
+        <p class="say-what">agent.batas.eth on ENSv2, its records, and whether ENSIP-25 ties it to ERC-8004 #10123 in both directions.</p>
+        <div id="sName" aria-busy="true"><span class="state caution">reading the ENS name</span></div>
+      </div>
+      <div>
+        <h3>Paying</h3>
+        <p class="say-what">Metered by the work a request asks for, settled over x402 in HBAR or in an HTS token whose fee schedule the network enforces.</p>
+        <div id="sPrice" aria-busy="true"><span class="state caution">reading the x402 manifest</span></div>
+      </div>
+      <div>
+        <h3>Agent to agent</h3>
+        <p class="say-what">A2A, with the payment requested and settled inside the task, and a listing in the Hashgraph Online directory.</p>
+        <div id="sReach" aria-busy="true"><span class="state caution">reading the agent card and the directory</span></div>
+      </div>
+      <div>
+        <h3>Payment audit trail</h3>
+        <p class="say-what">Each payer records its settled payment on Hedera Consensus Service. The newest five, with both transactions.</p>
+        <div id="sTrail" aria-busy="true"><span class="state caution">reading the payment trail</span></div>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -543,6 +590,10 @@ async function get(path) {
             ? '<span class="state never">' + esc(r.breachedCount) + ' breach' + (r.breachedCount === 1 ? '' : 'es') + ' reported</span>'
             : '<span class="state inside">' + esc(r.feedbackCount) + ' feedback from ' + esc(r.clientCount) + ' counterpart' + (r.clientCount === 1 ? 'y' : 'ies') + ' · no breach</span>';
 })();
+
+${surfaceSource()}
+
+loadSurface({ topic: ${JSON.stringify(topic)}, token: ${JSON.stringify(HTS_TOKEN_ID)}, listing: ${JSON.stringify(HOL_LISTING)}, again: 'btn quiet' });
 </script>
 </body>
 </html>`;

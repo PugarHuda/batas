@@ -24,6 +24,7 @@ const FREE = {
     '/v1/agent/authority': ['GET'],
     '/v1/agent/reputation': ['GET'],
     '/v1/position/health': ['GET'],
+    '/v1/agent/name': ['GET'],
 };
 
 /** @type {Record<string, { status: number, body: string }>} */
@@ -36,6 +37,13 @@ test.beforeAll(async ({ request }) => {
         const r = method === 'POST' ? await request.post(path, { data }) : await request.get(path);
         live[path] = { status: r.status(), body: await r.text() };
     }
+});
+
+// Both pages read the ENS name on every load. Replayed in every test, so the name panel does not
+// spend the nine real requests this suite budgets for the tests whose subject is the service. A
+// test's own route, registered later, still takes precedence.
+test.beforeEach(async ({ page }) => {
+    await page.route('**/v1/agent/name', (route) => route.fulfill({ status: live['/v1/agent/name'].status, contentType: 'application/json', body: live['/v1/agent/name'].body }));
 });
 
 // The chart, the slider and the facts only exist when the chain answered. If it did not, the

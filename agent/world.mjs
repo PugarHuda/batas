@@ -115,6 +115,29 @@ export const BASE = `
   .state.never { color: var(--never); }
   .state.never::before { background: linear-gradient(45deg, transparent 42%, currentColor 42% 58%, transparent 58%), linear-gradient(-45deg, transparent 42%, currentColor 42% 58%, transparent 58%); border-radius: 0; }
 
+  /* The capability panels both pages carry (agent/surface-render.mjs): ruled registers and lists, the
+     hairline chart rather than a row of cards. Long ids and record keys break anywhere, because a
+     phone is narrower than an ERC-8004 record key. */
+  .reg { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0 1.2rem; margin: 0; font-size: .88rem; }
+  .reg dt, .reg dd { margin: 0; padding: .45rem 0; border-top: 1px solid var(--rule); }
+  .reg dt:first-of-type, .reg dt:first-of-type + dd { border-top: 0; }
+  .reg dt { color: var(--dim); }
+  .reg dd { min-width: 0; overflow-wrap: anywhere; }
+  .records, .rates, .assets, .trail { list-style: none; margin: .7rem 0 0; padding: 0; font-size: .84rem; border-top: 1px solid var(--rule); }
+  .records li, .rates li, .assets li, .trail li { padding: .42rem 0; border-top: 1px solid var(--rule); overflow-wrap: anywhere; min-width: 0; }
+  .records li:first-child, .rates li:first-child, .assets li:first-child, .trail li:first-child { border-top: 0; }
+  .records code { color: var(--ink-2); margin-right: .35rem; }
+  .rates li { display: flex; justify-content: space-between; gap: 1rem; }
+  .trail li { display: grid; grid-template-columns: 9.5rem 7.5rem minmax(0, 1fr); gap: .15rem 1rem; align-items: baseline; }
+  .trail .t { font-family: var(--figure); font-size: .76rem; color: var(--dim); }
+  .trail .amt { font-weight: 700; }
+  .trail-head { margin: 0; font-size: .88rem; color: var(--ink-2); }
+  @media (max-width: 46rem) {
+    .reg { grid-template-columns: minmax(0, 1fr); }
+    .reg dd { border-top: 0; padding-top: 0; }
+    .trail li { grid-template-columns: minmax(0, 1fr); }
+  }
+
   footer.foot {
     border-top: 1px solid var(--rule); color: var(--dim); font-size: .84rem;
   }

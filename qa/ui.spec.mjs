@@ -105,7 +105,10 @@ test('the landing draws its envelope from the live position, and says so when it
     expect(errors).toEqual([]);
 });
 
-test('the fonts are served from here, cached, and nothing is fetched from a third party', async ({ page, request }) => {
+// One other host is read, on purpose: the public Hedera mirror node, for the payment trail, the
+// directory listing and the token's fee schedule. Reading those through this service would make
+// the service the only witness to its own ledger. Nothing else leaves the origin.
+test('the fonts are served from here, cached, and the only other host read is the public mirror node', async ({ page, request }) => {
     const font = await request.get('/assets/fonts/b612-400.woff2');
     expect(font.status()).toBe(200);
     expect(font.headers()['content-type']).toContain('font/woff2');
@@ -113,8 +116,13 @@ test('the fonts are served from here, cached, and nothing is fetched from a thir
     expect((await request.get('/assets/fonts/nope.woff2')).status()).toBe(404);
 
     const foreign = [];
-    page.on('request', (r) => { if (!r.url().startsWith('http://127.0.0.1') && !r.url().startsWith('data:')) foreign.push(r.url()); });
+    const mirror = [];
+    page.on('request', (r) => {
+        if (r.url().startsWith('https://testnet.mirrornode.hedera.com/api/v1/')) mirror.push(r.url());
+        else if (!r.url().startsWith('http://127.0.0.1') && !r.url().startsWith('data:')) foreign.push(r.url());
+    });
     await page.goto('/');
     await page.goto('/app');
     expect(foreign).toEqual([]);
+    expect(mirror.length, 'the panels read the mirror node').toBeGreaterThan(0);
 });
