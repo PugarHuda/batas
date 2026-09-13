@@ -17,6 +17,7 @@ import { IBatasCallback } from "../src/IBatasCallback.sol";
 import { Mandate, MandateLib } from "../src/Mandate.sol";
 import { MandateName } from "../src/MandateName.sol";
 import { PolicyEnvelope } from "../src/PolicyEnvelope.sol";
+import { Deadline } from "@1inch/swap-vm/src/instructions/Controls.sol";
 
 /// @notice The three questions `MandateName` asks an ENSv2 registry, and nothing else.
 /// @dev Modelled on the real one's behaviour rather than on a convenient one: `unregister` sets the
@@ -216,16 +217,27 @@ contract MandateAgreementTest is Test, IBatasCallback {
     }
 
     /// @notice A trade over the cap must be refused by both, not just whichever one it reached.
+    /// @dev By name and by numbers, not by `expectRevert()` alone: a refusal for the wrong reason
+    ///   passed this test as well as the right one. The two surfaces report the same numbers under
+    ///   two different selectors, because the app declares the cap `uint128` and the envelope
+    ///   `uint256`, and a selector hashes the types. `agent/killswitch.mjs` quotes the router only,
+    ///   so it names the envelope's; anything that decodes the app's refusals needs the app's ABI.
     function test_BothSurfacesRefuseOverCap() public {
         Mandate memory m = _mandate(100e18, 1e18);
         ISwapVM.Order memory order = _shipBoth(m);
         uint256 tooBig = 150e18;
 
-        vm.expectRevert();
+        assertTrue(
+            BatasApp.MandateAmountInExceeded.selector != PolicyEnvelope.MandateAmountInExceeded.selector,
+            "the same refusal carries a different selector on each surface"
+        );
+        vm.expectRevert(abi.encodeWithSelector(BatasApp.MandateAmountInExceeded.selector, tooBig, m.maxAmountIn));
         app.quote(m, tooBig);
 
         bytes memory takerData = _takerData();
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(PolicyEnvelope.MandateAmountInExceeded.selector, tooBig, uint256(m.maxAmountIn))
+        );
         router.swap(order, tooBig, takerData);
     }
 
@@ -234,12 +246,16 @@ contract MandateAgreementTest is Test, IBatasCallback {
         // The pool opens at 2.0; a 1.99 floor is broken by any size worth trading.
         Mandate memory m = _mandate(500e18, 1.99e18);
         ISwapVM.Order memory order = _shipBoth(m);
+        // Both surfaces judge the same output, because both price through the same arithmetic.
+        uint256 amountOut = MandateLib.quoteExactIn(m, RESERVE_IN, RESERVE_OUT, 50e18);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BatasApp.MandateRateTooLow.selector, amountOut, 50e18, m.minRateE18));
         app.quote(m, 50e18);
 
         bytes memory takerData = _takerData();
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(PolicyEnvelope.MandateRateTooLow.selector, amountOut, 50e18, uint256(m.minRateE18))
+        );
         router.swap(order, 50e18, takerData);
     }
 
@@ -252,11 +268,11 @@ contract MandateAgreementTest is Test, IBatasCallback {
 
         vm.warp(uint256(m.expiry) + 1);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BatasApp.MandateExpired.selector, m.expiry, block.timestamp));
         app.quote(m, 10e18);
 
         bytes memory takerData = _takerData();
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Deadline.DeadlineReached.selector, uint256(m.expiry)));
         router.swap(order, 10e18, takerData);
     }
 
@@ -554,13 +570,17 @@ contract MandateAgreementTest is Test, IBatasCallback {
     /// @notice And a name held by somebody else is not this agent's authority.
     function test_ANameHeldByAnotherAddressStopsBothSurfaces() public {
         Mandate memory m = _named("agent", agent);
-        names.grant("agent", makeAddr("someone else"), uint64(block.timestamp + 1 days));
+        address someoneElse = makeAddr("someone else");
+        names.grant("agent", someoneElse, uint64(block.timestamp + 1 days));
         ISwapVM.Order memory order = _shipBoth(m);
 
-        vm.expectRevert();
+        // Named, with both addresses, so the refusal says whose name it is rather than only that
+        // something went wrong.
+        bytes memory err = abi.encodeWithSelector(MandateName.MandateNameNotHeld.selector, someoneElse, agent);
+        vm.expectRevert(err);
         app.quote(m, 10e18);
         bytes memory takerData = _takerData();
-        vm.expectRevert();
+        vm.expectRevert(err);
         router.quote(order, 10e18, takerData);
     }
 
@@ -769,5 +789,109 @@ contract MandateAgreementTest is Test, IBatasCallback {
         bytes memory takerData = _takerData();
         vm.expectRevert();
         router.swap(order, amountIn, takerData);
+    }
+
+    // --- the name and the envelope, and the reserves neither surface carries ----------------------
+
+    /// @notice A revoked name over the cap is refused by both, but each names a different reason.
+    /// @dev Both surfaces check the same terms in a different order, and neither chose it with the
+    ///   other in mind. The app checks the cap, then the floor, then the name, because the name
+    ///   costs external calls. The compiled program runs the name check *inside* the envelope, and
+    ///   the envelope judges the cap only once its inner loop returns, so the VM asks the registry
+    ///   first. A trade that breaks two terms is refused either way; this pins which word each door
+    ///   uses, so an agent reading a refusal as a diagnosis knows the router says "name" even when
+    ///   the size was also wrong.
+    function test_ARevokedNameOverTheCapIsRefusedByBothForDifferentReasons() public {
+        Mandate memory m = _named("agent", agent);
+        names.grant("agent", agent, uint64(block.timestamp + 1 days));
+        ISwapVM.Order memory order = _shipBoth(m);
+        names.revoke("agent", uint64(block.timestamp));
+
+        uint256 tooBig = uint256(m.maxAmountIn) + 1;
+        vm.expectRevert(abi.encodeWithSelector(BatasApp.MandateAmountInExceeded.selector, tooBig, m.maxAmountIn));
+        app.quote(m, tooBig);
+
+        bytes memory takerData = _takerData();
+        vm.expectRevert(abi.encodeWithSelector(MandateName.MandateNameNotHeld.selector, address(0), agent));
+        router.quote(order, tooBig, takerData);
+    }
+
+    /// @notice A registry that cannot answer stops both surfaces, whether it has no code at all or
+    ///   is a contract that is not a registry.
+    /// @dev `MandateName.check` claims the safe direction, "no answer about the name means no
+    ///   trade", and nothing had tested it. The two shapes fail differently underneath: an address
+    ///   with no code returns empty data the decoder rejects, and a token has no `getState` and no
+    ///   fallback. Either way a mandate pointed at the wrong registry must not settle, because a
+    ///   kill switch that passes when it cannot ask is not a kill switch.
+    function test_ARegistryThatCannotAnswerStopsBothSurfaces() public {
+        address[2] memory notRegistries = [makeAddr("no code here"), address(tokenB)];
+        for (uint256 i; i < notRegistries.length; i++) {
+            Mandate memory m = _mandate(500e18, 1e18);
+            m.salt = 100 + uint64(i);
+            m.nameRegistry = notRegistries[i];
+            m.nameHolder = agent;
+            m.nameLabel = "agent";
+            ISwapVM.Order memory order = _shipBoth(m);
+
+            (Verdict memory a, Verdict memory v) = _quoteBoth(m, order, 10e18);
+            assertFalse(a.ok, "the app settled against a registry that could not answer");
+            assertFalse(v.ok, "the VM settled against a registry that could not answer");
+        }
+    }
+
+    /// @notice A mandate that names a registry but no holder cannot be compiled, and the app, which
+    ///   has no compiler in front of it, refuses it on the registry's answer instead.
+    /// @dev `MandateName.build` refuses a zero holder because a burned name answers with the zero
+    ///   address and would match it. The app never calls `build`; it reads the struct as shipped.
+    ///   Here the label was never granted, so the registry answers a zero owner, which matches, and
+    ///   a zero expiry, which does not. The app refuses it as a lapse, so it is the expiry and not
+    ///   the owner comparison that stands between that mandate and a settlement.
+    function test_ANamedMandateWithNoHolderIsRefusedOnBothRoads() public {
+        Mandate memory m = _named("never granted", address(0));
+
+        vm.expectRevert(abi.encodeWithSelector(MandateName.MandateNameNotHeld.selector, address(0), address(0)));
+        this.compile(m);
+
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(tokenA);
+        tokens[1] = address(tokenB);
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = RESERVE_IN;
+        amounts[1] = RESERVE_OUT;
+        vm.prank(maker);
+        aqua.ship(address(app), m.encode(), tokens, amounts);
+
+        vm.expectRevert(abi.encodeWithSelector(MandateName.MandateNameLapsed.selector, uint64(0), block.timestamp));
+        app.quote(m, 10e18);
+    }
+
+    /// @notice A position with nothing on its output side is refused by both surfaces.
+    function test_AnEmptyOutputReserveIsRefusedByBoth() public {
+        Mandate memory m = _mandate(500e18, 0);
+        ISwapVM.Order memory order = _shipBoth(m, RESERVE_IN, 0);
+
+        (Verdict memory a, Verdict memory v) = _quoteBoth(m, order, 10e18);
+        assertFalse(a.ok, "the app priced a trade against an empty output reserve");
+        assertFalse(v.ok, "the VM priced a trade against an empty output reserve");
+        assertEq(a.err, abi.encodeWithSelector(BatasApp.ZeroAmountOut.selector, uint256(10e18)));
+    }
+
+    /// @notice A position with nothing on its input side sells its whole output reserve for dust,
+    ///   on both surfaces, and neither the cap nor the floor refuses it.
+    /// @dev This documents a limit of the terms, not a disagreement: the surfaces agree to the wei.
+    ///   A constant-product curve over `balanceIn == 0` prices any input at the entire output
+    ///   reserve, and the floor is a *minimum* of `amountOut / amountIn`, so a trade that takes
+    ///   everything for almost nothing clears it by construction. The cap bounds the input, which
+    ///   here is a thousand wei. A maker who ships one-sided liquidity under a mandate is therefore
+    ///   not protected by it. The agent's own positions always ship both sides, which is why this
+    ///   has not bitten, and it is pinned so that a change in either direction is noticed.
+    function test_AnEmptyInputReserveGivesAwayTheOutputReserveOnBothSurfaces() public {
+        Mandate memory m = _mandate(500e18, 1e18);
+        ISwapVM.Order memory order = _shipBoth(m, 0, RESERVE_OUT);
+
+        (Verdict memory a, Verdict memory v) = _quoteBoth(m, order, 1_000);
+        assertTrue(a.ok && v.ok, "both surfaces settle a dust trade against an empty input reserve");
+        assertEq(a.amountOut, RESERVE_OUT, "the app hands over the whole output reserve");
+        assertEq(v.amountOut, RESERVE_OUT, "and so does the VM");
     }
 }

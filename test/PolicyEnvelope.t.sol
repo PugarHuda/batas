@@ -552,4 +552,117 @@ contract PolicyEnvelopeTest is Test {
         (uint256 amountIn,,) = swapVM.swap(order, 10e18, takerData);
         assertEq(amountIn, 10e18, "a well formed envelope still settles");
     }
+
+    // --- boundaries -----------------------------------------------------------------------------
+    //
+    // The refusals above are one step past a limit and matched by selector only. These stand on the
+    // limit itself, in both modes, and pin the full revert bytes one wei past it: the numbers the
+    // envelope reports are the numbers it judged, which is what an agent decoding a refusal reads.
+
+    /// @notice exactIn: an input of exactly the cap settles; one wei more is refused, by its numbers.
+    function test_ExactlyTheCapSettlesAndOneWeiMoreIsRefused() public {
+        ISwapVM.Order memory order = _order(_program(100e18, 1.5e18, 0.003e7));
+        _ship(order);
+
+        bytes memory takerData = _takerData();
+        vm.expectRevert(
+            abi.encodeWithSelector(PolicyEnvelope.MandateAmountInExceeded.selector, uint256(100e18) + 1, uint256(100e18))
+        );
+        swapVM.quote(order, 100e18 + 1, takerData);
+
+        (uint256 amountIn,,) = swapVM.swap(order, 100e18, _takerData());
+        assertEq(amountIn, 100e18, "the cap itself is inside the mandate");
+    }
+
+    /// @notice exactIn: a trade exactly on the floor settles; a floor one wei higher refuses it.
+    /// @dev An input of 1e18 turns the cross-multiplication into `amountOut >= minRateE18`, so the
+    ///   floor can be set to the trade's own output. The output comes from an unbounded position
+    ///   over the same reserves and the same fee, because the envelope does not change pricing.
+    function test_ExactlyTheFloorSettlesAndOneWeiHigherIsRefused() public {
+        ISwapVM.Order memory unbounded = _order(_program(type(uint128).max, 0, 0.003e7));
+        _ship(unbounded);
+        (, uint256 amountOut,) = swapVM.quote(unbounded, 1e18, _takerData());
+
+        ISwapVM.Order memory tooHigh = _order(_program(100e18, uint128(amountOut + 1), 0.003e7));
+        _ship(tooHigh);
+        bytes memory takerData = _takerData();
+        vm.expectRevert(
+            abi.encodeWithSelector(PolicyEnvelope.MandateRateTooLow.selector, amountOut, uint256(1e18), amountOut + 1)
+        );
+        swapVM.quote(tooHigh, 1e18, takerData);
+
+        ISwapVM.Order memory onTheFloor = _order(_program(100e18, uint128(amountOut), 0.003e7));
+        _ship(onTheFloor);
+        (, uint256 settled,) = swapVM.swap(onTheFloor, 1e18, _takerData());
+        assertEq(settled, amountOut, "a trade exactly on the floor is allowed");
+    }
+
+    /// @notice exactOut: the input the curve computes may equal the cap, and may land on the
+    ///   tightest floor it clears; one wei tighter either way is refused with the computed input.
+    /// @dev This is the mode the wrapping design exists for, and until now it was only tested well
+    ///   inside or well outside the terms. On the boundary the envelope has to be reading the
+    ///   input *after* `FeeFlatIn` grossed it up and `XYCSwap` rounded it toward the maker; reading
+    ///   it anywhere earlier would put the refusal a few wei off, and only this position sees that.
+    function test_ExactOutOnTheCapAndOnTheFloor() public {
+        uint256 amountOut = 19e18;
+        bytes memory exactOut = _takerData(false, abi.encodePacked(bytes32(type(uint256).max)));
+
+        ISwapVM.Order memory unbounded = _order(_program(type(uint128).max, 0, 0.003e7));
+        _ship(unbounded);
+        (uint256 amountIn,,) = swapVM.quote(unbounded, amountOut, exactOut);
+
+        // The cap.
+        ISwapVM.Order memory underCap = _order(_program(uint128(amountIn - 1), 0, 0.003e7));
+        _ship(underCap);
+        vm.expectRevert(
+            abi.encodeWithSelector(PolicyEnvelope.MandateAmountInExceeded.selector, amountIn, amountIn - 1)
+        );
+        swapVM.quote(underCap, amountOut, exactOut);
+
+        ISwapVM.Order memory onCap = _order(_program(uint128(amountIn), 0, 0.003e7));
+        _ship(onCap);
+        (uint256 settledIn, uint256 settledOut,) = swapVM.swap(onCap, amountOut, exactOut);
+        assertEq(settledIn, amountIn, "exactOut may spend exactly the cap");
+        assertEq(settledOut, amountOut);
+
+        // The floor. The rate is not a whole number of wei, so the tightest floor that clears is the
+        // rounded-down one, and one above it is the first that does not.
+        uint256 tightest = amountOut * 1e18 / amountIn;
+
+        ISwapVM.Order memory overFloor = _order(_program(100e18, uint128(tightest + 1), 0.003e7));
+        _ship(overFloor);
+        vm.expectRevert(
+            abi.encodeWithSelector(PolicyEnvelope.MandateRateTooLow.selector, amountOut, amountIn, tightest + 1)
+        );
+        swapVM.quote(overFloor, amountOut, exactOut);
+
+        ISwapVM.Order memory onFloor = _order(_program(100e18, uint128(tightest), 0.003e7));
+        _ship(onFloor);
+        (settledIn,,) = swapVM.quote(onFloor, amountOut, exactOut);
+        assertEq(settledIn, amountIn, "the tightest floor the trade clears still settles it");
+    }
+
+    /// @notice The deadline second settles inside the envelope; the refusal one second later names
+    ///   the deadline it read.
+    /// @dev `test_DeadlineComposesWithTheEnvelope` checks a second past the expiry by selector. The
+    ///   mandate's expiry is inclusive on both surfaces, and this is the VM half of that claim with
+    ///   the envelope wrapped around it, rather than the bare `Deadline` 1inch already tests.
+    function test_TheDeadlineSecondSettlesInsideTheEnvelope() public {
+        uint40 expiry = uint40(block.timestamp + 2 hours);
+        ISwapVM.Order memory order = _order(
+            bytes.concat(
+                PolicyEnvelope.build(100e18, 1.9e18, true), Deadline.build(expiry), FeeFlatIn.build(0.003e7), XYCSwap.build()
+            )
+        );
+        _ship(order);
+
+        vm.warp(expiry);
+        (, uint256 amountOut,) = swapVM.swap(order, 10e18, _takerData());
+        assertGt(amountOut, 19e18, "the deadline second is still inside the mandate");
+
+        vm.warp(uint256(expiry) + 1);
+        bytes memory takerData = _takerData();
+        vm.expectRevert(abi.encodeWithSelector(Deadline.DeadlineReached.selector, uint256(expiry)));
+        swapVM.quote(order, 10e18, takerData);
+    }
 }
