@@ -298,12 +298,15 @@ const kitMissing = kitAdapter instanceof Error && kitAdapter.code === 'ERR_MODUL
 
 test('the Hedera Agent Kit plugin offers every tool, and the new ones answer through the kit', {
     skip: kitMissing && 'hedera-agent-kit is not installed; Batas does not depend on it',
-}, async () => {
+}, async (t) => {
     if (kitAdapter instanceof Error) throw kitAdapter;
     const { HederaLangchainToolkit } = await import('hedera-agent-kit');
     const { Client } = await import('@hashgraph/sdk');
     // A client with no operator: the kit insists on a network, and no Batas tool signs with it.
-    const toolkit = new HederaLangchainToolkit({ client: Client.forTestnet(), configuration: { plugins: [kitAdapter.batasPlugin] } });
+    // Closed afterwards, because an open client keeps the test process alive after the last test.
+    const client = Client.forTestnet();
+    t.after(() => client.close());
+    const toolkit = new HederaLangchainToolkit({ client, configuration: { plugins: [kitAdapter.batasPlugin] } });
     const tools = Object.fromEntries(toolkit.getTools().map((t) => [t.name, t]));
     assert.deepEqual(Object.keys(tools).sort(), Object.keys(TOOLS).sort());
 
