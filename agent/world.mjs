@@ -3,8 +3,9 @@
 // A mandate is an operating envelope. The chart supplies the vocabulary — a boundary that must not
 // be crossed is drawn in airspace magenta, controlled structure in airspace blue — and the airspeed
 // indicator supplies the states: green arc inside, yellow arc caution, red radial never exceed.
-// Daylight first, because the reader is a maker at a desk deciding whether to trust this with money;
-// the night palette is the same chart under cockpit lighting, not an inversion.
+// Daylight only, whatever the operating system prefers: the reader is a maker at a desk deciding
+// whether to trust this with money, and a chart is printed on white paper. A second, dark scheme
+// made the pages read as the black-ground DeFi default this product is deliberately not.
 //
 // Faces are served from /assets/fonts, cached for a year: bytes in agent/fonts.mjs, no third party.
 
@@ -17,7 +18,7 @@ export const FONT_FACES = `
 
 export const TOKENS = `
   :root {
-    color-scheme: light dark;
+    color-scheme: light;
     --ground: #f3f6f4;
     --paper: #fbfcfb;
     --sunk: #e9eeeb;
@@ -40,28 +41,6 @@ export const TOKENS = `
     --text: "B612", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
     --figure: "B612 Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --number: "B612", ui-sans-serif, system-ui, sans-serif;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --ground: #0d1318;
-      --paper: #121a21;
-      --sunk: #0a0f13;
-      --ink: #e7edf1;
-      --ink-2: #bac6cf;
-      --dim: #93a3af;
-      --rule: #243240;
-      --grid: #18222b;
-      --edge: #3b4c5b;
-      --boundary: #f26cbd;
-      --boundary-soft: #3a1830;
-      --structure: #86b4ff;
-      --inside: #63d58e;
-      --caution: #f2b632;
-      --caution-fill: #f2b632;
-      --never: #ff7070;
-      --on-boundary: #0d1318;
-      --shadow: 0 1px 1px rgb(0 0 0 / .4), 0 16px 36px -20px rgb(0 0 0 / .7);
-    }
   }
 `;
 

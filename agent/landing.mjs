@@ -10,6 +10,39 @@
 
 import { FONT_FACES, TOKENS, BASE, FAVICON, topBar, foot } from './world.mjs';
 
+// The linework behind the hero, drawn the way a sectional chart draws it: a VOR compass rose ticked
+// every 5 degrees (longer every 10, longest every 30) and turned off true north, as a rose is printed
+// against magnetic north; a solid Class C ring with its soft shelf band and a dashed Class E surface
+// ring in airspace magenta; and a meridian and a parallel with the chart's minute ticks. It carries no
+// labels and no numbers, so it cannot be read as a claim about a place. Built once, at module load.
+const HERO_CHART = (() => {
+    const C = 380, R = 150;
+    const at = (deg, r) => {
+        const a = (deg * Math.PI) / 180;
+        return (C + r * Math.sin(a)).toFixed(1) + ' ' + (C - r * Math.cos(a)).toFixed(1);
+    };
+    let rose = '';
+    for (let d = 0; d < 360; d += 5) rose += 'M' + at(d, R) + 'L' + at(d, R - (d % 30 === 0 ? 16 : d % 10 === 0 ? 10 : 6));
+    let grat = 'M0 ' + C + 'H760M' + C + ' 0V760';
+    for (let i = 0; i <= 760; i += 16) {
+        const len = i % 80 === 0 ? 8 : 4;
+        grat += 'M' + i + ' ' + (C - len) + 'V' + C + 'M' + C + ' ' + i + 'H' + (C + len);
+    }
+    // A hexagon, the chart's VOR symbol, with the station dot at its centre.
+    const hex = [0, 60, 120, 180, 240, 300].map((d, i) => (i ? 'L' : 'M') + at(d + 30, 10)).join('') + 'Z';
+    return '<svg class="hero-deco" viewBox="0 0 760 760" aria-hidden="true" focusable="false">'
+        + '<path class="grat" d="' + grat + '"/>'
+        + '<circle class="shelf" cx="' + C + '" cy="' + C + '" r="' + 314 + '"/>'
+        + '<circle class="class-c" cx="' + C + '" cy="' + C + '" r="' + 320 + '"/>'
+        + '<circle class="class-e" cx="' + C + '" cy="' + C + '" r="' + 236 + '"/>'
+        + '<g class="rose" transform="rotate(13 ' + C + ' ' + C + ')">'
+        + '<circle cx="' + C + '" cy="' + C + '" r="' + R + '"/><path d="' + rose + '"/>'
+        + '<path d="M' + C + ' ' + (C - 14) + 'V' + (C - R - 22) + 'M' + (C - 5) + ' ' + (C - R - 12) + 'L' + C + ' ' + (C - R - 24) + 'L' + (C + 5) + ' ' + (C - R - 12) + '"/>'
+        + '</g>'
+        + '<path class="vor" d="' + hex + 'M' + C + ' ' + (C - 1.5) + 'v3"/>'
+        + '</svg>';
+})();
+
 export function landing({ price, payTo, topic, facilitator, network }) {
     return `<!doctype html>
 <html lang="en">
@@ -38,7 +71,26 @@ ${BASE}
       linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 48px 48px,
       linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 48px 48px,
       var(--ground);
+    /* Its own stacking context, so the chart linework below can sit under the content without
+       falling under the hero's own ground. */
+    isolation: isolate;
   }
+  /* The chart the plate is laid on: a VOR compass rose and two airspace rings, centred just right of
+     the envelope plate so the plate covers their middle and only their outer linework shows, in the
+     margin and above and below the plate — never behind the headline or the lead. Low contrast on
+     purpose: it is the chart's texture, and the plate is the reading. */
+  .hero-deco {
+    position: absolute; z-index: -1; pointer-events: none;
+    width: 760px; height: 760px; top: 50%; transform: translateY(-50%);
+    right: calc(max(1.25rem, 50% - 36.75rem) - 440px);
+  }
+  .hero-deco * { fill: none; vector-effect: non-scaling-stroke; }
+  .hero-deco .grat { stroke: var(--edge); stroke-width: 1; opacity: .55; }
+  .hero-deco .shelf { stroke: var(--boundary); stroke-width: 9; opacity: .07; }
+  .hero-deco .class-c { stroke: var(--boundary); stroke-width: 1.5; opacity: .3; }
+  .hero-deco .class-e { stroke: var(--boundary); stroke-width: 1.5; stroke-dasharray: 9 6; opacity: .34; }
+  .hero-deco .rose { stroke: var(--structure); stroke-width: 1; opacity: .32; }
+  .hero-deco .vor { stroke: var(--structure); stroke-width: 1.25; opacity: .45; }
   .hero-in {
     max-width: 76rem; margin: 0 auto; padding: clamp(2rem, 4.5vw, 3.75rem) 1.25rem clamp(2.5rem, 5vw, 4.5rem);
     display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: clamp(2rem, 5vw, 4.5rem); align-items: center;
@@ -68,7 +120,11 @@ ${BASE}
   .plate-head h2 { font: 700 1.05rem/1 var(--display); letter-spacing: .08em; text-transform: uppercase; margin: 0; }
   .plate-head .as-of { font-family: var(--figure); font-size: .72rem; color: var(--dim); }
   .plate svg.env { display: block; width: 100%; height: auto; }
-  .env text { font-family: var(--number); font-variant-numeric: tabular-nums; fill: var(--dim); font-size: 11px; }
+  /* Chart labels are in SVG units, so what renders depends on the plate's width. 13 units renders
+     near 12px beside the headline at full width; between the stack point and the full container the
+     plate is narrower, so the labels step up to stay at 11px or more. */
+  .env text { font-family: var(--number); font-variant-numeric: tabular-nums; fill: var(--dim); font-size: 13px; }
+  @media (min-width: 60.0625rem) and (max-width: 75.9375rem) { .env text { font-size: 16px; } }
   .env .axis { stroke: var(--ink-2); stroke-width: 1; }
   .env .tick { stroke: var(--edge); stroke-width: 1; }
   .env .gridl { stroke: var(--grid); stroke-width: 1; }
@@ -158,27 +214,21 @@ ${BASE}
   .legend p { margin: 0; color: var(--ink-2); font-size: .9rem; }
   .legend .live { margin-top: .9rem; font-size: .82rem; }
 
-  /* The last word: open the instrument. */
-  .final { background: var(--ink); color: var(--paper); }
-  .final .band h2, .final h2 { color: var(--paper); }
+  /* The last word: open the instrument. A paper band opened by a 2px ink rule, the way every major
+     group here opens. An ink-black band would be the one dark surface on a daylight chart, and the
+     page would end on the black ground it exists not to be. */
+  .final { background: var(--paper); color: var(--ink); border-top: 2px solid var(--ink); }
   .final-in { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: clamp(2rem, 5vw, 4rem); align-items: center; padding: clamp(3.5rem, 8vw, 6rem) 1.25rem; max-width: 76rem; margin: 0 auto; }
-  .final h2 { font: 700 clamp(2rem, 4vw, 3.1rem)/.95 var(--display); text-transform: uppercase; margin: 0 0 1rem; color: var(--paper); }
+  .final h2 { font: 700 clamp(2rem, 4vw, 3.1rem)/.95 var(--display); text-transform: uppercase; margin: 0 0 1rem; }
   .final .cta { margin-top: 1.6rem; }
-  .final p { color: color-mix(in oklab, var(--paper) 80%, var(--ink)); max-width: 48ch; }
-  .final pre { background: color-mix(in oklab, var(--ink) 80%, var(--paper)); border-color: color-mix(in oklab, var(--ink) 60%, var(--paper)); color: var(--paper); }
-  .final .btn.quiet { color: var(--paper); border-color: color-mix(in oklab, var(--paper) 40%, var(--ink)); }
-  .final .btn.quiet:hover { background: transparent; border-color: var(--paper); }
-  @media (prefers-color-scheme: dark) {
-    .final { background: var(--paper); color: var(--ink); border-top: 1px solid var(--rule); }
-    .final h2 { color: var(--ink); }
-    .final p { color: var(--ink-2); }
-    .final pre { background: var(--sunk); border-color: var(--rule); color: var(--ink); }
-    .final .btn.quiet { color: var(--ink); border-color: var(--edge); }
-  }
+  .final p { color: var(--ink-2); max-width: 48ch; }
 
   @media (max-width: 60rem) {
     .hero-in, .split, .final-in { grid-template-columns: 1fr; }
     .hero-in { row-gap: 0; }
+    /* Stacked, the plate spans the column and nothing sits beside it, so the linework moves to the
+       one corner the text leaves open: bottom right, beside the second button. */
+    .hero-deco { width: 440px; height: 440px; top: auto; transform: none; right: -220px; bottom: -250px; }
     .hero-in > div:first-child { display: contents; }
     .hero h1 { order: 0; }
     .plate { order: 1; margin: 0 0 1.75rem; }
@@ -206,6 +256,7 @@ ${topBar('landing')}
 
 <main>
 <section class="hero" aria-labelledby="hero-title">
+  ${HERO_CHART}
   <div class="hero-in">
     <div>
       <h1 id="hero-title">An agent runs your liquidity. <em>The contract</em> holds the limits.</h1>
