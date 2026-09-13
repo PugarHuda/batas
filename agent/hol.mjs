@@ -7,20 +7,22 @@
 //   HCS-10  an inbound and an outbound topic, and a `register` message on the public testnet
 //           registry topic, so HCS-10 agents can list Batas and open a connection to it.
 //   HCS-11  a profile (type AI agent) stored as an HCS-1 file and linked from the account memo as
-//           `hcs-11:hcs://1/<topic>`. It carries the x402 endpoint, the ERC-8004 identity and the
-//           mandate publication topic.
+//           `hcs-11:hcs://1/<topic>`. It carries the x402 endpoint and its metered price, the A2A
+//           endpoint, the ENS name, the ERC-8004 identity and the mandate publication topic.
 //   HCS-14  a Universal Agent ID, computed from the spec's canonical fields and recorded in the
 //           profile, plus a second one that names the ERC-8004 registration as its native id.
 //
-//   node agent/hol.mjs --register   once: create the topics, inscribe the profile, set the memo, register
-//   node agent/hol.mjs --status     what the account publishes right now
-//   node agent/hol.mjs --find       walk the registry from scratch and follow it to the x402 endpoint
+//   node agent/hol.mjs --register         once: create the topics, inscribe the profile, set the memo, register
+//   node agent/hol.mjs --update-profile   inscribe a new profile with the live price and move the memo to it
+//   node agent/hol.mjs --status           what the account publishes right now
+//   node agent/hol.mjs --find             walk the registry from scratch and follow it to the x402 endpoint
 
 import 'dotenv/config';
 import { createHash } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { zstdCompressSync, zstdDecompressSync } from 'node:zlib';
 import { pathToFileURL } from 'node:url';
-import { IDENTITY_REGISTRY, AGENT_ID, HCS_TOPIC, PUBLISHER } from './deployment.mjs';
+import { IDENTITY_REGISTRY, AGENT_ID, HCS_TOPIC, PUBLISHER, ENS_NAME } from './deployment.mjs';
 import { MIRROR, mirrorGet } from './hcs.mjs';
 
 export const NETWORK = 'testnet';
@@ -40,6 +42,10 @@ export const NAME = 'Batas';
 export const VERSION = '1.0.0';
 export const ORIGIN = 'https://batas-one.vercel.app';
 export const X402_ENDPOINT = `${ORIGIN}/v1/mandate/explain`;
+export const X402_MANIFEST = `${ORIGIN}/.well-known/x402`;
+export const A2A_ENDPOINT = `${ORIGIN}/a2a`;
+export const A2A_CARD = `${ORIGIN}/.well-known/agent-card.json`;
+export const NAME_ENDPOINT = `${ORIGIN}/v1/agent/name`;
 export const ERC8004_ID = `eip155:11155111:${IDENTITY_REGISTRY}/${AGENT_ID}`;
 /**
  * HCS-11 capability numbers: Transaction Analytics (10), Smart Contract Audit (11) and API
@@ -115,7 +121,39 @@ export function batasUaids(inboundTopicId, account = AGENT_ACCOUNT) {
     };
 }
 
-export function batasProfile({ inboundTopicId, outboundTopicId, account = AGENT_ACCOUNT }) {
+/**
+ * The paid answer's price, read from the live x402 manifest rather than written here.
+ *
+ * The first profile said "0.001 HBAR" and was wrong the day the service became metered, because a
+ * price copied into a file nobody can edit only stays true while nobody changes the service. Reading
+ * it at inscription time, and testing the live profile against the live manifest, makes the next
+ * drift a red test instead of a quiet lie. Token decimals and symbols come from the mirror node,
+ * since the manifest states amounts in each asset's smallest unit.
+ */
+export async function livePrice(url = X402_MANIFEST) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${url} answered ${res.status}`);
+    const resource = (await res.json()).resources?.find((r) => r.url === X402_ENDPOINT && r.method === 'POST');
+    const m = resource?.metered;
+    if (m?.unit !== 'tinybar' || !/^\d+$/.test(m.min) || !/^\d+$/.test(m.max) || typeof m.formula !== 'string') throw new Error(`${url} states no metered tinybar price for ${X402_ENDPOINT}`);
+    const accepts = [];
+    for (const { network, asset, amount } of resource.accepts ?? []) {
+        if (!ENTITY.test(asset) || !/^\d+$/.test(amount)) throw new Error(`${url} accepts a malformed asset ${asset} / amount ${amount}`);
+        const token = asset === '0.0.0' ? { symbol: 'HBAR', decimals: 8 } : await getJSON(`/tokens/${asset}`);
+        accepts.push({ network, asset, symbol: token.symbol, decimals: Number(token.decimals), amount });
+    }
+    return { unit: m.unit, min: m.min, max: m.max, formula: m.formula, accepts };
+}
+
+/** One sentence a person can read: the HBAR range, and each other asset's fixed amount. */
+export function priceText({ unit, min, max, accepts }) {
+    const hbar = (tinybar) => String(Number(tinybar) / 1e8);
+    const tokens = accepts.filter((a) => a.asset !== '0.0.0').map((a) => `${(Number(a.amount) / 10 ** a.decimals).toFixed(a.decimals)} ${a.symbol} (HTS ${a.asset})`);
+    return `${hbar(min)} to ${hbar(max)} HBAR per answer (${min} to ${max} ${unit}, the exact amount stated in each 402)${tokens.length ? `, or ${tokens.join(' or ')}` : ''}`;
+}
+
+export function batasProfile({ inboundTopicId, outboundTopicId, account = AGENT_ACCOUNT, price }) {
+    if (!price) throw new Error('batasProfile needs the live price from livePrice()');
     const ids = batasUaids(inboundTopicId, account);
     return {
         version: '1.0',
@@ -123,12 +161,14 @@ export function batasProfile({ inboundTopicId, outboundTopicId, account = AGENT_
         display_name: NAME,
         alias: 'batas',
         uaid: ids.hcs10,
-        bio: 'Inspects 1inch Aqua market-making mandates written as SwapVM bytecode: what the terms permit, when they were published to HCS, and whether the agent still holds authority. The full answer is sold over x402 for 0.001 HBAR on Hedera testnet.',
+        bio: `Inspects 1inch Aqua market-making mandates written as SwapVM bytecode: what the terms permit, when they were published to HCS, and whether ${ENS_NAME} still holds authority. The full answer is sold over x402 on Hedera testnet, metered: ${priceText(price)}. Also served over A2A at ${A2A_ENDPOINT}.`,
         inboundTopicId,
         outboundTopicId,
         properties: {
             url: ORIGIN,
-            x402: { endpoint: X402_ENDPOINT, method: 'POST', network: 'hedera:testnet', payTo: PUBLISHER, facilitator: 'Blocky402' },
+            x402: { endpoint: X402_ENDPOINT, method: 'POST', network: 'hedera:testnet', payTo: PUBLISHER, facilitator: 'Blocky402', manifest: X402_MANIFEST, price },
+            a2a: { endpoint: A2A_ENDPOINT, agentCard: A2A_CARD },
+            ens: { name: ENS_NAME, resolve: NAME_ENDPOINT },
             erc8004: { id: ERC8004_ID, uaid: ids.erc8004 },
             hcs: { mandateTopic: HCS_TOPIC },
         },
@@ -234,12 +274,16 @@ export async function readProfile(account) {
     const ref = /^hcs-11:hcs:\/\/1\/(\d+\.\d+\.\d+)$/.exec(memo);
     if (!ref) return { account, memo, profileTopic: null, profile: null };
     const profileTopic = ref[1];
-    const topic = await getJSON(`/topics/${profileTopic}`);
-    if (!topic.submit_key || topic.admin_key) throw new Error(`hcs://1/${profileTopic} is not a valid HCS-1 file: it needs a submit key and no admin key`);
-    const chunks = [];
-    for await (const row of topicMessages(profileTopic)) chunks.push(decode(row) ?? {});
-    const profile = JSON.parse(hcs1Decode(topic.memo, chunks).toString('utf8'));
+    const profile = JSON.parse((await readHcs1(profileTopic)).toString('utf8'));
     return { account, memo, profileTopic, profile };
+}
+
+export async function readHcs1(topicId) {
+    const topic = await getJSON(`/topics/${topicId}`);
+    if (!topic.submit_key || topic.admin_key) throw new Error(`hcs://1/${topicId} is not a valid HCS-1 file: it needs a submit key and no admin key`);
+    const chunks = [];
+    for await (const row of topicMessages(topicId)) chunks.push(decode(row) ?? {});
+    return hcs1Decode(topic.memo, chunks);
 }
 
 /**
@@ -299,26 +343,17 @@ export async function register({ log = console.log } = {}) {
     const key = process.env.HEDERA_AGENT_KEY;
     if (!id || !key) throw new Error('HEDERA_AGENT_ID and HEDERA_AGENT_KEY are required to register');
     const existing = await getJSON(`/accounts/${id}?transactions=false`);
-    if (existing.memo) throw new Error(`account ${id} already carries memo "${existing.memo}"; registration is one-time`);
+    if (existing.memo) throw new Error(`account ${id} already carries memo "${existing.memo}"; registration is one-time, use --update-profile`);
 
-    const sdk = await import('@hiero-ledger/sdk');
-    const priv = key.startsWith('302') ? sdk.PrivateKey.fromStringDer(key) : sdk.PrivateKey.fromStringECDSA(key);
-    const client = sdk.Client.forTestnet().setOperator(sdk.AccountId.fromString(id), priv);
-    const txs = {};
-    const run = async (label, tx) => {
-        const response = await tx.execute(client);
-        const receipt = await response.getReceipt(client);
-        txs[label] = response.transactionId.toString();
-        log(`  ${label.padEnd(18)} ${txs[label]}${receipt.topicId ? `  topic ${receipt.topicId}` : ''}`);
-        return receipt;
-    };
+    const price = await livePrice();
+    const { sdk, priv, client, run, txs } = await agentClient(id, key, log);
     try {
         // Inbound is public: any agent may ask for a connection. Outbound carries a submit key, since
         // HCS-10 says only the agent writes its own outbound record.
         const inboundTopicId = (await run('inbound topic', new sdk.TopicCreateTransaction().setTopicMemo(`hcs-10:0:60:0:${id}`).setAdminKey(priv.publicKey))).topicId.toString();
         const outboundTopicId = (await run('outbound topic', new sdk.TopicCreateTransaction().setTopicMemo('hcs-10:0:60:1').setAdminKey(priv.publicKey).setSubmitKey(priv.publicKey))).topicId.toString();
 
-        const profile = await validateProfile(batasProfile({ inboundTopicId, outboundTopicId, account: id }));
+        const profile = await validateProfile(batasProfile({ inboundTopicId, outboundTopicId, account: id, price }));
         const file = hcs1Encode(JSON.stringify(profile));
         // No admin key: an HCS-1 file with one could be deleted, and HCS-1 readers treat it as invalid.
         const profileTopicId = (await run('profile file', new sdk.TopicCreateTransaction().setTopicMemo(file.memo).setSubmitKey(priv.publicKey))).topicId.toString();
@@ -336,6 +371,82 @@ export async function register({ log = console.log } = {}) {
     }
 }
 
+/** The agent account as a transaction signer, with each transaction waited on and logged by label. */
+async function agentClient(id, key, log) {
+    const sdk = await import('@hiero-ledger/sdk');
+    const priv = key.startsWith('302') ? sdk.PrivateKey.fromStringDer(key) : sdk.PrivateKey.fromStringECDSA(key);
+    const client = sdk.Client.forTestnet().setOperator(sdk.AccountId.fromString(id), priv);
+    const txs = {};
+    const run = async (label, tx) => {
+        const response = await tx.execute(client);
+        const receipt = await response.getReceipt(client);
+        txs[label] = response.transactionId.toString();
+        log(`  ${label.padEnd(18)} ${txs[label]}${receipt.topicId ? `  topic ${receipt.topicId}` : ''}`);
+        return receipt;
+    };
+    return { sdk, priv, client, run, txs };
+}
+
+/**
+ * A new profile for an agent already in the directory.
+ *
+ * An HCS-1 file has no admin key, so the old profile cannot be rewritten: the update is a new file
+ * and a memo that points at it. The inbound and outbound topics are carried over from the profile
+ * being replaced, which keeps both UAIDs, so the registry entry and any connection opened on those
+ * topics stay valid.
+ *
+ * Nothing is sent to the registry. HCS-10 defines `register`, `delete` and `migrate` for a registry
+ * topic and no update: the entry names the account, inbound topic and UAID, none of which change, and
+ * every reader reaches the profile through the account memo.
+ */
+export async function updateProfile({ log = console.log } = {}) {
+    const id = process.env.HEDERA_AGENT_ID;
+    const key = process.env.HEDERA_AGENT_KEY;
+    if (!id || !key) throw new Error('HEDERA_AGENT_ID and HEDERA_AGENT_KEY are required to update the profile');
+    const current = await readProfile(id);
+    if (!current.profile) throw new Error(`account ${id} has no HCS-11 profile to update (memo "${current.memo}"); use --register`);
+
+    const { inboundTopicId, outboundTopicId } = current.profile;
+    const profile = await validateProfile(batasProfile({ inboundTopicId, outboundTopicId, account: id, price: await livePrice() }));
+    if (profile.uaid !== current.profile.uaid || profile.properties.erc8004.uaid !== current.profile.properties?.erc8004?.uaid) {
+        throw new Error('the new profile would change a UAID the registry entry or the ERC-8004 link names; refusing');
+    }
+    const body = JSON.stringify(profile);
+    // Each run costs HBAR and adds a topic, so a profile identical to the live one is not inscribed again.
+    if (body === JSON.stringify(current.profile)) {
+        log(`  profile already current at hcs://1/${current.profileTopic}; nothing sent`);
+        return { account: id, profileTopicId: current.profileTopic, unchanged: true };
+    }
+
+    const { sdk, priv, client, run, txs } = await agentClient(id, key, log);
+    try {
+        const file = hcs1Encode(body);
+        const profileTopicId = (await run('profile file', new sdk.TopicCreateTransaction().setTopicMemo(file.memo).setSubmitKey(priv.publicKey))).topicId.toString();
+        for (const [i, chunk] of file.chunks.entries()) await run(`profile chunk ${i}`, new sdk.TopicMessageSubmitTransaction().setTopicId(profileTopicId).setMessage(chunk));
+
+        // The memo is the only pointer to the profile, so it moves only once the mirror node serves
+        // the new file whole. Pointing it at a file readers cannot assemble yet would unlist Batas for
+        // as long as the mirror lags. hcs1Decode checks the sha256 in the memo, which was taken over
+        // these exact bytes, so a successful read is the file.
+        let lastError;
+        for (let attempt = 0; ; attempt++) {
+            try {
+                await readHcs1(profileTopicId);
+                break;
+            } catch (e) {
+                lastError = e;
+                if (attempt === 20) throw new Error(`hcs://1/${profileTopicId} was not readable from the mirror node after a minute (${lastError.message}); the memo was not moved`);
+                await sleep(3000);
+            }
+        }
+        await run('account memo', new sdk.AccountUpdateTransaction().setAccountId(id).setAccountMemo(`hcs-11:hcs://1/${profileTopicId}`));
+        log(`  registry           ${REGISTRY_TOPIC} unchanged: HCS-10 has no update message, and the entry's inbound topic and UAID are the same`);
+        return { account: id, previousProfileTopicId: current.profileTopic, profileTopicId, uaid: profile.uaid, erc8004Uaid: profile.properties.erc8004.uaid, price: profile.properties.x402.price, transactions: txs };
+    } finally {
+        client.close();
+    }
+}
+
 function printAgent(a) {
     const p = a.profile;
     console.log(`  account      ${a.account}`);
@@ -344,6 +455,9 @@ function printAgent(a) {
     console.log(`  uaid         ${p.uaid}`);
     console.log(`  inbound      ${p.inboundTopicId}   outbound ${p.outboundTopicId}`);
     console.log(`  x402         ${p.properties?.x402?.endpoint ?? '(none)'}`);
+    console.log(`  price        ${p.properties?.x402?.price ? priceText(p.properties.x402.price) : '(not stated: a profile from before metering)'}`);
+    console.log(`  a2a          ${p.properties?.a2a?.endpoint ?? '(none)'}`);
+    console.log(`  ens          ${p.properties?.ens?.name ?? '(none)'}`);
     console.log(`  erc-8004     ${p.properties?.erc8004?.id ?? '(none)'}`);
     console.log(`  erc-8004 id  ${p.properties?.erc8004?.uaid ?? '(none)'}`);
     console.log(`  mandates     ${p.properties?.hcs?.mandateTopic ?? '(none)'}`);
@@ -355,6 +469,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         if (cmd === '--register') {
             console.log(`registering ${NAME} on Hedera ${NETWORK}, registry ${REGISTRY_TOPIC}`);
             console.log(JSON.stringify(await register(), null, 2));
+        } else if (cmd === '--update-profile') {
+            console.log(`updating the HCS-11 profile of ${NAME} on Hedera ${NETWORK} from ${X402_MANIFEST}`);
+            console.log(JSON.stringify(await updateProfile(), null, 2));
         } else if (cmd === '--status') {
             const account = arg || AGENT_ACCOUNT;
             const a = await readProfile(account);
@@ -377,7 +494,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
                 printAgent(a);
             }
         } else {
-            console.log('usage: node agent/hol.mjs --register | --status [account] | --find [name]');
+            console.log('usage: node agent/hol.mjs --register | --update-profile | --status [account] | --find [name]');
             process.exitCode = 2;
         }
     } catch (e) {
