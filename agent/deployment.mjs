@@ -111,3 +111,19 @@ export const ENS_NAME = `${MANDATE_NAME}.${ENS_PARENT_LABEL}.eth`;
 export const ENS_RESOLVER = getAddress(env('BATAS_ENS_RESOLVER', '0x671C506Aaa2a123bE802Fe51975Ca9515AEC2516'));
 export const ETH_REGISTRY = getAddress('0xbdc85dd5b15d7ecb354cd7cb6f2c50b4f2c4f0e2');
 export const ETH_REGISTRAR = getAddress('0xa88553f454b77203b0d036a05c894d555eaaa2cc');
+
+/**
+ * The banded, two-sided position on Sepolia, shipped by `node agent/band-live.mjs --ship`.
+ *
+ * Its maker is not OWNER, on purpose. Every reader of the live position filters Aqua's log by OWNER
+ * and the router, so this band sits on the same router and the same tokens without becoming "the
+ * live position" to any of them. The ship transaction alone rebuilds the order; the swaps are one
+ * each way, and `band-live.test.mjs` reprices both against their Transfer logs.
+ */
+export const BAND_MAKER = getAddress(env('BATAS_BAND_MAKER', '0x3c57764cd37d5F624fcd04d2C1074A5074e5E58b'));
+export const BAND_SHIP_TX = env('BATAS_BAND_SHIP_TX', '0x15b6bf658d95ed853a668d03ea7bc6f4fef00f9ae4cfadce7b40da77577389c9');
+export const BAND_STRATEGY_HASH = env('BATAS_BAND_STRATEGY_HASH', '0x9af9f48811f516a5cf8263b4978ce543011915312d5b4c7d5fe1367ed36e5f30');
+export const BAND_SWAP_TXS = env(
+    'BATAS_BAND_SWAP_TXS',
+    '0x69eda36bdaaf01112f9e92d8163d67f6a4ce629eb97a64f252cecf4c7175d4e6,0x8da6253af8ac55fca6ebd5c8daef4c0f31490d271cf20b4d8982a167b6b0b94c',
+);
