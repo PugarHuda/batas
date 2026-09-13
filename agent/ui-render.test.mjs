@@ -12,6 +12,8 @@ import assert from 'node:assert/strict';
 
 import { esc, link, num, when, renderMandate, judgeAmount, renderHealth, asBrowserSource } from './ui-render.mjs';
 import { page } from './ui.mjs';
+import { explain } from './swapvm.mjs';
+import { toBandProgram } from './band.mjs';
 
 test('escaping closes every hole that reaches innerHTML', () => {
     assert.equal(esc('<script>'), '&lt;script&gt;');
@@ -81,6 +83,34 @@ test('a kill switch is shown by name and registry when there is one', () => {
         notes: [],
     });
     assert.match(html, /"agent" in 0x9458/);
+});
+
+test('a band shows each side\'s cap, floor and direction, never the merged nulls as "no cap"', () => {
+    // Decoded by the real decoder from the real band compiler, so the shape rendered here is the
+    // shape the page is handed, not one written to fit the renderer.
+    const E18 = 10n ** 18n;
+    const program = toBandProgram({
+        tokenA: '0x3b8B1A25502C9f4C84e93A17dCc1720379cEa29B', tokenB: '0x6D3987Cbc99723fb7a13D4C6Ce54bA3Ab919fB81',
+        priceMinE18: 18n * E18 / 10n, priceMaxE18: 22n * E18 / 10n,
+        aToB: { maxAmountIn: E18 / 2n, minRateE18: 196n * E18 / 100n },
+        bToA: { maxAmountIn: E18, minRateE18: 49n * E18 / 100n },
+        expiry: 1791820918, feeBps: 30_000, decayPeriod: 600, salt: 1n,
+    });
+    const decoded = explain(program);
+    assert.equal(decoded.mandate.maxAmountInFormatted, null, 'the merged cap is null for a band, which is why sides are needed');
+    const html = renderMandate(decoded);
+
+    assert.ok(!html.includes('no cap'), 'a band capped both ways rendered as uncapped');
+    assert.ok(!html.includes('no floor'), 'a band floored both ways rendered as unfloored');
+    assert.match(html, /<dt>cap<\/dt><dd class="mono">0\.<span class="frac">5<\/span> <span class="muted">A<\/span> <span class="muted">side 1, aToB: A in, B out<\/span>/);
+    assert.match(html, /<dt>floor<\/dt><dd class="mono">1\.<span class="frac">96<\/span> <span class="muted">B per A<\/span> <span class="muted">side 1, aToB/);
+    assert.match(html, /<dt>cap<\/dt><dd class="mono">1 <span class="muted">B<\/span> <span class="muted">side 2, bToA: B in, A out<\/span>/);
+    assert.match(html, /<dt>floor<\/dt><dd class="mono">0\.<span class="frac">49<\/span> <span class="muted">A per B<\/span> <span class="muted">side 2, bToA/);
+
+    // A side's direction is decoder output too, and escaped like every other field.
+    const hostile = renderMandate({ guarded: true, mandate: { sides: [{ direction: '<b>x</b>', maxAmountInFormatted: null, minRateFormatted: null }] } });
+    assert.ok(!hostile.includes('<b>'));
+    assert.match(hostile, /no cap — one trade may take the whole reserve<\/span> <span class="muted">side 1, &lt;b&gt;x&lt;\/b&gt;/);
 });
 
 test('the floor carries its unit and an ISO expiry is a <time> in UTC', () => {
