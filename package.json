@@ -28,6 +28,7 @@
     "!agent/*.test.mjs"
   ],
   "dependencies": {
+    "@hashgraphonline/standards-sdk": "^0.1.186",
     "@hiero-ledger/sdk": "^2.87.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@x402/express": "^2.25.0",
@@ -63,6 +64,7 @@
     "build:contracts": "forge build --force",
     "killswitch": "node agent/killswitch.mjs",
     "counterparty": "node agent/counterparty.mjs",
-    "reputation": "node agent/reputation.mjs --read"
+    "reputation": "node agent/reputation.mjs --read",
+    "hol": "node agent/hol.mjs"
   }
 }
