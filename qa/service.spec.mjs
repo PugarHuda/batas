@@ -38,7 +38,11 @@ test('an unpaid request is refused with a payment requirement, not an error', as
 
     const requirement = decodeRequirement(header);
     expect(requirement.x402Version).toBe(2);
-    expect(requirement.accepts).toHaveLength(1);
+    // HBAR, then Batas Inspection Credit (agent/hts.mjs). The order is the contract: a client that
+    // takes the first option must still land on the one that needs no token association.
+    expect(requirement.accepts).toHaveLength(2);
+    expect(requirement.accepts[1].asset).toMatch(/^0\.0\.\d+$/);
+    expect(requirement.accepts[1].asset).not.toBe('0.0.0');
 
     const [accepts] = requirement.accepts;
     expect(accepts.scheme).toBe('exact');

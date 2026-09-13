@@ -31,6 +31,7 @@ import { HCS_TOPIC } from './deployment.mjs';
 import { openapiDocument, agentCard, ATTRIBUTION } from './openapi.mjs';
 import { attest } from './attest.mjs';
 import { createServer as createMcpServer } from './mcp.mjs';
+import { htsAccept, htsManifestAccept } from './hts.mjs';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 const PORT = Number(process.env.PORT || 4021);
@@ -272,7 +273,7 @@ app.get('/.well-known/x402', (_req, res) => {
                 // Not part of the draft's required shape, and unknown fields must be ignored — but
                 // an indexer that does read it learns the price without spending a request to be
                 // told 402.
-                accepts: [{ scheme: 'exact', network: 'hedera:testnet', asset: HBAR, amount: PRICE.amount, payTo: PAY_TO }],
+                accepts: [{ scheme: 'exact', network: 'hedera:testnet', asset: HBAR, amount: PRICE.amount, payTo: PAY_TO }, htsManifestAccept(PAY_TO)],
             },
         ],
         docs: 'https://github.com/PugarHuda/batas',
@@ -321,7 +322,9 @@ app.use(
     paymentMiddleware(
         {
             'POST /v1/mandate/explain': {
-                accepts: [{ scheme: 'exact', price: PRICE, network: 'hedera:testnet', payTo: PAY_TO }],
+                // HBAR first, so a client that takes the first option needs no token association;
+                // the HTS credit (agent/hts.mjs) follows, with its custom fee assessed at consensus.
+                accepts: [{ scheme: 'exact', price: PRICE, network: 'hedera:testnet', payTo: PAY_TO }, htsAccept(PAY_TO)],
                 description: 'Decode a SwapVM program into the mandate it enforces',
                 mimeType: 'application/json',
                 // Stated, not derived. Left to itself the middleware builds the resource identity
