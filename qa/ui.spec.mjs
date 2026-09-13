@@ -5,7 +5,8 @@ import { test, expect } from '@playwright/test';
 // SwapVM/Aqua licence requires in a UI, and that a route the host may not serve yet is not an
 // error a visitor sees.
 
-const html = (request) => request.get('/', { headers: { Accept: 'text/html' } }).then((r) => r.text());
+// The instrument lives at /app now; / is the landing. The pins below are about the instrument.
+const html = (request) => request.get('/app', { headers: { Accept: 'text/html' } }).then((r) => r.text());
 
 test('the page uses the canonical terms and carries the licence attribution', async ({ request }) => {
     const body = await html(request);
@@ -33,7 +34,7 @@ test('the page is reachable by keyboard and screen reader, not only by eye', asy
 test('the live columns and the morning report render, and a missing route is not an error', async ({ page, request }) => {
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));
-    await page.goto('/');
+    await page.goto('/app');
     await page.waitForFunction(
         () => ['pub', 'auth', 'rep'].every((id) => !document.getElementById(id).classList.contains('spin')),
         null, { timeout: 90_000 },
@@ -60,4 +61,60 @@ test('the live columns and the morning report render, and a missing route is not
     }
     expect(page.locator('#health .err')).toHaveCount(0);
     expect(errors).toEqual([]);
+});
+
+
+// --- the landing --------------------------------------------------------------------------------
+//
+// Two rooms, and a visitor must be able to tell which one they are in and get to the other. The
+// landing makes the case; the app does the work. What is pinned here is the split itself, that the
+// landing's numbers are the measured ones, and that its chart is drawn from the chain, not a mock.
+
+test('the landing and the app are different pages that lead to each other', async ({ request }) => {
+    const landing = await request.get('/', { headers: { Accept: 'text/html' } }).then((r) => r.text());
+    const app = await html(request);
+    expect(landing).not.toEqual(app);
+    expect(landing).toContain('href="/app"');
+    expect(app).toContain('href="/"');
+    expect(landing).toContain('Powered by SwapVM — © Degensoft Ltd 2025 · Powered by Aqua — © Degensoft Ltd 2025');
+    // The measured result, not a rounded or illustrative one.
+    for (const figure of ['1,667.53', '271.86', '975 gas']) expect(landing, figure).toContain(figure);
+    expect(landing).not.toContain('outline: none');
+});
+
+test('the landing draws its envelope from the live position, and says so when it cannot', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto('/');
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await expect(page.getByRole('link', { name: /Check the live position/ })).toHaveAttribute('href', '/app');
+    // Either the chart and its probe, or a stated failure — never a blank plate.
+    const drawn = page.locator('#envBody svg.env, #envBody .loading');
+    await expect(drawn.first()).toBeVisible({ timeout: 90_000 });
+    if (await page.locator('#envBody svg.env').count()) {
+        // A range input cannot be typed into; set it the way a drag does, value then an input event.
+        const setSize = (v) => page.locator('#size').evaluate((el, value) => {
+            el.value = value === 'max' ? el.max : value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+        }, v);
+        await setSize('0');
+        await expect(page.locator('#readout')).toContainText(/inside the envelope/);
+        await setSize('max');
+        await expect(page.locator('#readout')).toContainText(/settlement refuses/);
+    }
+    expect(errors).toEqual([]);
+});
+
+test('the fonts are served from here, cached, and nothing is fetched from a third party', async ({ page, request }) => {
+    const font = await request.get('/assets/fonts/b612-400.woff2');
+    expect(font.status()).toBe(200);
+    expect(font.headers()['content-type']).toContain('font/woff2');
+    expect(font.headers()['cache-control']).toContain('immutable');
+    expect((await request.get('/assets/fonts/nope.woff2')).status()).toBe(404);
+
+    const foreign = [];
+    page.on('request', (r) => { if (!r.url().startsWith('http://127.0.0.1') && !r.url().startsWith('data:')) foreign.push(r.url()); });
+    await page.goto('/');
+    await page.goto('/app');
+    expect(foreign).toEqual([]);
 });

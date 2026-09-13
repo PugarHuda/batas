@@ -25,6 +25,8 @@ import { lookupMandate } from './hcs.mjs';
 import { decodeAnswer, publicationAnswer, authorityAnswer, reputationAnswer } from './free.mjs';
 import { healthAnswer } from './health.mjs';
 import { page } from './ui.mjs';
+import { landing } from './landing.mjs';
+import { FONTS } from './fonts.mjs';
 import { HCS_TOPIC } from './deployment.mjs';
 import { openapiDocument, agentCard, ATTRIBUTION } from './openapi.mjs';
 import { attest } from './attest.mjs';
@@ -99,18 +101,37 @@ app.use((err, _req, res, next) => {
 const wantsHtml = (req) =>
     req.query?.format !== 'json' && String(req.headers.accept || '').includes('text/html');
 
+// Two rooms for a person: the case for the product at `/`, the instrument at `/app`. A machine that
+// asks for `/` still gets JSON, exactly as before; only a browser is shown either page.
+const pageArgs = () => ({
+    origin: PUBLIC_ORIGIN,
+    price: Number(PRICE.amount) / 1e8,
+    payTo: PAY_TO,
+    topic: HCS_TOPIC,
+    facilitator: FACILITATOR,
+    network: 'hedera:testnet',
+});
+
+// Faces for both pages. Immutable bytes under a name that changes when they do, so a year is safe.
+app.get('/assets/fonts/:name.woff2', (req, res) => {
+    const bytes = FONTS[req.params.name];
+    if (!bytes) return res.status(404).json({ error: `no font ${req.params.name}` });
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.type('font/woff2').send(Buffer.from(bytes, 'base64'));
+});
+
+app.get('/app', (req, res) => {
+    res.vary('Accept');
+    if (wantsHtml(req)) return res.type('html').send(page(pageArgs()));
+    // The instrument has no JSON of its own; the free routes are its data.
+    res.json({ page: 'app', free: ['POST /v1/mandate/decode', 'POST /v1/mandate/publication', 'GET /v1/agent/authority', 'GET /v1/agent/reputation', 'GET /v1/position/health'] });
+});
+
 app.get('/', (req, res) => {
     // One URL, two representations: a shared cache must key on Accept or hand a machine the page.
     res.vary('Accept');
     if (wantsHtml(req)) {
-        return res.type('html').send(page({
-            origin: PUBLIC_ORIGIN,
-            price: Number(PRICE.amount) / 1e8,
-            payTo: PAY_TO,
-            topic: HCS_TOPIC,
-            facilitator: FACILITATOR,
-            network: 'hedera:testnet',
-        }));
+        return res.type('html').send(landing(pageArgs()));
     }
     res.json({
         service: 'Batas mandate inspection',
