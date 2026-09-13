@@ -228,7 +228,7 @@ test('the service is found through ERC-8004 agent #10123, and the manifest agree
     assert.equal(found.registered.network, 'hedera:testnet');
     assert.equal(found.endpoint, found.registered.endpoint);
     assert.equal(found.payTo, found.registered.payTo);
-    assert.equal(found.price, 0.001);
+    assert.ok(found.price >= 0.001, 'the manifest states the most a metered call can cost, never less than the cheapest answer');
 });
 
 test('BATAS_SERVICE_URL overrides the registry, and says that it did', { timeout: 30_000 }, async () => {

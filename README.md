@@ -1469,6 +1469,28 @@ The counterparty does not start from a host name. It reads agent #10123 from the
 
 Setting `BATAS_SERVICE_URL` skips the registry, and the run says so (`found via BATAS_SERVICE_URL, set by hand; the registry was not consulted`). To see the registry path when your `.env` sets it, run `BATAS_SERVICE_URL= npm run counterparty`.
 
+### Findable on Hedera: Hashgraph Online directory (HCS-10 / HCS-11 / HCS-14)
+
+Batas is listed in the public HCS-10 registry on Hedera testnet. An agent that has never heard of it can find the paid endpoint and the ERC-8004 identity with nothing but a mirror node:
+
+| What | Where |
+|---|---|
+| Registry entry | topic [`0.0.6913983`](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.6913983/messages/384) #384 (memo `hcs-10:0:300:3`), paid by the agent account `0.0.10388401` |
+| Account memo | `hcs-11:hcs://1/0.0.10523695` |
+| HCS-11 profile (HCS-1 file) | [`0.0.10523695`](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10523695/messages) — submit key, no admin key, sha256 in the memo |
+| HCS-10 inbound / outbound | `0.0.10523692` (public) / `0.0.10523693` |
+| UAID (HCS-14) | `uaid:aid:72998g8B43FWUQDt3TzhQE1RATUJgiv5Gykt2ppxXbRHRkeS8sD5V3g7eRfg2NK9ME;uid=0.0.10523692@0.0.10388401;registry=hol;proto=hcs-10;nativeId=hedera:testnet:0.0.10388401` |
+| UAID for the ERC-8004 identity | `uaid:aid:5ADkVx3xBapT9QNKuQ5CiocADkd4ubCfWKodEVZi3JDPUY85mFvfJFeSK1iyh8PH4Y;uid=10123;registry=erc-8004;proto=erc-8004;nativeId=eip155:11155111:0x8004A818BFB912233c491871b3d84c89A494BD9e` |
+
+The profile names the x402 endpoint `https://batas-one.vercel.app/v1/mandate/explain`, the ERC-8004 identity `eip155:11155111:0x8004A818BFB912233c491871b3d84c89A494BD9e/10123` and the mandate topic `0.0.10394165`.
+
+```
+node agent/hol.mjs --find     # walk the registry, follow the memo to the profile, print the endpoint and ERC-8004 id
+node agent/hol.mjs --status   # topics, profile, UAID, registry sequence
+```
+
+The registry topic has no submit key, so an entry only counts when the account it names paid for it, and the mirror node reports the payer on every row. The profile is checked against its sha256 before it is believed. Kiloscribe's HCS-1 CDN, which this project does not run, also serves it: `https://kiloscribe.com/api/inscription-cdn/0.0.10523695?network=testnet`.
+
 ### A standing order, paid by the network
 
 x402 sells one answer per call. Monitoring a position is ongoing, so it is paid for with a standing order: `agent/subscribe.mjs` wraps each payment in a Hedera Scheduled Transaction (`ScheduleCreateTransaction` with `waitForExpiry`). The agent signs once when it creates the order. Consensus then executes each payment at its due time, whether or not the process is still running. The agent keeps the admin key, so any payment that has not run yet can be deleted.
