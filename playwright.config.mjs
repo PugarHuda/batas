@@ -14,7 +14,7 @@ export default defineConfig({
     // Two suites. `local` runs against a server this config starts; `production` runs against the
     // deployment the ERC-8004 registration points at, and needs no server of its own.
     projects: [
-        { name: 'local', testMatch: /(service|ui)\.spec\.mjs/ },
+        { name: 'local', testMatch: /(service|ui|extras|extras-hostile)\.spec\.mjs/ },
         { name: 'production', testMatch: /production\.spec\.mjs/ },
     ],
     reporter: process.env.CI ? 'github' : 'list',
