@@ -196,7 +196,7 @@ Surfaces are flat paper on a cool chart-white ground, separated by hairlines rat
 - Hairline rules, hatched fills for loss and refused zones, 48px graticule and the hero chart linework in the hero only.
 - Nothing moves on its own; buttons are text only and every mark is drawn.
 - Light only: `color-scheme: light` and one token set, whatever the operating system prefers. No dark scheme, no dark band, no toggle.
-- Self-hosted faces, no third-party request of any kind.
+- Self-hosted faces; the one other host a page reads is the public Hedera mirror node (see Capability Panels).
 
 ## Colors
 
@@ -331,6 +331,13 @@ A 2.6rem hatched track with a solid fill for what was kept (`inside`) or lost (`
 ### Tables and Facts
 Tables collapse borders and rule rows with hairlines; heads are `dim`, 400, 0.78 to 0.8rem. The fare table gives the question 700 weight, the source `ink-2`, free prices a green "free", and the one paid row a 2px magenta top rule with the price in placard display at 1.5rem. Facts lists are definition grids with `dim` terms and figure values. The instruction table sets offsets `dim` and right-aligned, names bold blue, arguments mono `dim`.
 
+### Capability Panels
+Four live readings both pages carry, rendered once in `agent/surface-render.mjs` and injected into each page: **ENS identity** (`GET /v1/agent/name`: agent.batas.eth, address and resolver linked to Etherscan, its text records, and whether the ENSIP-25 link to ERC-8004 #10123 holds both ways), **Paying** (`/.well-known/x402`: the metered range, each rate that builds the bill, and both accepted assets, with the HTS token's custom fee read from the mirror node), **Agent to agent** (`/.well-known/agent-card.json`: the A2A endpoint and its a2a-x402 extension, plus the Hashgraph Online HCS-10 registration at registry topic 0.0.6913983 #384), and **Payment audit trail** (the newest five `batas.payment` records on topic 0.0.10394165, each with its payment transaction and record links). The fare rows on both pages take their range from the same manifest read, so neither page prints a flat price.
+
+Each panel is a ruled register (`.reg`, a `max-content 1fr` definition grid that stacks below 46rem) or a hairline list, never a card. While it reads, it carries `aria-busy` and the caution mark with a sentence naming the source; a failed read shows the never mark, what failed, and a "try again" button. On the landing they sit in a `sunk` band of two columns under a 2px ink rule (one column below 60rem); in the app, three columns under the live position with the trail full width below them. URLs are set in the text face, because B612 Mono gives a colon and a full stop a digit-wide cell.
+
+The Hedera readings go to the public mirror node (`https://testnet.mirrornode.hedera.com/api/v1/`, CORS open) directly from the browser. That is the one exception to the no-third-party rule, and it is deliberate: reading the payment ledger through this service would leave the service as the only witness to its own payments. `qa/ui.spec.mjs` allows that host and nothing else.
+
 ### Notes and Footer
 A note is `ink-2` copy at 0.9rem set off by a 1px `rule` hairline on its left, 1rem inset. The footer is `dim` at 0.84rem above a hairline, links in `ink-2`, ending with the licence line.
 
@@ -341,7 +348,7 @@ A note is `ink-2` copy at 0.9rem set off by a 1px `rule` hairline on its left, 1
 - **Do** carry every state with a mark as well as a colour: disc for inside, open square for caution, drawn cross for never.
 - **Do** set every figure in B612 with `tabular-nums lining-nums`; use B612 Mono only for bytes, code, timestamps and scale ticks.
 - **Do** keep the focus outline: 2px solid magenta, 3px offset, on every focusable element.
-- **Do** serve faces from `/assets/fonts` and keep the page free of any third-party request.
+- **Do** serve faces from `/assets/fonts` and keep the page free of any third-party request except the public Hedera mirror node's `/api/v1/` reads.
 - **Do** hatch loss and refused zones, and open major groups with a 2px ink rule across the top.
 - **Do** show only real, reproducible figures read from a chain, a mirror node or a measured test; show caution while a reading is pending.
 - **Do** keep everything still unless the visitor moves it; pointer responses stay at 0.14s or less, and the reduced-motion guard stays in place.

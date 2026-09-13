@@ -125,9 +125,11 @@ export function renderReach(card, message, listing) {
     const listed = m.p === 'hcs-10' && m.op === 'register' && m.account_id === listing.account && Number(message.sequence_number) === listing.sequence;
     const mirror = 'https://testnet.mirrornode.hedera.com/api/v1/topics/' + listing.topic + '/messages/' + listing.sequence;
     return register([
-        ['A2A', '<code>' + esc(card && card.url) + '</code> <span class="muted">JSON-RPC, protocol ' + esc(card && card.protocolVersion) + '</span>'],
+        // URLs in the text face, not the mono: B612 Mono sets a colon and a full stop in a digit-wide
+        // cell, and "https: //batas-one. vercel. app" reads as a broken address.
+        ['A2A', '<b>' + esc(card && card.url) + '</b> <span class="muted">JSON-RPC, protocol ' + esc(card && card.protocolVersion) + '</span>'],
         ['extension', x
-            ? '<span class="state inside">a2a-x402' + (x.required ? ', required' : '') + '</span> <code>' + esc(x.uri) + '</code>'
+            ? '<span class="state inside">a2a-x402' + (x.required ? ', required' : '') + '</span> ' + out(x.uri, x.uri)
             : '<span class="state never">the card carries no a2a-x402 extension</span>'],
         ['skills', '<span class="fig">' + esc(((card && card.skills) || []).length) + '</span> · <a href="/.well-known/agent-card.json">agent card</a>'],
         ['directory', (listed ? '<span class="state inside">listed</span>' : '<span class="state never">not the expected registration</span>')

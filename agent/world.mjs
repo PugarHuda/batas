@@ -128,8 +128,8 @@ export const BASE = `
   .records li:first-child, .rates li:first-child, .assets li:first-child, .trail li:first-child { border-top: 0; }
   .records code { color: var(--ink-2); margin-right: .35rem; }
   .rates li { display: flex; justify-content: space-between; gap: 1rem; }
-  .trail li { display: grid; grid-template-columns: 9.5rem 7.5rem minmax(0, 1fr); gap: .15rem 1rem; align-items: baseline; }
-  .trail .t { font-family: var(--figure); font-size: .76rem; color: var(--dim); }
+  .trail li { display: grid; grid-template-columns: 11rem 6.5rem minmax(0, 1fr); gap: .15rem 1rem; align-items: baseline; }
+  .trail .t { font-family: var(--figure); font-size: .76rem; color: var(--dim); white-space: nowrap; }
   .trail .amt { font-weight: 700; }
   .trail-head { margin: 0; font-size: .88rem; color: var(--ink-2); }
   @media (max-width: 46rem) {
