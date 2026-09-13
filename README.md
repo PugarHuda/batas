@@ -5,6 +5,8 @@
 An autonomous agent can run your liquidity position. It cannot exceed the terms you granted it,
 because the only contract allowed to touch your tokens refuses to settle a swap that breaks them.
 
+![The Batas landing page at batas-one.vercel.app: the operating envelope drawn from the live reserves](docs/web-ui.png)
+
 *Powered by SwapVM — © Degensoft Ltd 2025. The router is a redeployment of 1inch's SwapVM carrying
 two instructions of ours; see [License](#license).*
 
@@ -1529,6 +1531,8 @@ A counterparty agent sends a proposal as a `message/send` data part: `{ directio
 npm run a2a        # BATAS_SERVICE_URL=http://localhost:4021 to target a local service
 ```
 
+![A real A2A negotiation against the deployed service: counter-offer, acceptance, and the x402 settlement on Hedera](docs/a2a-negotiation.png)
+
 A real run: the counterparty opened at 14.33 A with a 1.747 limit. The agent countered with 5.1538 A, the largest input that clears now under the 7.16 A cap, at the 1.9410 floor. The counterparty accepted and paid 0.001 HBAR. The firm quote was 10.003783 B out at Sepolia block 11696032. Settlement tx: [`0.0.7162784@1789304188.020204394`](https://hashscan.io/testnet/transaction/1789304198.075219104), which the mirror node shows as SUCCESS: 100000 tinybar from 0.0.10388401 to 0.0.10388560.
 
 Negotiation needs no key on the service side. The payer signs and the facilitator pays the Hedera fee.
@@ -1562,13 +1566,15 @@ facilitator, an indexer and the test suite all send `*/*` or `application/json` 
 what they got before. The rule was never *HTML is wrong*, it was *do not answer a machine in a
 format it cannot read*, and `qa/service.spec.mjs` now pins both directions of that.
 
-![The Batas web page: a mandate decoded from its bytes, its publication record, and the ENSv2 name
-that gates the agent](docs/web-ui.png)
+![The operating envelope with the trade probe dragged past the cap: the settlement refuses](docs/envelope.png)
 
-The page decodes any program you paste, and reads the live position as it loads: what the bytes
-permit, when they were published to HCS, and whether the agent's name still holds. It links to its
-own JSON at `/?format=json`, because a footer that promised JSON and served the page again would be
-a link lying about where it goes.
+![The instrument at /app: the live position decoded from its bytes, instruction by instruction](docs/app.png)
+
+The landing page at `/` draws the operating envelope from the live reserves: drag the probe and it
+says whether a trade of that size settles, falls under the floor, or is refused past the cap.
+`/app` is the instrument. It decodes any program you paste and reads the live position as it loads:
+what the bytes permit, when they were published to HCS, and whether the agent's name still holds.
+Both URLs answer JSON to a client that does not ask for HTML.
 
 It calls only free routes, and the suite asserts that the page never mentions the paid one. Those
 routes are new as HTTP but not new as answers — they sit at parity with the free MCP tools, which
