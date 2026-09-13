@@ -2,9 +2,10 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseUnits } from 'viem';
+import { parseUnits, formatUnits } from 'viem';
 
-import { deriveHealth } from './health.mjs';
+import { deriveHealth, largestClearingInput } from './health.mjs';
+import { clearsFloor } from './swapvm.mjs';
 
 const U = (s) => parseUnits(s, 18);
 const NOW = 1_789_300_000; // 2026-09-12, ~29 days before the expiry below
@@ -122,4 +123,75 @@ test('a grant recorded after the revocation puts the ledger back in agreement wi
     // A revocation newer than the grant while the chain says revoked: the two agree.
     const revokedAgain = { revocations: { revocations: [{ label: 'agent', sequenceNumber: 13, consensusTimestamp: '1789232800.000000000', revokedAt: '2026-09-12T20:26:40.000Z' }] } };
     assert.deepEqual(run({ ...ledgerOk, ...regranted, ...revokedAgain }, gone), ['NAME_INVALID']);
+});
+
+// --- the worst case is what the router would settle, not what the cap names ----
+
+test('the largest clearing input sits on the contract\'s own boundary', () => {
+    const at = { reserveA: shipped.a, reserveB: shipped.b, minRateE18: terms.minRateE18, feeBps: terms.feeBps };
+    assert.equal(largestClearingInput({ ...at, ceiling: terms.maxAmountIn }), terms.maxAmountIn, 'at the ship the whole cap clears');
+
+    // With no ceiling in the way, the answer is the boundary itself: it clears and a part in a
+    // million more does not.
+    const edge = largestClearingInput({ ...at, ceiling: shipped.a });
+    const check = (amountIn) => clearsFloor({ ...at, amountIn, feeBps: BigInt(terms.feeBps) });
+    assert.ok(check(edge));
+    assert.ok(!check(edge + edge / 1_000_000n));
+    assert.ok(edge >= terms.maxAmountIn);
+
+    assert.equal(largestClearingInput({ ...at, reserveB: (shipped.b * 99n) / 100n, ceiling: shipped.a }), 0n, 'spot after fee under the floor: nothing');
+    assert.equal(largestClearingInput({ ...at, ceiling: 0n }), 0n);
+});
+
+test('when spot has walked toward the floor, the worst case is the trade that still clears', () => {
+    // B down 0.5%: spot after fee is ~20bps over the floor, under the ~71bps a cap-sized trade needs.
+    const b = (shipped.b * 995n) / 1000n;
+    const r = deriveHealth({ terms, reservesNow: { a: shipped.a, b }, reservesAtShip: shipped, trades: [], authority: held, ledger: ledgerOk, reputation: quiet, now: NOW });
+    assert.equal(r.headroom.capClears, false);
+    assert.ok(Number(r.headroom.worstCaseInputA) < Number(formatUnits(terms.maxAmountIn, 18)));
+    assert.ok(Number(r.headroom.worstCaseInputA) > 0);
+    // The old arithmetic priced a cap-sized trade the router would refuse: ~13.8 B out.
+    assert.ok(Number(r.headroom.worstCaseOutflowB) < 13.5, `worst case ${r.headroom.worstCaseOutflowB}`);
+    assert.deepEqual(codes(r), ['FLOOR_HEADROOM_LOW', 'CAP_NOT_BINDING']);
+    assert.match(r.alerts[1].message, new RegExp(`largest that settles now is ${r.headroom.worstCaseInputA} of the 7.162902849964033514 cap`));
+});
+
+test('after a cap trade inverts the floor, nothing more can leave', () => {
+    const net = terms.maxAmountIn - (terms.maxAmountIn * 30_000n + 9_999_999n) / 10_000_000n;
+    const out = (net * shipped.b) / (shipped.a + net);
+    const r = deriveHealth({ terms, reservesNow: { a: shipped.a + net, b: shipped.b - out }, reservesAtShip: shipped, trades: [], authority: held, ledger: ledgerOk, reputation: quiet, now: NOW });
+    assert.equal(r.headroom.worstCaseInputA, '0');
+    assert.equal(r.headroom.worstCaseOutflowB, '0');
+    assert.equal(r.headroom.capClears, false);
+    assert.equal(r.status, 'critical');
+});
+
+test('past the expiry second is critical; the expiry second itself still trades', () => {
+    const run = (now) => deriveHealth({ terms, reservesNow: { a: shipped.a, b: shipped.b }, reservesAtShip: shipped, trades: [], authority: { ...held, secondsLeft: 0 }, ledger: ledgerOk, reputation: quiet, now });
+    const at = run(terms.expiry);
+    assert.deepEqual(codes(at), ['EXPIRY_SOON']);
+    assert.equal(at.status, 'warn');
+    const after = run(terms.expiry + 1);
+    assert.deepEqual(codes(after), ['EXPIRED']);
+    assert.equal(after.status, 'critical');
+});
+
+test('an upstream that did not answer is a warning, not an ok', () => {
+    const r = deriveHealth({
+        terms, reservesNow: { a: shipped.a, b: shipped.b }, reservesAtShip: shipped, trades: [],
+        authority: { error: 'HTTP request failed' }, ledger: { publication: { error: 'mirror 503' } }, reputation: { error: 'timeout' }, now: NOW,
+    });
+    assert.equal(r.status, 'warn');
+    assert.deepEqual(codes(r), ['UNCHECKED']);
+    assert.match(r.alerts[0].message, /authority \(HTTP request failed\).*publication \(mirror 503\).*reputation \(timeout\)/);
+});
+
+test('a publication lookup that gave up is unknown, not unpublished', () => {
+    const r = deriveHealth({
+        terms, reservesNow: { a: shipped.a, b: shipped.b }, reservesAtShip: shipped, trades: [], authority: held,
+        ledger: { publication: { published: null, searched: 'incomplete', reason: 'stopped after 10 pages' } }, reputation: quiet, now: NOW,
+    });
+    assert.deepEqual(codes(r), ['PUBLICATION_UNKNOWN']);
+    assert.equal(r.status, 'info');
+    assert.equal(r.alerts[0].message, 'stopped after 10 pages');
 });

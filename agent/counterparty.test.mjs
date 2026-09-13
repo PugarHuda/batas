@@ -25,6 +25,8 @@ const sound = () => ({
     },
     publication: { published: true, publishedAt: '2026-09-10T15:21:07.442Z' },
     authority: { valid: true, reason: 'held and unexpired' },
+    // A fixed clock, a month before the expiry above, so the fixture does not go stale on its own.
+    nowMs: Date.parse('2026-09-13T00:00:00.000Z'),
 });
 
 test('a sound position raises nothing', () => {
@@ -169,6 +171,25 @@ test('a quote under the counterparty\'s own minimum is a doubt, and no quote is 
     const silent = sound();
     Object.assign(silent, { quoteE18: null });
     assert.deepEqual(doubtsAbout(silent), []);
+});
+
+test('a docked position is declined for free, whichever side says so', () => {
+    const chain = sound();
+    chain.docked = true;
+    assert.deepEqual(doubtsAbout(chain), ['the maker has docked this position: nothing is on offer']);
+
+    const server = sound();
+    server.decoded.docked = true;
+    assert.match(doubtsAbout(server).join(' '), /docked/);
+});
+
+test('a deadline behind us is a doubt; the expiry second itself is not', () => {
+    const expiry = Date.parse(sound().decoded.mandate.expiryISO);
+    const at = (nowMs) => doubtsAbout({ ...sound(), nowMs });
+    assert.deepEqual(at(expiry), [], 'Deadline is block.timestamp <= deadline, so that whole second still trades');
+    assert.deepEqual(at(expiry + 999), []);
+    const [doubt] = at(expiry + 1000);
+    assert.match(doubt, /deadline passed at 2026-10-10T14:20:56.000Z/);
 });
 
 test('the minimum rate reads a decimal as B per A and a bare integer as already scaled', () => {
