@@ -32,6 +32,131 @@ export const MIRROR = process.env.HEDERA_MIRROR_URL || 'https://testnet.mirrorno
 
 export const MESSAGE_VERSION = 1;
 
+// A topic id goes straight into a URL path. Anything that is not `shard.realm.num` is refused
+// before it can turn into a different path on the mirror node.
+const TOPIC_ID = /^\d+\.\d+\.\d+$/;
+
+/**
+ * One GET against the mirror node, with a deadline and a second chance.
+ *
+ * The public mirror node is shared, rate limited and occasionally slow, and a fetch without a
+ * deadline hangs the paid answer for as long as the socket does. A 429, a 5xx, a timeout or a
+ * dropped connection is the mirror not answering, which is worth two more tries with a short
+ * backoff. Anything else — a 404 included — is an answer, and goes back to the caller to read.
+ * If every try fails with a status, the last response is returned so the caller's own error names
+ * it; if every try failed to connect, that is thrown.
+ */
+export async function mirrorGet(url, { fetchImpl = fetch, attempts = 3, timeoutMs = 8000, backoffMs = 400 } = {}) {
+    let last;
+    for (let i = 0; i < attempts; i++) {
+        if (i > 0) await new Promise((r) => setTimeout(r, backoffMs * 2 ** (i - 1)));
+        try {
+            last = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+        } catch (e) {
+            last = new Error(`mirror node unreachable: ${e.message || e}`);
+            continue;
+        }
+        if (last.status !== 429 && last.status < 500) return last;
+    }
+    if (last instanceof Error) throw last;
+    return last;
+}
+
+// The mirror's `links.next` is a path under its own `/api/v1`. It is followed only on the mirror
+// that was asked: a page that pointed somewhere else would be a page we did not ask for.
+function mirrorURL(path) {
+    if (/^https?:/.test(path)) {
+        if (new URL(path).origin !== new URL(MIRROR).origin) throw new Error(`mirror node pointed away from itself: ${path}`);
+        return path;
+    }
+    return MIRROR + path.replace(/^\/api\/v1/, '');
+}
+
+/**
+ * Put a chunked message back together.
+ *
+ * HCS caps a message at 1024 bytes, and the SDK splits anything longer into chunks that share the
+ * initial transaction id and carry their number and total. The mirror node stores every chunk as
+ * its own row with its own sequence number, and nothing obliges them to reach consensus in chunk
+ * order — on testnet, topic 0.0.7399332 has three-chunk messages whose chunks landed as 1, 3, 2.
+ * Reading rows one at a time would never see a long record at all, and concatenating them in
+ * sequence order would see a corrupted one.
+ *
+ * The whole message is dated by the chunk that completed it: before that consensus timestamp the
+ * record did not exist in readable form, so an earlier date would overstate how long it has stood.
+ * A group that repeats a chunk number or changes its total is dropped whole, because either half
+ * could be the one that was meant.
+ */
+function assemble(pending, m) {
+    const info = m.chunk_info;
+    const whole = (message, chunks) => ({
+        message,
+        chunks,
+        payer: m.payer_account_id,
+        consensusTimestamp: m.consensus_timestamp,
+        sequenceNumber: m.sequence_number,
+    });
+    if (!info || !(info.total > 1)) return whole(m.message, [m.sequence_number]);
+
+    const t = info.initial_transaction_id ?? {};
+    const key = `${t.account_id}@${t.transaction_valid_start}/${t.nonce ?? 0}/${t.scheduled ? 1 : 0}`;
+    const group = pending.get(key) ?? { total: info.total, parts: new Map() };
+    pending.set(key, group);
+    if (group.broken) return null;
+    if (group.total !== info.total || group.parts.has(info.number) || !(info.number >= 1 && info.number <= info.total)) {
+        group.broken = true;
+        group.parts.clear();
+        return null;
+    }
+    group.parts.set(info.number, m);
+    if (group.parts.size < group.total) return null;
+
+    pending.delete(key);
+    const ordered = [...group.parts.entries()].sort(([a], [b]) => a - b).map(([, row]) => row);
+    const bytes = Buffer.concat(ordered.map((row) => Buffer.from(row.message, 'base64')));
+    return whole(bytes.toString('base64'), ordered.map((row) => row.sequence_number));
+}
+
+/**
+ * Every whole message one account put on a topic, in consensus order.
+ *
+ * `onMessage` receives each message once it is readable — reassembled when it came in chunks —
+ * and returns true to stop. The result says how the walk ended: `stopped` when the caller had what
+ * it wanted, `complete` when the topic ran out, `incomplete` when `maxPages` did first.
+ *
+ * Rows from any other payer are discarded before they reach reassembly. The topic has no submit
+ * key, so a stranger can post a chunk that claims one of our initial transaction ids; filtering
+ * first means such a chunk can neither complete one of our messages nor poison it.
+ *
+ * Ascending order is an assumption every caller builds on — "earliest" and "newest" both mean
+ * position in this walk — so it is checked rather than trusted: a mirror that hands back a
+ * sequence number at or below one it already gave is refused, not read.
+ */
+export async function readTopic(topicId, { fetchImpl = fetch, maxPages = 10, publisher = PUBLISHER, afterSequence = 0 } = {}, onMessage = () => false) {
+    if (!TOPIC_ID.test(String(topicId))) throw new Error(`topic id must be shard.realm.num, not ${topicId}`);
+    const pending = new Map();
+    let last = Number(afterSequence);
+    let next = `/topics/${topicId}/messages?limit=100&order=asc${last > 0 ? `&sequencenumber=gt:${last}` : ''}`;
+    let pagesWalked = 0;
+    while (next && pagesWalked < maxPages) {
+        pagesWalked++;
+        const res = await mirrorGet(mirrorURL(next), { fetchImpl });
+        if (!res.ok) throw new Error(`mirror node ${res.status}`);
+        const body = await res.json();
+        for (const m of body.messages ?? []) {
+            if (!(m.sequence_number > last)) {
+                throw new Error(`mirror node returned topic ${topicId} out of order: #${m.sequence_number} after #${last}`);
+            }
+            last = m.sequence_number;
+            if (m.payer_account_id !== publisher) continue;
+            const message = assemble(pending, m);
+            if (message && onMessage(message) === true) return { searched: 'stopped', pagesWalked, lastSequence: last };
+        }
+        next = body.links?.next ?? null;
+    }
+    return { searched: next ? 'incomplete' : 'complete', pagesWalked, lastSequence: last };
+}
+
 /**
  * The record itself.
  *
@@ -267,34 +392,27 @@ async function walkTopic(topicId, label, { fetchImpl = fetch, maxPages = 10, pub
     if (!id) return null;
 
     const found = [];
-    let next = `/topics/${id}/messages?limit=100&order=asc`;
-    for (let page = 0; page < maxPages && next; page++) {
-        const res = await fetchImpl(next.startsWith('http') ? next : MIRROR + next.replace(/^\/api\/v1/, ''));
-        if (!res.ok) throw new Error(`mirror node ${res.status}`);
-        const body = await res.json();
-        for (const m of body.messages ?? []) {
-            if (m.payer_account_id !== publisher) continue;
-            const record = parse(m.message);
-            if (record?.label === label) {
-                found.push({
-                    ...record,
-                    payer: m.payer_account_id,
-                    consensusTimestamp: m.consensus_timestamp,
-                    [stamp]: consensusToISO(m.consensus_timestamp),
-                    sequenceNumber: m.sequence_number,
-                    mirror: `${MIRROR}/topics/${id}/messages/${m.sequence_number}`,
-                });
-            }
+    const walk = await readTopic(id, { fetchImpl, maxPages, publisher }, (m) => {
+        const record = parse(m.message);
+        if (record?.label === label) {
+            found.push({
+                ...record,
+                payer: m.payer,
+                consensusTimestamp: m.consensusTimestamp,
+                [stamp]: consensusToISO(m.consensusTimestamp),
+                sequenceNumber: m.sequenceNumber,
+                ...(m.chunks.length > 1 ? { chunks: m.chunks } : {}),
+                mirror: `${MIRROR}/topics/${id}/messages/${m.sequenceNumber}`,
+            });
         }
-        next = body.links?.next ?? null;
-    }
+    });
     // Same rule as below: an unfinished walk is not a finding. A caller told "no revocations" by a
     // loop that ran out of pages has been told the comfortable half of "I do not know".
     return {
         topic: String(id),
         found,
-        searched: next ? 'incomplete' : 'complete',
-        ...(next ? { reason: `stopped after ${maxPages} pages with more to read` } : {}),
+        searched: walk.searched,
+        ...(walk.searched === 'incomplete' ? { reason: `stopped after ${maxPages} pages with more to read` } : {}),
     };
 }
 
@@ -338,37 +456,30 @@ export async function lookupMandate(topicId, program, { fetchImpl = fetch, maxPa
     if (!id) return { topic: null, published: false, reason: 'no topic configured' };
     const wanted = String(program).toLowerCase();
 
-    // Ascending, so the first content match is also the earliest.
-    let next = `/topics/${id}/messages?limit=100&order=asc`;
-    let pagesWalked = 0;
-    for (let page = 0; page < maxPages && next; page++) {
-        pagesWalked = page + 1;
-        const res = await fetchImpl(next.startsWith('http') ? next : MIRROR + next.replace(/^\/api\/v1/, ''));
-        if (!res.ok) throw new Error(`mirror node ${res.status}`);
-        const body = await res.json();
-        for (const m of body.messages ?? []) {
-            // Ours only. The topic has no submit key, so a message on it proves that somebody
-            // paid a fraction of a cent, not that this project said anything. The payer is the
-            // signature.
-            if (m.payer_account_id !== publisher) continue;
-            const record = parseMandateMessage(m.message);
-            if (record?.program === wanted) {
-                return {
-                    topic: String(id),
-                    published: true,
-                    payer: m.payer_account_id,
-                    consensusTimestamp: m.consensus_timestamp,
-                    publishedAt: consensusToISO(m.consensus_timestamp),
-                    sequenceNumber: m.sequence_number,
-                    maker: record.maker ?? null,
-                    app: record.app ?? null,
-                    chainId: record.chainId ?? null,
-                    mirror: `${MIRROR}/topics/${id}/messages/${m.sequence_number}`,
-                };
-            }
-        }
-        next = body.links?.next ?? null;
-    }
+    // Ascending, so the first content match is also the earliest. Ours only: the topic has no
+    // submit key, so a message on it proves that somebody paid a fraction of a cent, not that this
+    // project said anything. The payer is the signature, and `readTopic` checks it on every chunk.
+    let found = null;
+    const { searched, pagesWalked } = await readTopic(id, { fetchImpl, maxPages, publisher }, (m) => {
+        const record = parseMandateMessage(m.message);
+        if (record?.program !== wanted) return false;
+        found = {
+            topic: String(id),
+            published: true,
+            payer: m.payer,
+            consensusTimestamp: m.consensusTimestamp,
+            publishedAt: consensusToISO(m.consensusTimestamp),
+            sequenceNumber: m.sequenceNumber,
+            ...(m.chunks.length > 1 ? { chunks: m.chunks } : {}),
+            maker: record.maker ?? null,
+            app: record.app ?? null,
+            chainId: record.chainId ?? null,
+            mirror: `${MIRROR}/topics/${id}/messages/${m.sequenceNumber}`,
+        };
+        return true;
+    });
+    if (found) return found;
+    const next = searched === 'incomplete';
     // Nothing matched — but "nothing matched" is only an answer if the walk actually finished.
     //
     // The loop stops at `maxPages`, and until now a topic longer than that produced exactly the
@@ -393,7 +504,12 @@ export async function lookupMandate(topicId, program, { fetchImpl = fetch, maxPa
     // so "nobody published this" and "we asked a topic that is not there" arrive looking identical
     // — and the second one means the service is misconfigured, not that the mandate is unvouched.
     // The topic endpoint does return 404, so one extra request in the negative case separates them.
-    const info = await fetchImpl(`${MIRROR}/topics/${id}`);
+    //
+    // Only a 404 is evidence that the topic is absent. A mirror that answered 429 or 503 through
+    // every retry has said nothing about the topic, and reading that as "it exists" would turn the
+    // mirror's bad minute into "these bytes have not been published".
+    const info = await mirrorGet(`${MIRROR}/topics/${id}`, { fetchImpl });
+    if (!info.ok && info.status !== 404) throw new Error(`mirror node ${info.status}`);
     if (info.status === 404) {
         return {
             topic: String(id),
