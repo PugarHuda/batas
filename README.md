@@ -1620,6 +1620,8 @@ Both URLs answer JSON to a client that does not ask for HTML.
 
 ### What the pages show live
 
+![The live panels on the landing page: agent.batas.eth and its ENSIP-25 link, the metered price with both assets, A2A and the Hashgraph Online listing, and the HCS payment audit trail](docs/live-panels.png)
+
 The landing (`/`, section `#agents`) and the app (`/app`) both show four more readings, taken as the page loads:
 
 - **ENS identity**: `GET /v1/agent/name`. Shows agent.batas.eth, its address and resolver, its text records, and whether the ENSIP-25 link to ERC-8004 #10123 holds both ways, with Etherscan links.
