@@ -88,14 +88,22 @@ test('the contracts named in prose are the ones actually linked', async () => {
     }
 });
 
+const MANDATE_TOPIC = '0.0.10394165';
+
 test('the HCS topic the README publishes exists and holds the mandate it claims', async () => {
     const topics = unique(
         (readme.match(/topics\/(\d+\.\d+\.\d+)/g) ?? []).map((m) => m.split('/').pop()),
     );
-    assert.equal(topics.length, 1, `the README should name exactly one topic; found ${topics.join(', ')}`);
+    // The mandate topic is the one the walkthrough quotes. The README also links the Hashgraph Online
+    // directory's topics now, and a link to a topic nobody can read is as wrong as a wrong one.
+    assert.ok(topics.includes(MANDATE_TOPIC), `the README no longer links the mandate topic ${MANDATE_TOPIC}; found ${topics.join(', ')}`);
+    for (const topic of topics) {
+        const r = await fetch(`https://testnet.mirrornode.hedera.com/api/v1/topics/${topic}/messages?limit=1`);
+        assert.equal(r.status, 200, `topic ${topic} is not readable on the public mirror node`);
+    }
 
-    const res = await fetch(`https://testnet.mirrornode.hedera.com/api/v1/topics/${topics[0]}/messages?limit=25&order=asc`);
-    assert.equal(res.status, 200, `topic ${topics[0]} is not readable on the public mirror node`);
+    const res = await fetch(`https://testnet.mirrornode.hedera.com/api/v1/topics/${MANDATE_TOPIC}/messages?limit=25&order=asc`);
+    assert.equal(res.status, 200, `topic ${MANDATE_TOPIC} is not readable on the public mirror node`);
 
     const { messages } = await res.json();
     assert.ok(messages.length > 0, 'the topic the README sends readers to has nothing in it');
@@ -106,7 +114,7 @@ test('the HCS topic the README publishes exists and holds the mandate it claims'
     assert.ok(shown, 'the worked example should name the sequence number it is quoting');
     assert.ok(
         messages.some((m) => String(m.sequence_number) === shown[1]),
-        `the README quotes sequence #${shown[1]}, which is not on topic ${topics[0]}`,
+        `the README quotes sequence #${shown[1]}, which is not on topic ${MANDATE_TOPIC}`,
     );
 });
 
