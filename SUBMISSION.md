@@ -98,58 +98,68 @@ Two implementation notes on reading chains that cost real time. Aqua's Shipped e
 tracks both require that.
 
 **The rules the form restates, and where this stands on each:** started from scratch — first
-commit 6 September, the event opened on the 4th; version control with frequent commits — 70-odd
-across the event, each one a single argued change; public repository — yes; video under four
+commit 6 September, the event opened on the 4th; version control with frequent commits — 100 across
+seven days, each one a single argued change; public repository — yes; video under four
 minutes with no speed-ups — the storyboard below runs 3:50 and says which waits to cut rather than
-accelerate. The suites at last count: `forge test` 58 passing, `node --test agent/*.test.mjs`
-228 of 228 passing.
+accelerate. The suites at last count: `forge test` 72 passing, `node --test agent/*.test.mjs`
+268 of 268 passing, Playwright 46 passing.
 
 **AI disclosure.** The commits carry Claude co-author trailers: this was AI-assisted development,
 and all code was reviewed, tested and deployed by the author.
 
 ## Partner prizes — pick these three
 
-The form allows up to three. These are the three the project is actually built on.
+The form allows up to three. These are the three the project is actually built on. Each table
+quotes the sponsor's own wording, so a row can be checked against the prize page rather than
+against a paraphrase of it.
 
-### 1. Hedera — AI & Agentic Payments on Hedera ($6,000, up to 3 teams)
+### 1. Hedera — AI & Agentic Payments on Hedera ($6,000)
 
-| Requirement | Where it is met |
+| Qualification requirement | Where it is met |
 |---|---|
-| Live x402-gated service on Hedera via Blocky402 | https://batas-one.vercel.app/v1/mandate/explain, facilitator `api.testnet.blocky402.com` |
-| A platform consuming it, ≥1 real paid request | `agent/counterparty.mjs` — a second agent that discovers the service through `/.well-known/x402`, asks the three free questions, and pays only when a real doubt remains. Settled `0.0.7162784@1789254970.943070760` |
-| *Bonus:* multi-agent | two agents on opposite sides of one position: one grants the mandate, the other decides whether to trust it and buys the evidence |
-| Public repo with README | yes |
-| Demo video ≤5 min | the 2–4 min video below satisfies both this and ETHGlobal's limit |
-| *Bonus:* pay-per-call | a flat 0.001 HBAR per call, not a subscription — a price rather than a meter |
-| *Bonus:* ERC-8004 agent identity | agent #10123 in the identity registry, **and** client feedback in the reputation registry — `60bps above the floor`, written by the counterparty, which the contract will not let the agent write about itself |
-| *Bonus:* HCS audit trail | topic `0.0.10394165`, publicly readable with no account |
+| "Build an AI agent or multi-agent system that executes at least one payment, token transfer, or financial operation on Hedera Testnet" | `agent/counterparty.mjs` pays the x402 service from its own account and checks the settlement on the mirror node. Settled `0.0.7162784@1789254970.943070760` |
+| "Use one or more of … Hedera Agent Kit, OpenClaw ACP, x402, A2A protocol, or Hedera SDKs directly" | x402 through Blocky402 (`@x402/hedera`), `@hiero-ledger/sdk` for HCS, and a Hedera Agent Kit adapter exported as `batas/hedera-agent-kit` |
+| "a public GitHub repo with a README covering setup, architecture, and how the payment flow works" | README: *Running it* (setup), *The answer* (architecture), *Paying for what the bytecode says* (payment flow) |
+| "a ≤ 5-minute demo video showing the agent performing autonomous payment actions" | the video below |
 
-Not claimed: HTS tokens (payment is in HBAR on purpose — an HTS token must be associated with an
-account before it can be received, and that is one step between a caller and an answer), multi-agent
-negotiation, scheduled transactions.
+| Extra point | Status |
+|---|---|
+| "On-chain agent identity using ERC-8004 or HCS-14" | **met** — agent #10123 in the identity registry, and client feedback in the reputation registry (`60bps above the floor`), which the contract will not let the agent write about itself |
+| "Pay-per-call inference, data, or compute metering rather than a flat per-request charge" | being built — today the price is a flat 0.001 HBAR per call |
+| "Multi-agent negotiation and settlement via A2A or ACP" | being built — today the Agent Card is published but nothing negotiates over it |
+| "Agent discovery via UCP, or a directory that makes your service findable by other agents" | being built — today discovery is `/.well-known/x402` on a host the caller already knows |
+| "HTS tokens or custom fee schedules in the settlement path" | being built |
+| "Verifiable payment audit trails on HCS" | being built — topic `0.0.10394165` carries mandate grants and revocations, not payments |
+| "Recurring or streamed payments using Scheduled Transactions" | being built |
 
 ### 2. 1inch — Build an Aqua App ($5,000)
 
 | Requirement | Where it is met |
 |---|---|
-| Official Aqua/SwapVM contracts | Aqua used as-is at `0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`; nothing in `node_modules/@1inch/**` edited |
-| Redeployed modified SwapVM (permitted, and scored higher) | `BatasRouter` carries two new instructions: `PolicyEnvelope` at `0x21` and `MandateName` at `0x22` |
-| On-chain execution of token transfers, demoed | `script/Demo.s.sol` ships, settles and refuses in one run — real ERC-20 transfers, no mocked settlement |
-| Proper git commit history | 70-odd commits across the event, each one a single argued change |
+| "a custom Aqua app that implements a sophisticated DeFi position … demonstrated through tests scripts or a UI" | a position whose size cap, floor and expiry are enforced inside settlement; shown by `script/Demo.s.sol`, the fork tests, and the live instrument at https://batas-one.vercel.app/app |
+| "If you use SwapVM, you may modify SwapVM opcodes and define your own instructions" (scored higher) | `BatasRouter` carries two new instructions: `PolicyEnvelope` at `0x21` and `MandateName` at `0x22` |
+| "Official Aqua/SwapVM contracts must be used (redeployments of a modified SwapVM contract is allowed)" | Aqua used as-is at `0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`; nothing in `node_modules/@1inch/**` edited |
+| "Onchain execution of token transfers should be presented during the final demo" | on Sepolia: ship [`0x9408b60a…`](https://sepolia.etherscan.io/tx/0x9408b60a7bfc5345f9909153f5d5bf97feb193b5716f3c0fae21c33b89830060), swap [`0x8cdec703…`](https://sepolia.etherscan.io/tx/0x8cdec703361527046d60199bae327b8db7e784d55622897eace87b51c5909275) — real ERC-20 transfers, no mocked settlement |
+| "Proper Git commit history (no single-commit entries on the final day)" | 100 commits across seven days from 6 September, each one a single argued change |
 
 ### 3. ENS — Best Use of ENSv2 ($4,500)
 
-| Requirement | Where it is met |
+| Qualification requirement | Where it is met |
 |---|---|
-| Built on ENSv2, Sepolia | `UserRegistry` proxy via ENS's own `VerifiableFactory`, `0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B` |
-| ENSv2 features central to the product | the subname *is* the agent's authority: expiry matches the mandate's own deadline, grantor keeps `ROLE_UNREGISTER`, `ROLE_CAN_TRANSFER_ADMIN` withheld so it is soulbound |
-| Functional demo | `node agent/killswitch.mjs --prove` — revoke the name and the *settlement* refuses |
-| Open source + video | yes |
+| "Project must be built on ENSv2 (Sepolia)" | `UserRegistry` proxy via ENS's own `VerifiableFactory`, `0x945800Bd6CDd60521B64a12D7b3F12fC90916a6B` |
+| "ENSv2 features should be central to the product, not a cosmetic add-on" | `MandateName`, SwapVM opcode `0x22`, reads the registry during settlement: revoke the subname and the swap reverts for every caller |
+| "Your demo must be functional and not just include hard-coded values" | `node agent/killswitch.mjs --prove` revokes, quotes, and re-grants against the live chain; `/v1/agent/authority` reads it block-pinned |
+| "a video recording or link to a live demo (ideally both) … open source" | both, and the repository is public |
 
-The part worth leading with: `MandateName` is a SwapVM instruction at opcode slot `0x22` that reads
-the ENSv2 registry during settlement. Revoking a subname does not merely stop a cooperating agent,
-it reverts the swap for every caller. That makes ENSv2 an enforcement primitive rather than a
-labelling one, which is not something the other ENS entries this project surveyed do.
+| Feature the prize names | Status |
+|---|---|
+| "deploy your own subname registry to tokenize and manage subnames under your own rules" | **met** — the registry above holds the agent's authority |
+| "expiring, revocable, non-transferable" | **met** — expiry matches the mandate's deadline, the grantor keeps `ROLE_UNREGISTER`, `ROLE_CAN_TRANSFER_ADMIN` is withheld |
+| "Enhanced Access Control … to delegate specific rights" | roles above are **met**; delegating a single text record to another account is being built |
+| "Give subnames their own Permissioned Resolver" | being built |
+| "resolve subnames straight off a parent's resolver with wildcard resolution" | being built |
+| "record aliasing at the resolver level or namespace aliasing via a shared registry" | being built |
+| "agents as namespaces, each with their own identity and permissions" (bonus) | being built — linking the name and ERC-8004 agent #10123 both ways |
 
 ---
 
