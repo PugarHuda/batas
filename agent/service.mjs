@@ -33,6 +33,7 @@ import { attest } from './attest.mjs';
 import { createServer as createMcpServer } from './mcp.mjs';
 import { htsAccept, htsManifestAccept } from './hts.mjs';
 import { mountA2A } from './a2a.mjs';
+import { agentRegistrationRoute } from './agent-registration.mjs';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 const PORT = Number(process.env.PORT || 4021);
@@ -380,6 +381,8 @@ app.get('/openapi.json', (_req, res) => res.json(openapiDocument(described)));
 // price: what the meter charges for reading the live six-instruction mandate on its own.
 const A2A_PRICE = { asset: HBAR, amount: String(METER.decode + 6 * METER.perInstruction + METER.publication + METER.authority) };
 mountA2A(app, { card: () => agentCard(described), resourceServer, origin: PUBLIC_ORIGIN, payTo: PAY_TO, price: A2A_PRICE, overLimit, inspect });
+// ERC-8004 endpoint-domain proof: the on-chain registration, served from the domain it names.
+app.get('/.well-known/agent-registration.json', agentRegistrationRoute);
 
 // The MCP server, over HTTP rather than stdio. Same factory, same four tools, one server per
 // request and no session: a Vercel function may not be the same instance twice, so there is nothing
