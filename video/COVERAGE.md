@@ -26,7 +26,7 @@ Every row of the three prize tables in SUBMISSION.md, with the timestamps in `ou
 | I-2 | Own SwapVM instructions: 0x21 and 0x22 | 0:41 | terminal: `npm run walkthrough` |
 | I-3 | Official Aqua contract used as-is | 0:38 | Sepolia Etherscan, official Aqua 0x1111113C… |
 | I-4 | On-chain token transfers on Sepolia | 0:30, 0:34 | Sepolia Etherscan, ship tx 0x9408b60a…; Sepolia Etherscan, swap tx 0x8cdec703… |
-| I-5 | Proper Git commit history | 3:30 | terminal: `git rev-list --count HEAD && git log --date=short --format=%ad | uniq -c` |
+| I-5 | Proper Git commit history | 3:30 | terminal: `git rev-list --count HEAD && git log --date=short --format=%ad \| uniq -c` |
 
 ## ENS · Best Use of ENSv2
 

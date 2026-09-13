@@ -121,7 +121,9 @@ const coverage = [
         '|---|---|---|---|',
         ...ROWS.filter((r) => r.prize === key).map((r) => {
             if (!seen[r.id].length) problems.push(`row ${r.id} never on screen`);
-            return `| ${r.id} | ${r.caption} | ${seen[r.id].map((x) => mmss(x.at)).join(', ')} | ${[...new Set(seen[r.id].map((x) => x.what))].join('; ')} |`;
+            // A shell pipe inside a command would end the table cell early.
+            const what = [...new Set(seen[r.id].map((x) => x.what))].join('; ').replace(/\|/g, '\\|');
+            return `| ${r.id} | ${r.caption} | ${seen[r.id].map((x) => mmss(x.at)).join(', ')} | ${what} |`;
         }),
         '',
     ]),
