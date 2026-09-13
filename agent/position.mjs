@@ -19,8 +19,27 @@ const SAFE_BALANCES = [{
     outputs: [{ type: 'uint256' }, { type: 'uint256' }],
 }];
 
+// The scan walks up to seven getLogs windows, and every free answer that is not handed a program
+// starts with it: the MCP authority tool, read_mandate, the publication check, the health route.
+// Asked cold on a slow public endpoint it took longer than an MCP client's sixty-second request
+// limit, so an assistant saw a timeout where there was an answer. A minute of reuse is the cost of
+// that: a ship or a dock shows up at most a minute late, while the answer's own block pin and
+// `docked` check still describe the chain as it was when the scan ran. A failed scan is never
+// kept, and a caller that injects its own client always scans.
+const REUSE_MS = 60_000;
+let recent = null;
+
 /** Pull the newest program this owner shipped to the router, straight out of Aqua's event log. */
 export async function latestProgramOnChain({ client } = {}) {
+    if (client) return scanLatestProgram({ client });
+    if (recent && Date.now() - recent.at < REUSE_MS) return recent.pending;
+    const entry = { at: Date.now(), pending: scanLatestProgram() };
+    recent = entry;
+    entry.pending.catch(() => { if (recent === entry) recent = null; });
+    return entry.pending;
+}
+
+async function scanLatestProgram({ client } = {}) {
     const owner = OWNER;
 
     // Injectable for the same reason `resolveAgent` is: the interesting branch here is the one
