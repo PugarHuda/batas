@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 import {
     ROLE, admin, ROLE_CAN_TRANSFER_ADMIN, holderRoles, grantorRootRoles, isSoulbound, labelId,
-    classifyName, mandateNameStatus, ZERO,
+    classifyName, mandateNameStatus, ZERO, STATUS, decodeRoles,
 } from './ens.mjs';
 
 const NOW = 1_800_000_000;
@@ -167,25 +167,107 @@ test('the deadline is a second opinion: a name that ended before its term was cu
     assert.equal(s.revoked, true, 'the owner is still set, but the term says someone ended it early');
 });
 
-test('mandateNameStatus reads getState by labelhash and hands the answer to classifyName', async () => {
-    const { keccak256, toHex } = await import('viem');
-    const asked = [];
-    const pub = {
-        readContract: async ({ functionName, args }) => {
-            asked.push([functionName, args]);
-            // (status, expiry, latestOwner, tokenId, resource), in the contract's order.
-            return [2, BigInt(NOW + 3600), HOLDER, 1n, 0n];
-        },
-    };
-    const s = await mandateNameStatus(pub, '0xReg', 'agent', HOLDER);
-    assert.deepEqual(asked, [['getState', [BigInt(keccak256(toHex('agent')))]]]);
-    assert.equal(s.expiry, NOW + 3600, 'the uint64 comes back as a number');
-    assert.equal(typeof s.valid, 'boolean');
+test('a reserved name is held by nobody, and that is not a revocation', () => {
+    // Reserved and burned look the same from the owner field: an expiry and the zero address.
+    // Only the status separates "nobody was granted it" from "the grantor took it back".
+    const s = name({ status: 1, owner: ZERO, expiry: NOW + 3600 });
+    assert.equal(s.valid, false);
+    assert.equal(s.revoked, false);
+    assert.match(s.reason, /reserved/);
+});
 
-    // And the cleared owner the registry reports after unregister is read as revoked.
-    pub.readContract = async () => [0, BigInt(NOW - 60), ZERO, 0n, 0n];
-    const r = await mandateNameStatus(pub, '0xReg', 'agent', HOLDER);
-    assert.equal(r.revoked, true);
+test('a status no registry produces is a failed read, not a verdict', () => {
+    assert.throws(() => name({ status: 7, owner: ZERO }), /not an ENSv2 registry's answer/);
+});
+
+test('role bitmaps decode to names, and bits without a name are kept rather than dropped', () => {
+    const d = decodeRoles(holderRoles());
+    assert.deepEqual(d.roles, ['SET_SUBREGISTRY', 'SET_RESOLVER']);
+    assert.deepEqual(d.admin, []);
+    assert.equal(d.transferable, false);
+    assert.equal(d.unknown, null);
+
+    // Bit 1 is the second bit of REGISTRAR's nybble and bit 32 sits between SET_RESOLVER's
+    // nybble and SET_URI's. Neither is a role; a decoder that ignored them would under-report.
+    const odd = decodeRoles(ROLE.REGISTRAR | 2n | (1n << 32n) | ROLE_CAN_TRANSFER_ADMIN);
+    assert.deepEqual(odd.roles, ['REGISTRAR']);
+    assert.deepEqual(odd.admin, ['CAN_TRANSFER']);
+    assert.equal(odd.transferable, true);
+    assert.equal(BigInt(odd.unknown), 2n | (1n << 32n));
+});
+
+// --- the live registry on Sepolia, read-only ---------------------------------
+//
+// The first `mandateNameStatus` test answered `getState` from a stub written to match the interface,
+// which is how this project once shipped a struct in the wrong field order with every test green.
+// These ask the deployed registry every live mandate names.
+
+const live = async () => {
+    const { createPublicClient, http } = await import('viem');
+    const { sepolia } = await import('viem/chains');
+    const { SEPOLIA_RPC, ENS_REGISTRY, OWNER, MANDATE_NAME } = await import('./deployment.mjs');
+    return { pub: createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) }), ENS_REGISTRY, OWNER, MANDATE_NAME, sepolia, createPublicClient, http };
+};
+
+test('the live mandate name reads whole: state, token version, holder roles, pinned to a block', async () => {
+    const { pub, ENS_REGISTRY, OWNER, MANDATE_NAME } = await live();
+    const s = await mandateNameStatus(pub, ENS_REGISTRY, MANDATE_NAME, OWNER);
+
+    assert.ok(STATUS.includes(s.state), `state ${s.state}`);
+    assert.doesNotThrow(() => JSON.stringify(s), 'the answer is served as JSON, so no bigint may leak into it');
+
+    // The token id is the base id with the registry's re-registration counter in its low bits.
+    const tokenId = BigInt(s.tokenId);
+    assert.equal(tokenId & ~0xffffffffn, labelId(MANDATE_NAME));
+    assert.equal(BigInt(s.version), tokenId & 0xffffffffn);
+
+    // "Now" is the chain's, not this machine's.
+    assert.ok(Math.abs(s.checkedAt.timestamp - Date.now() / 1000) < 600, 'the pinned block is recent');
+
+    if (s.valid) {
+        assert.equal(s.state, 'REGISTERED');
+        assert.equal(s.secondsLeft, s.expiry - s.checkedAt.timestamp);
+        assert.equal(s.owner, OWNER);
+        assert.deepEqual(s.holderRoles.roles, ['SET_SUBREGISTRY', 'SET_RESOLVER'], 'what grant() gives, and nothing else');
+        assert.equal(s.holderRoles.unknown, null);
+        assert.equal(s.soulbound, true);
+    }
+});
+
+test('a label nobody registered reads as absent on the live registry, not as revoked', async () => {
+    const { pub, ENS_REGISTRY, OWNER } = await live();
+    const s = await mandateNameStatus(pub, ENS_REGISTRY, 'batas-never-registered-xyz', OWNER);
+    assert.equal(s.state, 'AVAILABLE');
+    assert.equal(s.valid, false);
+    assert.equal(s.revoked, false);
+    assert.match(s.reason, /no mandate name/);
+    assert.equal(s.holderRoles.roles.length, 0);
+});
+
+test('the grantor holds exactly the root roles deploy() gave it, on the live registry', async () => {
+    const { pub, ENS_REGISTRY, OWNER } = await live();
+    const bitmap = await pub.readContract({
+        address: ENS_REGISTRY, functionName: 'roles', args: [0n, OWNER],
+        abi: [{ name: 'roles', type: 'function', stateMutability: 'view', inputs: [{ type: 'uint256' }, { type: 'address' }], outputs: [{ type: 'uint256' }] }],
+    });
+    assert.equal(bitmap, grantorRootRoles());
+    const d = decodeRoles(bitmap);
+    assert.ok(d.roles.includes('UNREGISTER'), 'the kill switch is in the grantor\'s hands');
+    assert.equal(d.unknown, null);
+});
+
+test('an RPC that cannot be reached is an error, never a verdict about the name', async () => {
+    const { ENS_REGISTRY, OWNER, sepolia, createPublicClient, http } = await live();
+    // A real connection to a port nothing listens on: the transport fails the way a dead RPC does.
+    const dead = createPublicClient({ chain: sepolia, transport: http('http://127.0.0.1:1', { retryCount: 0 }) });
+    await assert.rejects(mandateNameStatus(dead, ENS_REGISTRY, 'agent', OWNER));
+});
+
+test('an address with no registry behind it is an error, never "no mandate name"', async () => {
+    // The owner is an account with no code. Reading getState from it returns no data, and that must
+    // not decode into expiry 0 and be reported as a name that was never granted.
+    const { pub, OWNER } = await live();
+    await assert.rejects(mandateNameStatus(pub, OWNER, 'agent', OWNER), /returned no data/);
 });
 
 test('a name held by somebody else does not authorise this agent', () => {

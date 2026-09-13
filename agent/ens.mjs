@@ -51,6 +51,33 @@ export const admin = (r) => r << 128n;
 // it would make the name transferable; withholding it is what makes the grant stick to one holder.
 export const ROLE_CAN_TRANSFER_ADMIN = (1n << 28n) << 128n;
 
+// `getState`'s status, in the order the registry's enum declares it. Read off the live registry:
+// the granted `agent` label answers 2 and a label nobody registered answers 0.
+export const STATUS = ['AVAILABLE', 'RESERVED', 'REGISTERED'];
+
+const REGULAR_HALF = (1n << 128n) - 1n;
+const KNOWN_ROLES = Object.values(ROLE).reduce((all, bit) => all | bit, 0n);
+
+/**
+ * A role bitmap as the names of what it permits.
+ *
+ * Every bit that is not a role this module knows is returned as `unknown` rather than dropped. The
+ * bitmap is the whole safety argument for a grant, and a decoder that silently ignores a bit it
+ * cannot name would describe a holder as having less authority than the registry gives it.
+ */
+export function decodeRoles(bitmap) {
+    const names = (half) => Object.entries(ROLE).filter(([, bit]) => (half & bit) !== 0n).map(([n]) => n);
+    const transferable = (bitmap & ROLE_CAN_TRANSFER_ADMIN) !== 0n;
+    const unknown = bitmap & ~(KNOWN_ROLES | admin(KNOWN_ROLES) | ROLE_CAN_TRANSFER_ADMIN);
+    return {
+        bitmap: toHex(bitmap),
+        roles: names(bitmap & REGULAR_HALF),
+        admin: [...names(bitmap >> 128n), ...(transferable ? ['CAN_TRANSFER'] : [])],
+        transferable,
+        unknown: unknown === 0n ? null : toHex(unknown),
+    };
+}
+
 const FACTORY_ABI = [{
     name: 'deployProxy', type: 'function', stateMutability: 'nonpayable',
     inputs: [{ name: 'implementation', type: 'address' }, { name: 'salt', type: 'uint256' }, { name: 'data', type: 'bytes' }],
@@ -79,6 +106,7 @@ const REGISTRY_ABI = [
     { name: 'hasRoles', type: 'function', stateMutability: 'view', inputs: [{ name: 'anyId', type: 'uint256' }, { name: 'roleBitmap', type: 'uint256' }, { name: 'account', type: 'address' }], outputs: [{ type: 'bool' }] },
     { name: 'ownerOf', type: 'function', stateMutability: 'view', inputs: [{ name: 'tokenId', type: 'uint256' }], outputs: [{ type: 'address' }] },
     { name: 'findTokenId', type: 'function', stateMutability: 'view', inputs: [{ name: 'label', type: 'string' }], outputs: [{ type: 'uint256' }] },
+    { name: 'getResolver', type: 'function', stateMutability: 'view', inputs: [{ name: 'label', type: 'string' }], outputs: [{ type: 'address' }] },
     // The whole state of a name in one read, keyed by the labelhash. A static struct encodes the
     // same as its members laid out flat, so this is decoded as five values in the contract's order.
     {
@@ -182,9 +210,22 @@ const iso = (unix) => new Date(unix * 1000).toISOString();
  * `grantedUntil` is the live mandate's deadline. `grant()` sets the name to expire with the
  * mandate, so a name expiring earlier than that was cut short by someone.
  */
-export function classifyName({ label, registry, expiry, owner, holder, now, grantedUntil }) {
+export function classifyName({ label, registry, status, expiry, owner, holder, now, grantedUntil }) {
+    // A status outside the enum is not an answer about the name. It is an address answering in a
+    // shape no ENSv2 registry produces, and turning it into "revoked" or "held" would report a
+    // failed read as a fact about the kill switch.
+    if (status !== undefined && STATUS[status] === undefined) {
+        throw new Error(`${registry} answered getState with status ${status}, which is not an ENSv2 registry's answer`);
+    }
+
     if (expiry === 0) {
         return { valid: false, revoked: false, reason: `no mandate name "${label}" in ${registry}`, expiry: 0, secondsLeft: 0 };
+    }
+
+    // A reserved name has an expiry and no owner, which is exactly what a burned one looks like
+    // from the owner field alone. Nobody was ever granted it, so nothing was taken back.
+    if (STATUS[status] === 'RESERVED') {
+        return { valid: false, revoked: false, reason: `mandate name "${label}" is reserved in ${registry} and held by nobody`, expiry, secondsLeft: 0 };
     }
 
     // The registry clears the owner when the grantor unregisters and leaves it set when a name
@@ -219,17 +260,40 @@ export function classifyName({ label, registry, expiry, owner, holder, now, gran
  * `grantedUntil` to have a withdrawal reported as one rather than as a lapse.
  */
 export async function mandateNameStatus(pub, registry, label, holder, { grantedUntil } = {}) {
-    // One read, keyed by the labelhash. `ownerOf` was used before and is expiry-gated: it answers
-    // a lapsed name and a revoked one with the same zero address, and the difference between those
-    // is the one thing this function exists to report. `getState` keeps the last owner through a
-    // lapse and clears it on unregister.
-    const [, expiry, owner] = await pub.readContract({
-        address: registry, abi: REGISTRY_ABI, functionName: 'getState', args: [BigInt(keccak256(toHex(label)))],
-    });
+    // Every read is pinned to one block, and "now" is that block's timestamp rather than this
+    // machine's clock. The settlement's own check compares the expiry with `block.timestamp`; a
+    // server whose clock ran a minute fast would otherwise call a name lapsed while the router
+    // still settled against it, and the two reads could straddle a revocation and describe a name
+    // that never existed.
+    const block = await pub.getBlock();
+    const at = { address: registry, abi: REGISTRY_ABI, blockNumber: block.number };
 
-    return classifyName({
-        label, registry, expiry: Number(expiry), owner, holder, now: Math.floor(Date.now() / 1000), grantedUntil,
+    // Keyed by the labelhash. The registry strips the version bits itself, so the raw hash is
+    // enough for both calls. `ownerOf` was used before and is expiry-gated: it answers a lapsed
+    // name and a revoked one with the same zero address, and the difference between those is the
+    // one thing this function exists to report. `getState` keeps the last owner through a lapse
+    // and clears it on unregister.
+    const id = BigInt(keccak256(toHex(label)));
+    const [[status, expiry, owner, tokenId], holderBitmap] = await Promise.all([
+        pub.readContract({ ...at, functionName: 'getState', args: [id] }),
+        pub.readContract({ ...at, functionName: 'roles', args: [id, holder] }),
+    ]);
+
+    const verdict = classifyName({
+        label, registry, status: Number(status), expiry: Number(expiry), owner, holder, now: Number(block.timestamp), grantedUntil,
     });
+    const granted = decodeRoles(holderBitmap);
+    return {
+        ...verdict,
+        state: STATUS[status],
+        // The low 32 bits count re-registrations. A revoke-and-grant moves them, so a token id
+        // someone saved before the last grant names a token that no longer exists.
+        tokenId: tokenId.toString(),
+        version: Number(tokenId & 0xffffffffn),
+        holderRoles: granted,
+        soulbound: !granted.transferable,
+        checkedAt: { block: Number(block.number), timestamp: Number(block.timestamp) },
+    };
 }
 
 async function deploy() {
@@ -334,25 +398,28 @@ async function read(label) {
     const pub = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) });
     const registry = registryAddress();
     const grantor = OWNER;
-    const id = await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'findTokenId', args: [label] });
+    const holder = getAddress(process.env.BATAS_AGENT_ADDRESS || grantor);
 
-    const [expiry, holderRoles, grantorRoles] = await Promise.all([
-        pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'findExpiry', args: [label] }),
-        pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'roles', args: [id, getAddress(process.env.BATAS_AGENT_ADDRESS || grantor)] }),
-        pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: 'roles', args: [id, grantor] }),
+    // `hasRoles` is the registry's own test, which counts roles granted on the root resource as
+    // well as on the name. Masking the name's bitmap alone answered "no" for this grantor, whose
+    // UNREGISTER lives on the root, and the line used to print "via root roles" whether or not it did.
+    const status = await mandateNameStatus(pub, registry, label, holder);
+    const pinned = { address: registry, abi: REGISTRY_ABI, blockNumber: BigInt(status.checkedAt.block) };
+    const [canRevoke, resolver] = await Promise.all([
+        pub.readContract({ ...pinned, functionName: 'hasRoles', args: [BigInt(keccak256(toHex(label))), ROLE.UNREGISTER, grantor] }),
+        pub.readContract({ ...pinned, functionName: 'getResolver', args: [label] }),
     ]);
 
-    const now = Math.floor(Date.now() / 1000);
     console.log(`name       ${label}`);
-    console.log(`registry   ${registry}`);
-    console.log(`expiry     ${expiry === 0n ? 'not registered' : new Date(Number(expiry) * 1000).toISOString()}`);
-    if (expiry !== 0n) {
-        const left = Number(expiry) - now;
-        console.log(`           ${left > 0 ? `${Math.floor(left / 60)} minutes left` : 'expired; it authorises nothing'}`);
-    }
-    console.log(`holder     0x${holderRoles.toString(16)}`);
-    console.log(`transferable ${(holderRoles & ROLE_CAN_TRANSFER_ADMIN) !== 0n}`);
-    console.log(`grantor can revoke ${((grantorRoles & ROLE.UNREGISTER) !== 0n) || 'via root roles'}`);
+    console.log(`registry   ${registry}  (block ${status.checkedAt.block})`);
+    console.log(`state      ${status.state}  ${status.reason}`);
+    console.log(`token      ${status.tokenId}  version ${status.version}`);
+    if (status.expiry) console.log(`expiry     ${new Date(status.expiry * 1000).toISOString()}${status.valid ? `  ${Math.floor(status.secondsLeft / 60)} minutes left` : ''}`);
+    console.log(`resolver   ${resolver}`);
+    console.log(`holder     ${holder}  ${status.holderRoles.bitmap}  ${status.holderRoles.roles.join(' | ') || 'no roles'}`);
+    if (status.holderRoles.unknown) console.log(`           and bits this module cannot name: ${status.holderRoles.unknown}`);
+    console.log(`transferable ${!status.soulbound}`);
+    console.log(`grantor can revoke ${canRevoke}`);
 }
 
 async function revoke(label) {
