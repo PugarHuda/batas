@@ -350,3 +350,104 @@ test('a grant walk that runs out of pages says so', async () => {
     assert.deepEqual(res.nameGrants, []);
     assert.match(res.reason, /stopped after 2 pages/);
 });
+
+// --- reading the topic as the mirror node actually serves it -------------------
+
+test('a message split into chunks is read whole, in chunk order, from the real mirror node', async () => {
+    // Not our topic: ours has never needed chunks, because every record fits in 1024 bytes. Topic
+    // 0.0.7399332 on testnet has three-chunk messages whose chunks reached consensus as 1, 3, 2 —
+    // exactly the case a row-at-a-time reader misses and a sequence-order join corrupts.
+    const { readTopic, MIRROR } = await import('./hcs.mjs');
+    const seen = [];
+    const walk = await readTopic('0.0.7399332', { publisher: '0.0.7399329', afterSequence: 1251909, maxPages: 1 }, (m) => {
+        seen.push(m);
+        return true;
+    });
+    assert.equal(walk.searched, 'stopped');
+    const [whole] = seen;
+    assert.deepEqual(whole.chunks, [1251910, 1251912, 1251911], 'joined by chunk number, not by sequence number');
+    assert.equal(whole.sequenceNumber, 1251912, 'dated by the chunk that completed it');
+
+    // The same three rows, fetched one by one and joined by hand, are the independent answer.
+    const rows = await Promise.all([1251910, 1251911, 1251912].map(async (n) => (await fetch(`${MIRROR}/topics/0.0.7399332/messages/${n}`)).json()));
+    const byNumber = [...rows].sort((a, b) => a.chunk_info.number - b.chunk_info.number);
+    const joined = Buffer.concat(byNumber.map((r) => Buffer.from(r.message, 'base64')));
+    assert.equal(Buffer.from(whole.message, 'base64').equals(joined), true);
+    assert.equal(whole.consensusTimestamp, rows[2].consensus_timestamp);
+    const naive = Buffer.concat(rows.map((r) => Buffer.from(r.message, 'base64')));
+    assert.equal(joined.equals(naive), false, 'sequence order would have produced different bytes');
+
+    // The same topic read as another payer has none of it: the payer filter runs on every chunk.
+    const none = [];
+    await readTopic('0.0.7399332', { publisher: '0.0.1', afterSequence: 1251909, maxPages: 1 }, (m) => none.push(m));
+    assert.deepEqual(none, []);
+});
+
+test('a stranger\'s chunk can neither complete one of our messages nor count as ours', async () => {
+    const { readTopic } = await import('./hcs.mjs');
+    const initial = { account_id: '0.0.10388560', nonce: 0, scheduled: false, transaction_valid_start: '100.0' };
+    const chunk = (seq, number, text, payer = '0.0.10388560') => ({
+        sequence_number: seq, consensus_timestamp: `${seq}.0`, payer_account_id: payer,
+        message: Buffer.from(text).toString('base64'), chunk_info: { initial_transaction_id: initial, number, total: 2 },
+    });
+    const serve = (messages) => async () => ({ ok: true, status: 200, json: async () => ({ messages, links: {} }) });
+
+    const got = [];
+    await readTopic('0.0.1', { fetchImpl: serve([chunk(1, 1, 'hel'), chunk(2, 2, 'FORGED', '0.0.999999'), chunk(3, 2, 'lo')]), publisher: '0.0.10388560' },
+        (m) => { got.push(Buffer.from(m.message, 'base64').toString()); });
+    assert.deepEqual(got, ['hello']);
+
+    // Our own account repeating a chunk number leaves two candidates for one slot; neither is read.
+    const dup = [];
+    await readTopic('0.0.1', { fetchImpl: serve([chunk(1, 1, 'a'), chunk(2, 1, 'b'), chunk(3, 2, 'c')]), publisher: '0.0.10388560' }, (m) => { dup.push(m); });
+    assert.deepEqual(dup, []);
+});
+
+test('a mirror that serves a topic out of order is refused, not read', async () => {
+    // "Earliest publication" is the first match in an ascending walk. A mirror that went backwards
+    // would let a later republication stand in for the first one.
+    const { readTopic } = await import('./hcs.mjs');
+    const row = (seq) => ({ sequence_number: seq, consensus_timestamp: `${seq}.0`, payer_account_id: '0.0.2', message: '' });
+    const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ messages: [row(2), row(1)], links: {} }) });
+    await assert.rejects(readTopic('0.0.1', { fetchImpl, publisher: '0.0.2' }), /out of order/);
+});
+
+test('a next link that leaves the mirror node, or a topic id that is not one, is refused', async () => {
+    const { readTopic, lookupMandate } = await import('./hcs.mjs');
+    const away = async () => ({ ok: true, status: 200, json: async () => ({ messages: [], links: { next: 'https://example.com/api/v1/topics/0.0.1/messages' } }) });
+    await assert.rejects(readTopic('0.0.1', { fetchImpl: away, maxPages: 3 }), /pointed away/);
+    await assert.rejects(lookupMandate('0.0.1/../../accounts', '0x2120'), /shard\.realm\.num/);
+});
+
+test('the mirror node gets a deadline and a second chance, and a 404 is an answer', async () => {
+    const { mirrorGet, MIRROR } = await import('./hcs.mjs');
+    const statuses = [503, 429, 200];
+    const signals = [];
+    const flaky = async (url, init) => {
+        signals.push(init?.signal);
+        const status = statuses.shift();
+        return { ok: status === 200, status };
+    };
+    assert.equal((await mirrorGet('x', { fetchImpl: flaky, backoffMs: 1 })).status, 200);
+    assert.equal(signals.length, 3);
+    assert.ok(signals.every((s) => s instanceof AbortSignal), 'every attempt carries a timeout');
+
+    let calls = 0;
+    const missing = async () => { calls++; return { ok: false, status: 404 }; };
+    assert.equal((await mirrorGet('x', { fetchImpl: missing, backoffMs: 1 })).status, 404);
+    assert.equal(calls, 1, 'a 404 is not retried');
+
+    const down = async () => { throw new Error('ECONNRESET'); };
+    await assert.rejects(mirrorGet('x', { fetchImpl: down, backoffMs: 1 }), /unreachable: ECONNRESET/);
+
+    // And against the real mirror node, a deadline that cannot be met is a failure, not a hang.
+    await assert.rejects(mirrorGet(`${MIRROR}/topics/0.0.10394165`, { timeoutMs: 1, attempts: 1 }), /unreachable/);
+});
+
+test('a mirror that will not say whether the topic exists does not produce "not published"', async () => {
+    const { lookupMandate } = await import('./hcs.mjs');
+    const fetchImpl = async (url) => (String(url).includes('/messages')
+        ? { ok: true, status: 200, json: async () => ({ messages: [], links: {} }) }
+        : { ok: false, status: 503 });
+    await assert.rejects(lookupMandate('0.0.1', '0x2120', { fetchImpl, maxPages: 1 }), /mirror node 503/);
+});

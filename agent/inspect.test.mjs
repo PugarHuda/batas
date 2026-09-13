@@ -163,3 +163,44 @@ test('a docked position is reported as docked, not as the live one', async () =>
     const live = { ...docked, readContract: async () => [1n, 1n] };
     assert.equal((await latestProgramOnChain({ client: live })).docked, false);
 });
+
+// --- the payment, read back from the ledger ----------------------------------
+
+// A real x402 settlement already on Hedera testnet: the facilitator (0.0.7162784) submitted it and
+// paid the fee, 0.001 HBAR left the agent (0.0.10388401) and reached the service (0.0.10388560).
+const SETTLED = '0.0.7162784@1789256281.151698196';
+
+test('a settlement is confirmed from the mirror node, not from the paid service', async () => {
+    const { confirmSettlement } = await import('./inspect.mjs');
+    const ok = await confirmSettlement(SETTLED, { payer: '0.0.10388401', payTo: '0.0.10388560', maxAmount: 1000000 });
+    assert.equal(ok.confirmed, true, ok.reason);
+    assert.equal(ok.transaction, '0.0.7162784-1789256281-151698196', 'the SDK form is turned into the mirror form');
+    assert.equal(ok.result, 'SUCCESS');
+    assert.equal(ok.paid, 100000);
+    assert.equal(ok.received, 100000);
+    assert.equal(ok.consensusTimestamp, '1789256288.732913848');
+
+    const overCap = await confirmSettlement(SETTLED, { payer: '0.0.10388401', maxAmount: 99999 });
+    assert.equal(overCap.confirmed, false);
+    assert.match(overCap.reason, /above the 99999 cap/);
+
+    // The transaction is real and successful, but it is not a payment from this account.
+    const notMine = await confirmSettlement(SETTLED, { payer: '0.0.10388402' });
+    assert.equal(notMine.confirmed, false);
+    assert.match(notMine.reason, /no HBAR left/);
+
+    const wrongPayee = await confirmSettlement(SETTLED, { payer: '0.0.10388401', payTo: '0.0.7162784' });
+    assert.equal(wrongPayee.confirmed, false);
+    assert.match(wrongPayee.reason, /no HBAR reached/);
+});
+
+test('an id the mirror node has never seen is "could not check", and a malformed one is refused', async () => {
+    const { confirmSettlement } = await import('./inspect.mjs');
+    const unseen = await confirmSettlement('0.0.10388401@1000000000.000000001', { payer: '0.0.10388401', attempts: 2, delayMs: 10 });
+    assert.equal(unseen.confirmed, null, 'absent from the mirror is not proof the payment failed');
+    assert.match(unseen.reason, /has not seen/);
+
+    const garbage = await confirmSettlement('not-a-tx', { payer: '0.0.10388401' });
+    assert.equal(garbage.confirmed, false);
+    assert.match(garbage.reason, /not a Hedera transaction id/);
+});
